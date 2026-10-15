@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xingshu-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xingshu-matrix
+  namespace: xingshu-system
+  labels: { app: xingshu-matrix }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: xingshu-matrix }
+  template:
+    metadata:
+      labels: { app: xingshu-matrix }
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/yangguangdijia/xingshu-matrix:latest
+          ports: [{ containerPort: 80 }]
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          readinessProbe: { httpGet: { path: /healthz, port: 80 }, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /healthz, port: 80 }, periodSeconds: 20 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: xingshu-matrix
+  namespace: xingshu-system
+spec:
+  selector: { app: xingshu-matrix }
+  ports: [{ port: 80, targetPort: 80 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: xingshu-matrix
+  namespace: xingshu-system
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: matrix.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: xingshu-matrix, port: { number: 80 } } }
