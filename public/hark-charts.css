@@ -1,0 +1,33 @@
+/* The Hark chart palette for Chart.js. Load it after hark.css. style-gates: data */
+:root {
+  --chart-ink: light-dark(#1d1d1f, #f5f5f7);            /* the story: one series, or the one that matters */
+  --chart-ink-2: light-dark(#1d1d1f80, #f5f5f780);      /* the comparison beside the story; axis and legend text */
+  --chart-ink-3: light-dark(#1d1d1f4d, #f5f5f74d);
+  --chart-reference: light-dark(#1d1d1f24, #f5f5f724);  /* baselines, targets, averages: dashed 3 / 4 */
+  --chart-grid: light-dark(#1d1d1f12, #f5f5f712);
+  --chart-accent: #ff4d00;                              /* the one thing to look at now; never a series or a fill */
+  --chart-good: light-dark(#607868, #8fa898);           /* positive, up, on track */
+  --chart-bad: light-dark(#9c635e, #b97f7a);            /* negative, down, off track */
+  --chart-muted: var(--chart-ink-3);                    /* context: the rest around a highlight, washes */
+  /* Three or more series take these in order; one or two series take the inks. */
+  --chart-1: light-dark(#b1bcd2, #c3ccdd);
+  --chart-2: light-dark(#607868, #8fa898);
+  --chart-3: light-dark(#dbb691, #e2c39f);
+  --chart-4: light-dark(#a79fb8, #b9b2c9);
+  --chart-5: light-dark(#d9c489, #e2d09e);
+  --chart-6: light-dark(#7e9c9b, #96b3b2);
+  --chart-7: light-dark(#c9a3a8, #d6b5b9);
+  --chart-on-colour: #1d1d1f;                           /* text drawn on the seven colours, pale in both themes */
+  --chart-mono: "GT Standard Mono", "Geist Mono", ui-monospace, monospace; /* every number on a chart */
+}
+
+/* @component chart (Chart.js) */
+.chart { border: 1px solid var(--stroke-secondary); }
+.chart__cap { font: var(--type-body-strong); color: var(--text-primary); margin-bottom: 14px; }
+.chart__cap small { display: block; margin-top: 2px; font: var(--type-caption); color: var(--text-secondary); }
+.chart__canvas { position: relative; height: 280px; }
+.chart__canvas--tall { height: 400px; }
+@media (max-width: 599px) {
+  .chart__canvas { height: 220px; }
+  .chart__canvas--tall { height: 320px; }
+}
