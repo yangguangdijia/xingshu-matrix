@@ -1157,94 +1157,65 @@
       .x-mcst li.done b { color: var(--x-blue); border-color: var(--x-blue); }
       .x-mcov .x-input { width: 100%; min-width: 72px; box-sizing: border-box; }
       @media (max-width: 767px) { .x-mcchips .x-seg { min-height: 44px; } }
-      /* 星枢登录页视觉升级：克制的星轨光感、清晰的信息层级与更舒适的表单 */
+      /* 星枢登录页：以星图坐标与清晰的工作台层级表达“枢纽”，避免装饰性光效 */
       .x-auth {
-        --a-pri: #4f8cff; --a-pri-h: #3c79e8;
-        background-color: #081a3a;
-        background-image: radial-gradient(ellipse 62% 72% at 28% 45%, rgba(39, 92, 171, .38), transparent 72%), radial-gradient(ellipse 42% 55% at 82% 16%, rgba(64, 121, 205, .16), transparent 74%), linear-gradient(135deg, #081a3a 0%, #102b57 52%, #0a1d40 100%);
+        --a-pri: #315f9f; --a-pri-h: #274f88; --a-ink: #202b3a; --a-sub: #657286; --a-line: #d8e0ea;
+        background: #17365d;
+        background-image: linear-gradient(115deg, #17365d 0%, #1c416c 54%, #17365d 100%);
       }
-      .x-sky { opacity: .82; }
-      .x-auth::before { content: ""; position: fixed; z-index: 0; width: min(72vw, 980px); aspect-ratio: 1; left: 38.2%; top: 38.2%; transform: translate(-50%,-50%); border: 1px solid rgba(174,205,255,.075); border-radius: 50%; box-shadow: 0 0 0 48px rgba(174,205,255,.025), 0 0 0 110px rgba(174,205,255,.02), inset 0 0 120px rgba(79,140,255,.045); pointer-events: none; }
-      .x-brandp { text-shadow: 0 1px 18px rgba(4, 15, 39, .2); }
-      .x-blogo { gap: 12px; }
-      .x-blogo svg { filter: drop-shadow(0 4px 14px rgba(85,151,255,.3)); }
-      .x-blogo .x-wm b { letter-spacing: .08em; }
-      .x-blogo .x-wm i { margin-left: 5px; opacity: .76; }
-      .x-brandp h2 { text-shadow: 0 4px 26px rgba(120,176,255,.16); }
-      .x-brandp > div > p { color: rgba(224,235,255,.78); }
-      .x-hl { gap: 17px; }
-      .x-hl li { padding: 2px 0; }
-      .x-hl svg { color: #e7c878; filter: drop-shadow(0 0 8px rgba(231,200,120,.18)); }
-      .x-hl small { color: rgba(211,224,247,.72); }
-      .x-formp { gap: 14px; }
-      .x-auth .x-acard { position: relative; width: min(var(--x-cardw), calc(100vw - 36px)); padding: 38px 36px 34px; border: 1px solid rgba(255,255,255,.72); border-radius: 18px; background: linear-gradient(145deg, rgba(255,255,255,.99), rgba(247,250,255,.98)); box-shadow: 0 30px 90px rgba(1,12,33,.36), 0 8px 24px rgba(2,14,38,.16); }
-      .x-auth .x-acard::before { content: "✦  星枢 · 安全工作空间"; display: inline-flex; align-items: center; gap: 7px; margin: 0 0 18px; color: #5576a8; font-size: 11px; font-weight: 600; letter-spacing: .12em; }
-      .x-auth .x-acard h1 { margin-bottom: 6px; font-size: 25px; letter-spacing: -.02em; }
-      .x-auth .x-acard > p { margin-bottom: 28px; color: #78849a; font-size: 13px; }
-      .x-af { gap: 18px; }
-      .x-af label > span { margin-bottom: 7px; color: #34425b; font-size: 12px; }
-      .x-af .x-input { height: 46px; padding: 0 14px; border-color: #dce4f0; border-radius: 9px; background: #fbfcff; }
-      .x-af .x-input:hover { border-color: #a8c2f1; background: #fff; }
-      .x-af .x-input:focus { border-color: #5c91ed; background: #fff; box-shadow: 0 0 0 4px rgba(79,140,255,.13); }
-      .x-auth button.x-btn.x-btn--pri { position: relative; height: 46px; margin-top: 1px; border-radius: 9px; background: linear-gradient(100deg,#3978e7,#538ef4); box-shadow: 0 7px 16px rgba(57,120,231,.2); font-size: 14px; }
-      .x-auth button.x-btn.x-btn--pri:hover { background: linear-gradient(100deg,#2f6edb,#477fe5); box-shadow: 0 9px 20px rgba(57,120,231,.28); transform: translateY(-1px); }
-      .x-auth button.x-btn.x-btn--pri:active { transform: translateY(0); }
-      .x-arow { font-size: 12px; }
-      .x-arow label { color: #56647b; }
-      .x-aver { color: rgba(219,231,250,.7); font-size: 11px; }
-      @media (min-width: 1200px) { .x-brandp h2 { font-size: clamp(38px, 3vw, 46px); } }
+      .x-auth::before { display: none; }
+      .x-auth::after { background: linear-gradient(90deg, rgba(9,25,47,.12), transparent 48%, rgba(9,25,47,.08)); }
+      .x-sky { opacity: .48; }
+      .x-chart .x-grid { stroke: #bfd0e3; stroke-opacity: .12; }
+      .x-trails { stroke: #c9d8e8; stroke-opacity: .28; animation: none; }
+      .x-tw circle { animation: none; }
+      .x-brandp { text-shadow: none; }
+      .x-blogo { gap: 10px; }
+      .x-blogo svg { filter: none; }
+      .x-blogo .x-wm b { letter-spacing: .02em; }
+      .x-blogo .x-wm i { margin-left: 4px; opacity: .82; }
+      .x-brandp h2 { margin-bottom: 14px; font-size: 38px; letter-spacing: .01em; text-shadow: none; }
+      .x-brandp > div > p { max-width: 31em; color: #d6e0ec; font-size: 15px; }
+      .x-hl { gap: 15px; }
+      .x-hl li { align-items: flex-start; gap: 12px; }
+      .x-hl svg { width: 18px; height: 18px; margin-top: 3px; padding: 0; border-radius: 0; background: none; stroke: #9db8d5; filter: none; }
+      .x-hl b { font-size: 14px; font-weight: 500; }
+      .x-hl small { color: #c1cfdf; font-size: 12px; }
+      .x-brandp > small { color: #aabbd0; }
+      .x-brandp::after { content: none; }
+      .x-formp { gap: 12px; }
+      .x-auth .x-acard { width: min(var(--x-cardw), calc(100vw - 36px)); padding: 34px 32px 30px; border: 1px solid #d8e1ed; border-radius: 12px; background: #fbfcfe; box-shadow: 0 16px 40px rgba(6,22,43,.2); }
+      .x-auth .x-acard::before { content: "星枢 Matrix  /  平台账号"; display: block; margin: 0 0 19px; color: #708096; font-size: 12px; font-weight: 500; letter-spacing: .04em; }
+      .x-auth .x-acard h1 { margin: 0 0 5px; color: #202b3a; font-size: 24px; font-weight: 600; letter-spacing: 0; }
+      .x-auth .x-acard > p { margin: 0 0 24px; color: #748196; font-size: 13px; }
+      .x-af { gap: 16px; }
+      .x-af label > span { margin-bottom: 6px; color: #364456; font-size: 13px; font-weight: 500; }
+      .x-af .x-input { height: 42px; padding: 0 12px; border: 1px solid #cfd8e4; border-radius: 6px; background: #fff; color: #202b3a; }
+      .x-af .x-input::placeholder { color: #98a3b2; }
+      .x-af .x-input:hover { border-color: #8ba5c5; background: #fff; }
+      .x-af .x-input:focus { border-color: #4777b5; box-shadow: 0 0 0 3px rgba(49,95,159,.12); }
+      .x-auth button.x-btn.x-btn--pri { height: 42px; border: 1px solid #315f9f; border-radius: 6px; background: #315f9f; box-shadow: none; font-size: 14px; letter-spacing: .02em; transition: background-color .15s ease,border-color .15s ease; }
+      .x-auth button.x-btn.x-btn--pri:hover { background: #274f88; border-color: #274f88; box-shadow: none; transform: none; }
+      .x-auth button.x-btn.x-btn--pri:active { background: #203f6c; transform: none; }
+      .x-arow { color: #68768a; font-size: 12px; }
+      .x-arow label { color: #45546a; }
+      .x-arow input { accent-color: #315f9f; }
+      .x-aver { color: #b7c5d6; font-size: 11px; }
+      @media (min-width: 1200px) { .x-brandp h2 { font-size: 38px; } }
       @media (max-width: 860px) {
-        .x-auth { background-image: radial-gradient(ellipse 100% 42% at 50% 0%, rgba(67,122,206,.3), transparent 82%), linear-gradient(160deg,#0b2147,#102d5b 58%,#f7f9fd 58%); }
-        .x-auth::before { width: 520px; left: 50%; top: 100px; opacity: .5; }
-        .x-sky { opacity: .55; }
-        .x-brandp { height: 178px; padding: 20px 24px 18px; }
-        .x-brandp h2 { margin-top: 24px; font-size: 22px; }
-        .x-formp { min-height: calc(100dvh - 178px); padding: 24px 24px max(24px, env(safe-area-inset-bottom)); background: #f7f9fd; }
-        .x-auth .x-acard { width: 100%; padding: 27px 24px 24px; border: 1px solid #e9eef7; border-radius: 16px; background: #fff; box-shadow: 0 14px 38px rgba(31,58,102,.09); }
-        .x-auth .x-acard::before { margin-bottom: 14px; }
-        .x-auth .x-acard > p { margin-bottom: 22px; }
-        .x-aver { color: #8793a6; }
-      }
-      @media (max-width: 380px) { .x-auth .x-acard { padding-right: 19px; padding-left: 19px; } .x-brandp { padding-right: 20px; padding-left: 20px; } }
-      @media (prefers-reduced-motion: reduce) { .x-auth button.x-btn.x-btn--pri:hover { transform: none; } }
-      /* 参考稿方向：提亮星空与轨道光感，采用透亮蓝玻璃卡片 */
-      .x-auth {
-        background-color: #164783;
-        background-image: radial-gradient(ellipse 58% 68% at 42% 46%, rgba(69,143,224,.58), transparent 74%), radial-gradient(ellipse 34% 42% at 82% 22%, rgba(94,174,255,.28), transparent 78%), linear-gradient(132deg,#12366c 0%,#1b5594 48%,#153e78 100%);
-      }
-      .x-auth::before { border-color: rgba(190,220,255,.16); box-shadow: 0 0 0 48px rgba(190,220,255,.05), 0 0 0 110px rgba(190,220,255,.035), inset 0 0 140px rgba(93,174,255,.13); }
-      .x-auth::after { background: radial-gradient(ellipse 82% 86% at 50% 40%, transparent 58%, rgba(9,31,69,.12) 100%); }
-      .x-sky { opacity: 1; }
-      .x-chart .x-grid { stroke-opacity: .12; }
-      .x-brandp h2 { text-shadow: 0 3px 26px rgba(112,184,255,.26); }
-      .x-brandp > div > p { color: rgba(232,242,255,.86); }
-      .x-hl li { align-items: center; gap: 14px; }
-      .x-hl svg { width: 52px; height: 52px; box-sizing: border-box; padding: 15px; margin: 0; border-radius: 50%; background: rgba(53,136,224,.24); stroke: #91d8ff; }
-      .x-hl li:nth-child(2) svg { background: rgba(116,103,231,.25); stroke: #c2bdff; }
-      .x-hl li:nth-child(3) svg { background: rgba(42,185,190,.2); stroke: #8cf0e6; }
-      .x-hl small { color: rgba(222,235,255,.8); }
-      .x-auth .x-acard { border: 1px solid rgba(177,216,255,.5); background: linear-gradient(145deg,rgba(52,111,181,.78),rgba(24,69,133,.74)); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); box-shadow: 0 24px 70px rgba(5,28,65,.28), inset 0 1px 0 rgba(255,255,255,.16); }
-      .x-auth .x-acard::before { color: #b9d7ff; }
-      .x-auth .x-acard h1 { color: #fff; font-size: 27px; }
-      .x-auth .x-acard > p { color: rgba(221,235,255,.78); }
-      .x-af label > span { color: #edf5ff; }
-      .x-af .x-input { border-color: rgba(178,211,255,.31); color: #fff; background: rgba(11,43,91,.27); }
-      .x-af .x-input::placeholder { color: rgba(217,232,255,.55); }
-      .x-af .x-input:hover { border-color: rgba(174,221,255,.72); background: rgba(12,47,98,.36); }
-      .x-af .x-input:focus { border-color: #83caff; background: rgba(11,43,91,.4); box-shadow: 0 0 0 4px rgba(92,177,255,.17); }
-      .x-auth button.x-btn.x-btn--pri { color: #fff; background: linear-gradient(100deg,#3289f5,#48b6f5); box-shadow: 0 8px 22px rgba(21,120,235,.34), inset 0 1px 0 rgba(255,255,255,.25); }
-      .x-auth button.x-btn.x-btn--pri:hover { background: linear-gradient(100deg,#287ce8,#36a8ed); box-shadow: 0 10px 26px rgba(21,120,235,.42); }
-      .x-arow, .x-arow label { color: rgba(231,241,255,.86); }
-      .x-arow input { accent-color: #51b6ff; }
-      .x-aver { color: rgba(220,235,255,.72); }
-      .x-brandp::after { content: "／  让研发更高效  ／"; position: fixed; top: 34px; right: 4vw; z-index: 1; color: rgba(208,229,255,.78); font-size: 12px; letter-spacing: .28em; }
-      @media (max-width: 860px) {
-        .x-auth { background-image: radial-gradient(ellipse 100% 46% at 50% 0%,rgba(83,161,240,.5),transparent 84%),linear-gradient(155deg,#153e77 0%,#1b5796 54%,#f5f8fd 54%); }
-        .x-auth::before { opacity: .7; }
+        .x-auth { background: linear-gradient(160deg,#17365d 0%,#1c416c 28%,#f5f7fa 28%,#f5f7fa 100%); }
         .x-auth::after { background: none; }
-        .x-brandp::after { display: none; }
-        .x-auth .x-acard { border-color: rgba(177,216,255,.5); background: linear-gradient(145deg,rgba(49,105,174,.96),rgba(28,75,139,.96)); box-shadow: 0 16px 42px rgba(18,57,105,.2),inset 0 1px 0 rgba(255,255,255,.15); }
+        .x-sky { opacity: .34; }
+        .x-brandp { height: 160px; padding: 20px 20px 16px; }
+        .x-brandp h2 { margin-top: 20px; font-size: 22px; }
+        .x-formp { min-height: calc(100dvh - 160px); padding: 24px 20px; background: #f5f7fa; }
+        .x-auth .x-acard { width: 100%; padding: 25px 22px 23px; border: 1px solid #dce3ec; border-radius: 10px; background: #fbfcfe; box-shadow: 0 8px 22px rgba(20,42,72,.07); }
+        .x-auth .x-acard::before { margin-bottom: 14px; }
+        .x-auth .x-acard > p { margin-bottom: 21px; }
+        .x-aver { color: #8793a4; }
       }
+      @media (max-width: 380px) { .x-auth .x-acard { padding-right: 18px; padding-left: 18px; } }
+      @media (prefers-reduced-motion: reduce) { .x-trails, .x-tw circle { animation: none; } }
     </style>
   </head>
   <body>
@@ -1310,8 +1281,8 @@
       <section class="x-brandp" aria-label="产品介绍">
         <div class="x-blogo"><svg width="36" height="36" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#2F6BDB" /><circle cx="16" cy="16" r="10.25" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width=".9" /><circle cx="23.25" cy="8.75" r="1.7" fill="#fff" /><circle cx="8.75" cy="23.25" r="1.25" fill="#fff" fill-opacity=".85" /><path d="M16 7.5Q17.1 14.9 24.5 16Q17.1 17.1 16 24.5Q14.9 17.1 7.5 16Q14.9 14.9 16 7.5Z" fill="#fff" /></svg><span class="x-wm"><b>星枢</b><i>Matrix</i></span></div>
         <div>
-          <h2>一站式研发效能平台</h2>
-          <p>从需求到上线、从集群到告警，一个平台串起研发、测试与运维的<span style="white-space: nowrap">每一步。</span></p>
+          <h2>研发与运维，一枢相连</h2>
+          <p>需求、代码、交付与运维，在同一工作台中协同推进。</p>
           <ul class="x-hl">
             <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6" /></svg><span><b>需求全流程追踪</b><small>九个阶段可视化，停留时长一目了然</small></span></li>
             <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z M12 12l8-4.5M12 12v9M12 12L4 7.5" /></svg><span><b>CI/CD 与集群一体化</b><small>一次初始化，接入代码、镜像与 Kubernetes</small></span></li>
