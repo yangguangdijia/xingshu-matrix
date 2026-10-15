@@ -950,6 +950,35 @@
         .x-hl b { font-size: 15px; line-height: 1.618; }
         .x-hl small { font-size: 13px; line-height: 1.618; }
       }
+      /* 登录 · 平板/小桌面 861–1199：同一黄金比例构图。组宽 92vw 居中，文案 ≈61.8% / 卡片 ≈38.2%（卡宽 clamp 320–400），间距 34；
+         上下留白 1:2 → 组光学中心约 40% 高；北极星在 (38.2%, 38.2%)；银河经过间隙（见星图脚本）。logo 与页脚随页面滚动，行内占位，矮屏不重叠 */
+      @media (min-width: 861px) and (max-width: 1199.98px) {
+        .x-auth { --x-cardw: clamp(320px, 34vw, 400px); --x-gap: 34px; --px: 38.2%; --py: 38.2%;
+          grid-template-columns: minmax(0, 1fr) var(--x-cardw); grid-template-rows: minmax(89px, 1fr) auto minmax(89px, 2fr);
+          column-gap: var(--x-gap); align-items: center; padding: 0 4vw;
+          background: #0F2A5C radial-gradient(ellipse 72% 68% at 50% 40%, #1A3F7A 0%, #16376D 45%, #0F2A5C 100%) fixed; }
+        .x-auth::after { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none; background: radial-gradient(ellipse 78% 82% at 50% 40%, rgba(8, 22, 52, 0) 58%, rgba(8, 22, 52, .28) 84%, rgba(6, 16, 40, .5) 100%); }
+        .x-brandp { grid-row: 1 / 4; grid-column: 1; align-self: stretch; display: grid; grid-template-rows: subgrid; gap: 0; padding: 0; }
+        .x-blogo { grid-row: 1; align-self: start; padding: 34px 0 13px; }
+        .x-brandp > div { grid-row: 2; }
+        .x-brandp > small { grid-row: 3; align-self: end; padding: 21px 0 34px; }
+        .x-formp { grid-row: 2; grid-column: 2; min-height: 0; padding: 0; align-items: flex-start; gap: 13px; }
+        .x-aver { width: var(--x-cardw); }
+        .x-brandp h2 { margin: 0 0 13px; font-size: 34px; line-height: 1.236; letter-spacing: .03em; }
+        .x-brandp > div > p { margin: 0 0 34px; max-width: 30em; font-size: 15px; line-height: 1.618; }
+        .x-hl { gap: 21px; max-width: 420px; }
+        .x-hl li { gap: 13px; }
+        .x-hl svg { margin-top: 1px; }
+        .x-hl b { font-size: 14px; line-height: 1.618; }
+        .x-hl small { font-size: 13px; line-height: 1.618; }
+      }
+      @media (min-width: 861px) and (max-width: 1199.98px) and (max-height: 719.98px) {
+        .x-auth { grid-template-rows: minmax(76px, 1fr) auto minmax(55px, 2fr); }
+        .x-blogo { padding: 21px 0 13px; }
+        .x-brandp > small { padding: 13px 0 21px; }
+        .x-brandp > div > p { margin-bottom: 21px; }
+        .x-hl { gap: 13px; }
+      }
       /* 运维中心 · 用户与权限 */
       .x-iamgrid { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; }
       @media (max-width: 860px) { .x-iamgrid { grid-template-columns: 1fr; } }
@@ -1256,6 +1285,8 @@
           var x0 = -.03 * w, y0 = 1.02 * h, dx = 1.06 * w, dy = -1.02 * h, L = Math.hypot(dx, dy), nx = -dy / L, ny = dx / L, bw = .06 * Math.hypot(w, h);
           // 桌面 ≥1200：轴线平移，穿过文案与卡片之间的间隙（组宽 ≤1180、左右留 55、间距 64、61.8% 分栏），高度在 40% 黄金点
           if (w >= 1200) { var gw = Math.min(1180, w - 110), gx = (w - gw) / 2 + (gw - 64) * .618 + 32, gy = .4 * h, t0 = (gx - x0) / dx; y0 = gy - t0 * dy; }
+          // 861–1199：组宽 92vw、卡宽 clamp(320, 34vw, 400)、间距 34，轴线同样穿过间隙中点、高度 40%
+          else if (w >= 861) { var cw = Math.min(400, Math.max(320, .34 * w)), gx2 = .96 * w - cw - 17, gy2 = .4 * h, t2 = (gx2 - x0) / dx; y0 = gy2 - t2 * dy; }
           band.forEach(function (s) { g.globalAlpha = s[4]; g.fillStyle = s[3]; dot(g, x0 + s[0] * dx + s[1] * bw * nx, y0 + s[0] * dy + s[1] * bw * ny, s[2]); });
           g.globalAlpha = 1;
         }
