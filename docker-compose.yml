@@ -1,0 +1,8 @@
+services:
+  xingshu-matrix:
+    build: .
+    image: xingshu-matrix:latest
+    container_name: xingshu-matrix
+    ports:
+      - "8080:80"
+    restart: unless-stopped
