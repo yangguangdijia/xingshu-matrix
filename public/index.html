@@ -1207,6 +1207,44 @@
       }
       @media (max-width: 380px) { .x-auth .x-acard { padding-right: 19px; padding-left: 19px; } .x-brandp { padding-right: 20px; padding-left: 20px; } }
       @media (prefers-reduced-motion: reduce) { .x-auth button.x-btn.x-btn--pri:hover { transform: none; } }
+      /* 参考稿方向：提亮星空与轨道光感，采用透亮蓝玻璃卡片 */
+      .x-auth {
+        background-color: #164783;
+        background-image: radial-gradient(ellipse 58% 68% at 42% 46%, rgba(69,143,224,.58), transparent 74%), radial-gradient(ellipse 34% 42% at 82% 22%, rgba(94,174,255,.28), transparent 78%), linear-gradient(132deg,#12366c 0%,#1b5594 48%,#153e78 100%);
+      }
+      .x-auth::before { border-color: rgba(190,220,255,.16); box-shadow: 0 0 0 48px rgba(190,220,255,.05), 0 0 0 110px rgba(190,220,255,.035), inset 0 0 140px rgba(93,174,255,.13); }
+      .x-auth::after { background: radial-gradient(ellipse 82% 86% at 50% 40%, transparent 58%, rgba(9,31,69,.12) 100%); }
+      .x-sky { opacity: 1; }
+      .x-chart .x-grid { stroke-opacity: .12; }
+      .x-brandp h2 { text-shadow: 0 3px 26px rgba(112,184,255,.26); }
+      .x-brandp > div > p { color: rgba(232,242,255,.86); }
+      .x-hl li { align-items: center; gap: 14px; }
+      .x-hl svg { width: 52px; height: 52px; box-sizing: border-box; padding: 15px; margin: 0; border-radius: 50%; background: rgba(53,136,224,.24); stroke: #91d8ff; }
+      .x-hl li:nth-child(2) svg { background: rgba(116,103,231,.25); stroke: #c2bdff; }
+      .x-hl li:nth-child(3) svg { background: rgba(42,185,190,.2); stroke: #8cf0e6; }
+      .x-hl small { color: rgba(222,235,255,.8); }
+      .x-auth .x-acard { border: 1px solid rgba(177,216,255,.5); background: linear-gradient(145deg,rgba(52,111,181,.78),rgba(24,69,133,.74)); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); box-shadow: 0 24px 70px rgba(5,28,65,.28), inset 0 1px 0 rgba(255,255,255,.16); }
+      .x-auth .x-acard::before { color: #b9d7ff; }
+      .x-auth .x-acard h1 { color: #fff; font-size: 27px; }
+      .x-auth .x-acard > p { color: rgba(221,235,255,.78); }
+      .x-af label > span { color: #edf5ff; }
+      .x-af .x-input { border-color: rgba(178,211,255,.31); color: #fff; background: rgba(11,43,91,.27); }
+      .x-af .x-input::placeholder { color: rgba(217,232,255,.55); }
+      .x-af .x-input:hover { border-color: rgba(174,221,255,.72); background: rgba(12,47,98,.36); }
+      .x-af .x-input:focus { border-color: #83caff; background: rgba(11,43,91,.4); box-shadow: 0 0 0 4px rgba(92,177,255,.17); }
+      .x-auth button.x-btn.x-btn--pri { color: #fff; background: linear-gradient(100deg,#3289f5,#48b6f5); box-shadow: 0 8px 22px rgba(21,120,235,.34), inset 0 1px 0 rgba(255,255,255,.25); }
+      .x-auth button.x-btn.x-btn--pri:hover { background: linear-gradient(100deg,#287ce8,#36a8ed); box-shadow: 0 10px 26px rgba(21,120,235,.42); }
+      .x-arow, .x-arow label { color: rgba(231,241,255,.86); }
+      .x-arow input { accent-color: #51b6ff; }
+      .x-aver { color: rgba(220,235,255,.72); }
+      .x-brandp::after { content: "／  让研发更高效  ／"; position: fixed; top: 34px; right: 4vw; z-index: 1; color: rgba(208,229,255,.78); font-size: 12px; letter-spacing: .28em; }
+      @media (max-width: 860px) {
+        .x-auth { background-image: radial-gradient(ellipse 100% 46% at 50% 0%,rgba(83,161,240,.5),transparent 84%),linear-gradient(155deg,#153e77 0%,#1b5796 54%,#f5f8fd 54%); }
+        .x-auth::before { opacity: .7; }
+        .x-auth::after { background: none; }
+        .x-brandp::after { display: none; }
+        .x-auth .x-acard { border-color: rgba(177,216,255,.5); background: linear-gradient(145deg,rgba(49,105,174,.96),rgba(28,75,139,.96)); box-shadow: 0 16px 42px rgba(18,57,105,.2),inset 0 1px 0 rgba(255,255,255,.15); }
+      }
     </style>
   </head>
   <body>
