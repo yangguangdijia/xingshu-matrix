@@ -929,6 +929,27 @@
         .x-avwho .x-who { display: none; }
         .x-avbtn.x-avwho { padding: 0; width: 44px; justify-content: center; }
       }
+      /* 登录 · 桌面 ≥1200：黄金比例构图。内容组居中 ≤1180px，61.8% 文案 / 38.2% 卡片，间距 64；组光学中心约 40% 高（上下留白 1:2）；
+         北极星落在左黄金交点 (38.2%, 38.2%)；银河轴线经过文案与卡片之间的间隙；四周轻微暗角；间距 8/13/21/34/55，字号按 φ */
+      @media (min-width: 1200px) {
+        .x-auth { --x-gw: min(100%, 1180px); --x-gap: 64px; --px: 38.2%; --py: 38.2%;
+          grid-template-columns: calc((var(--x-gw) - var(--x-gap)) * .618) calc((var(--x-gw) - var(--x-gap)) * .382);
+          grid-template-rows: minmax(89px, 1fr) auto minmax(89px, 2fr); column-gap: var(--x-gap); justify-content: center; align-items: center; padding: 0 55px;
+          background: #0F2A5C radial-gradient(ellipse 72% 68% at 50% 40%, #1A3F7A 0%, #16376D 45%, #0F2A5C 100%) fixed; }
+        .x-auth::after { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none; background: radial-gradient(ellipse 78% 82% at 50% 40%, rgba(8, 22, 52, 0) 58%, rgba(8, 22, 52, .28) 84%, rgba(6, 16, 40, .5) 100%); }
+        .x-brandp { grid-row: 2; grid-column: 1; display: block; padding: 0; }
+        .x-formp { grid-row: 2; grid-column: 2; min-height: 0; padding: 0; align-items: flex-start; gap: 13px; }
+        .x-aver { width: var(--x-cardw); }
+        .x-blogo { position: fixed; top: 34px; left: 55px; z-index: 1; }
+        .x-brandp > small { position: fixed; left: 55px; bottom: 34px; z-index: 1; }
+        .x-brandp h2 { margin: 0 0 21px; font-size: 42px; line-height: 1.236; letter-spacing: .03em; }
+        .x-brandp > div > p { margin: 0 0 55px; max-width: 32em; font-size: 17px; line-height: 1.618; }
+        .x-hl { gap: 21px; max-width: 470px; }
+        .x-hl li { gap: 13px; }
+        .x-hl svg { margin-top: 3px; }
+        .x-hl b { font-size: 15px; line-height: 1.618; }
+        .x-hl small { font-size: 13px; line-height: 1.618; }
+      }
       /* 运维中心 · 用户与权限 */
       .x-iamgrid { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; }
       @media (max-width: 860px) { .x-iamgrid { grid-template-columns: 1fr; } }
@@ -1233,6 +1254,8 @@
           stars.forEach(function (s) { g.globalAlpha = s[4]; g.fillStyle = s[3]; dot(g, s[0] * w, s[1] * h, s[2]); });
           // 星带轴线：左下 (−3%, 102%) → 右上 (103%, 0%)，半宽约为对角线的 6%
           var x0 = -.03 * w, y0 = 1.02 * h, dx = 1.06 * w, dy = -1.02 * h, L = Math.hypot(dx, dy), nx = -dy / L, ny = dx / L, bw = .06 * Math.hypot(w, h);
+          // 桌面 ≥1200：轴线平移，穿过文案与卡片之间的间隙（组宽 ≤1180、左右留 55、间距 64、61.8% 分栏），高度在 40% 黄金点
+          if (w >= 1200) { var gw = Math.min(1180, w - 110), gx = (w - gw) / 2 + (gw - 64) * .618 + 32, gy = .4 * h, t0 = (gx - x0) / dx; y0 = gy - t0 * dy; }
           band.forEach(function (s) { g.globalAlpha = s[4]; g.fillStyle = s[3]; dot(g, x0 + s[0] * dx + s[1] * bw * nx, y0 + s[0] * dy + s[1] * bw * ny, s[2]); });
           g.globalAlpha = 1;
         }
