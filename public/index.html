@@ -1157,6 +1157,65 @@
       .x-mcst li.done b { color: var(--x-blue); border-color: var(--x-blue); }
       .x-mcov .x-input { width: 100%; min-width: 72px; box-sizing: border-box; }
       @media (max-width: 767px) { .x-mcchips .x-seg { min-height: 44px; } }
+      /* 星枢登录入口：功能优先，品牌由星图标识与低对比度坐标线表达 */
+      .x-auth {
+        --a-pri: #3268b2; --a-pri-h: #285895; --a-ink: #202a38; --a-sub: #667387; --a-line: #d6dde7;
+        display: grid; grid-template-columns: 1fr; grid-template-rows: 1fr; place-items: stretch;
+        padding: 0; overflow: auto; color: var(--a-ink);
+        background: #f3f5f8; color-scheme: light;
+      }
+      .x-auth::before { display: none; }
+      .x-auth::after { content: none; }
+      .x-sky { opacity: 1; }
+      .x-sky canvas { opacity: .22; }
+      .x-chart { left: 79%; top: 49%; width: 1520px; height: 1520px; opacity: .13; }
+      .x-grid { stroke: #597491; stroke-opacity: .3; }
+      .x-ticks text { fill: #617894; fill-opacity: .7; }
+      .x-trails { display: none; animation: none; }
+      .x-dip { stroke: #66819e; stroke-opacity: .62; }
+      .x-ptr { stroke: #8a7447; stroke-opacity: .55; }
+      .x-dstar { fill: #506b89; }
+      .x-dubhe { fill: #937844; }
+      .x-slab { fill: #617894; fill-opacity: .78; }
+      .x-slab--gold { fill: #92774a; fill-opacity: .82; }
+      .x-tw circle { animation: none; }
+      .x-brandp { position: fixed; top: 28px; left: 36px; z-index: 2; display: block; padding: 0; color: #26384d; text-shadow: none; }
+      .x-auth .x-brandp .x-blogo { position: static; top: auto; left: auto; z-index: auto; gap: 10px; }
+      .x-blogo svg { width: 30px; height: 30px; filter: none; }
+      .x-blogo .x-wm b { color: #24354a; font-size: 17px; letter-spacing: .02em; }
+      .x-blogo .x-wm i { margin-left: 4px; color: #6b7888; font-size: 15px; }
+      .x-brandp > div:not(.x-blogo), .x-brandp > small { display: none; }
+      .x-auth .x-formp { grid-row: 1; grid-column: 1; position: relative; z-index: 1; display: flex; width: 100%; height: 100%; min-height: 100dvh; box-sizing: border-box; align-items: center; justify-content: center; padding: 72px 24px 52px; background: transparent; }
+      .x-auth .x-acard { width: min(420px, calc(100vw - 40px)); box-sizing: border-box; padding: 34px 34px 30px; border: 1px solid #dce2ea; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px rgba(26,43,66,.08); }
+      .x-auth .x-acard::before { content: none; }
+      .x-auth .x-acard h1 { margin: 0 0 6px; color: #202a38; font-size: 24px; font-weight: 600; letter-spacing: 0; }
+      .x-auth .x-acard > p { margin: 0 0 26px; color: #69778a; font-size: 14px; }
+      .x-af { gap: 17px; }
+      .x-af label > span { margin-bottom: 7px; color: #364253; font-size: 13px; font-weight: 500; }
+      .x-af .x-input { width: 100%; height: 42px; box-sizing: border-box; padding: 0 12px; border: 1px solid #cbd3de; border-radius: 4px; color: #202a38; background: #fff; }
+      .x-af .x-input::placeholder { color: #98a2b0; }
+      .x-af .x-input:hover { border-color: #8da2bd; }
+      .x-af .x-input:focus { border-color: #3268b2; box-shadow: 0 0 0 2px rgba(50,104,178,.13); }
+      .x-auth button.x-btn.x-btn--pri { width: 100%; height: 42px; border: 1px solid #3268b2; border-radius: 4px; background: #3268b2; box-shadow: none; font-size: 14px; font-weight: 500; letter-spacing: 0; transition: background-color .15s ease,border-color .15s ease; }
+      .x-auth button.x-btn.x-btn--pri:hover { background: #285895; border-color: #285895; box-shadow: none; transform: none; }
+      .x-auth button.x-btn.x-btn--pri:active { background: #214a7d; transform: none; }
+      .x-arow { color: #6b7788; font-size: 12px; }
+      .x-arow label { color: #465367; }
+      .x-arow input { accent-color: #3268b2; }
+      .x-aver { width: min(420px, calc(100vw - 40px)); margin: 12px 0 0; color: #818b99; font-size: 11px; }
+      @media (max-width: 860px) {
+        .x-auth { grid-template-columns: 1fr; grid-template-rows: 1fr; background: #f3f5f8; }
+        .x-auth::after { display: none; }
+        .x-chart { left: 78%; top: 35%; width: 1000px; height: 1000px; opacity: .11; }
+        .x-sky canvas { opacity: .14; }
+        .x-brandp { top: 20px; left: 20px; }
+        .x-formp { min-height: 100dvh; height: auto; padding: 84px 20px 32px; background: transparent; }
+        .x-auth .x-acard { width: min(420px, 100%); padding: 29px 24px 25px; border-radius: 7px; }
+        .x-auth .x-acard > p { margin-bottom: 23px; }
+        .x-af .x-input, .x-auth button.x-btn.x-btn--pri { min-height: 44px; height: 44px; }
+        .x-aver { width: min(420px, 100%); color: #818b99; }
+      }
+      @media (prefers-reduced-motion: reduce) { .x-trails, .x-tw circle { animation: none; } }
     </style>
   </head>
   <body>
@@ -1222,8 +1281,8 @@
       <section class="x-brandp" aria-label="产品介绍">
         <div class="x-blogo"><svg width="36" height="36" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#2F6BDB" /><circle cx="16" cy="16" r="10.25" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width=".9" /><circle cx="23.25" cy="8.75" r="1.7" fill="#fff" /><circle cx="8.75" cy="23.25" r="1.25" fill="#fff" fill-opacity=".85" /><path d="M16 7.5Q17.1 14.9 24.5 16Q17.1 17.1 16 24.5Q14.9 17.1 7.5 16Q14.9 14.9 16 7.5Z" fill="#fff" /></svg><span class="x-wm"><b>星枢</b><i>Matrix</i></span></div>
         <div>
-          <h2>一站式研发效能平台</h2>
-          <p>从需求到上线、从集群到告警，一个平台串起研发、测试与运维的<span style="white-space: nowrap">每一步。</span></p>
+          <h2>研发与运维，一枢相连</h2>
+          <p>需求、代码、交付与运维，在同一工作台中协同推进。</p>
           <ul class="x-hl">
             <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6" /></svg><span><b>需求全流程追踪</b><small>九个阶段可视化，停留时长一目了然</small></span></li>
             <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z M12 12l8-4.5M12 12v9M12 12L4 7.5" /></svg><span><b>CI/CD 与集群一体化</b><small>一次初始化，接入代码、镜像与 Kubernetes</small></span></li>
@@ -1596,7 +1655,7 @@
         const card = $("acard");
         if (view === "login") {
           let mem = ""; try { mem = localStorage.getItem("xs-remember") || ""; } catch {}
-          card.innerHTML = `<h1>欢迎登录</h1><p>使用平台账号登录 星枢 Matrix</p>
+          card.innerHTML = `<h1>登录星枢</h1><p>使用平台账号进入研发与运维工作台</p>
             <form class="x-af" id="lf" novalidate>
               <p class="x-aerr" id="lerr" role="alert" hidden></p>
               <label><span>用户名</span><input class="x-input" name="u" autocomplete="username" placeholder="请输入用户名" value="${esc(mem)}" /></label>
