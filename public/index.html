@@ -1157,64 +1157,64 @@
       .x-mcst li.done b { color: var(--x-blue); border-color: var(--x-blue); }
       .x-mcov .x-input { width: 100%; min-width: 72px; box-sizing: border-box; }
       @media (max-width: 767px) { .x-mcchips .x-seg { min-height: 44px; } }
-      /* 星枢登录页：以星图坐标与清晰的工作台层级表达“枢纽”，避免装饰性光效 */
+      /* 星枢登录入口：功能优先，品牌由星图标识与低对比度坐标线表达 */
       .x-auth {
-        --a-pri: #315f9f; --a-pri-h: #274f88; --a-ink: #202b3a; --a-sub: #657286; --a-line: #d8e0ea;
-        background: #17365d;
-        background-image: linear-gradient(115deg, #17365d 0%, #1c416c 54%, #17365d 100%);
+        --a-pri: #3268b2; --a-pri-h: #285895; --a-ink: #202a38; --a-sub: #667387; --a-line: #d6dde7;
+        display: grid; grid-template-columns: 1fr; grid-template-rows: 1fr; place-items: stretch;
+        padding: 0; overflow: auto; color: var(--a-ink);
+        background: #f3f5f8; color-scheme: light;
       }
       .x-auth::before { display: none; }
-      .x-auth::after { background: linear-gradient(90deg, rgba(9,25,47,.12), transparent 48%, rgba(9,25,47,.08)); }
-      .x-sky { opacity: .48; }
-      .x-chart .x-grid { stroke: #bfd0e3; stroke-opacity: .12; }
-      .x-trails { stroke: #c9d8e8; stroke-opacity: .28; animation: none; }
+      .x-auth::after { content: none; }
+      .x-sky { opacity: 1; }
+      .x-sky canvas { opacity: .22; }
+      .x-chart { left: 79%; top: 49%; width: 1520px; height: 1520px; opacity: .13; }
+      .x-grid { stroke: #597491; stroke-opacity: .3; }
+      .x-ticks text { fill: #617894; fill-opacity: .7; }
+      .x-trails { display: none; animation: none; }
+      .x-dip { stroke: #66819e; stroke-opacity: .62; }
+      .x-ptr { stroke: #8a7447; stroke-opacity: .55; }
+      .x-dstar { fill: #506b89; }
+      .x-dubhe { fill: #937844; }
+      .x-slab { fill: #617894; fill-opacity: .78; }
+      .x-slab--gold { fill: #92774a; fill-opacity: .82; }
       .x-tw circle { animation: none; }
-      .x-brandp { text-shadow: none; }
-      .x-blogo { gap: 10px; }
-      .x-blogo svg { filter: none; }
-      .x-blogo .x-wm b { letter-spacing: .02em; }
-      .x-blogo .x-wm i { margin-left: 4px; opacity: .82; }
-      .x-brandp h2 { margin-bottom: 14px; font-size: 38px; letter-spacing: .01em; text-shadow: none; }
-      .x-brandp > div > p { max-width: 31em; color: #d6e0ec; font-size: 15px; }
-      .x-hl { gap: 15px; }
-      .x-hl li { align-items: flex-start; gap: 12px; }
-      .x-hl svg { width: 18px; height: 18px; margin-top: 3px; padding: 0; border-radius: 0; background: none; stroke: #9db8d5; filter: none; }
-      .x-hl b { font-size: 14px; font-weight: 500; }
-      .x-hl small { color: #c1cfdf; font-size: 12px; }
-      .x-brandp > small { color: #aabbd0; }
-      .x-brandp::after { content: none; }
-      .x-formp { gap: 12px; }
-      .x-auth .x-acard { width: min(var(--x-cardw), calc(100vw - 36px)); padding: 34px 32px 30px; border: 1px solid #d8e1ed; border-radius: 12px; background: #fbfcfe; box-shadow: 0 16px 40px rgba(6,22,43,.2); }
-      .x-auth .x-acard::before { content: "星枢 Matrix  /  平台账号"; display: block; margin: 0 0 19px; color: #708096; font-size: 12px; font-weight: 500; letter-spacing: .04em; }
-      .x-auth .x-acard h1 { margin: 0 0 5px; color: #202b3a; font-size: 24px; font-weight: 600; letter-spacing: 0; }
-      .x-auth .x-acard > p { margin: 0 0 24px; color: #748196; font-size: 13px; }
-      .x-af { gap: 16px; }
-      .x-af label > span { margin-bottom: 6px; color: #364456; font-size: 13px; font-weight: 500; }
-      .x-af .x-input { height: 42px; padding: 0 12px; border: 1px solid #cfd8e4; border-radius: 6px; background: #fff; color: #202b3a; }
-      .x-af .x-input::placeholder { color: #98a3b2; }
-      .x-af .x-input:hover { border-color: #8ba5c5; background: #fff; }
-      .x-af .x-input:focus { border-color: #4777b5; box-shadow: 0 0 0 3px rgba(49,95,159,.12); }
-      .x-auth button.x-btn.x-btn--pri { height: 42px; border: 1px solid #315f9f; border-radius: 6px; background: #315f9f; box-shadow: none; font-size: 14px; letter-spacing: .02em; transition: background-color .15s ease,border-color .15s ease; }
-      .x-auth button.x-btn.x-btn--pri:hover { background: #274f88; border-color: #274f88; box-shadow: none; transform: none; }
-      .x-auth button.x-btn.x-btn--pri:active { background: #203f6c; transform: none; }
-      .x-arow { color: #68768a; font-size: 12px; }
-      .x-arow label { color: #45546a; }
-      .x-arow input { accent-color: #315f9f; }
-      .x-aver { color: #b7c5d6; font-size: 11px; }
-      @media (min-width: 1200px) { .x-brandp h2 { font-size: 38px; } }
+      .x-brandp { position: fixed; top: 28px; left: 36px; z-index: 2; display: block; padding: 0; color: #26384d; text-shadow: none; }
+      .x-auth .x-brandp .x-blogo { position: static; top: auto; left: auto; z-index: auto; gap: 10px; }
+      .x-blogo svg { width: 30px; height: 30px; filter: none; }
+      .x-blogo .x-wm b { color: #24354a; font-size: 17px; letter-spacing: .02em; }
+      .x-blogo .x-wm i { margin-left: 4px; color: #6b7888; font-size: 15px; }
+      .x-brandp > div:not(.x-blogo), .x-brandp > small { display: none; }
+      .x-auth .x-formp { grid-row: 1; grid-column: 1; position: relative; z-index: 1; display: flex; width: 100%; height: 100%; min-height: 100dvh; box-sizing: border-box; align-items: center; justify-content: center; padding: 72px 24px 52px; background: transparent; }
+      .x-auth .x-acard { width: min(420px, calc(100vw - 40px)); box-sizing: border-box; padding: 34px 34px 30px; border: 1px solid #dce2ea; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px rgba(26,43,66,.08); }
+      .x-auth .x-acard::before { content: none; }
+      .x-auth .x-acard h1 { margin: 0 0 6px; color: #202a38; font-size: 24px; font-weight: 600; letter-spacing: 0; }
+      .x-auth .x-acard > p { margin: 0 0 26px; color: #69778a; font-size: 14px; }
+      .x-af { gap: 17px; }
+      .x-af label > span { margin-bottom: 7px; color: #364253; font-size: 13px; font-weight: 500; }
+      .x-af .x-input { width: 100%; height: 42px; box-sizing: border-box; padding: 0 12px; border: 1px solid #cbd3de; border-radius: 4px; color: #202a38; background: #fff; }
+      .x-af .x-input::placeholder { color: #98a2b0; }
+      .x-af .x-input:hover { border-color: #8da2bd; }
+      .x-af .x-input:focus { border-color: #3268b2; box-shadow: 0 0 0 2px rgba(50,104,178,.13); }
+      .x-auth button.x-btn.x-btn--pri { width: 100%; height: 42px; border: 1px solid #3268b2; border-radius: 4px; background: #3268b2; box-shadow: none; font-size: 14px; font-weight: 500; letter-spacing: 0; transition: background-color .15s ease,border-color .15s ease; }
+      .x-auth button.x-btn.x-btn--pri:hover { background: #285895; border-color: #285895; box-shadow: none; transform: none; }
+      .x-auth button.x-btn.x-btn--pri:active { background: #214a7d; transform: none; }
+      .x-arow { color: #6b7788; font-size: 12px; }
+      .x-arow label { color: #465367; }
+      .x-arow input { accent-color: #3268b2; }
+      .x-aver { width: min(420px, calc(100vw - 40px)); margin: 12px 0 0; color: #818b99; font-size: 11px; }
       @media (max-width: 860px) {
-        .x-auth { background: linear-gradient(160deg,#17365d 0%,#1c416c 28%,#f5f7fa 28%,#f5f7fa 100%); }
-        .x-auth::after { background: none; }
-        .x-sky { opacity: .34; }
-        .x-brandp { height: 160px; padding: 20px 20px 16px; }
-        .x-brandp h2 { margin-top: 20px; font-size: 22px; }
-        .x-formp { min-height: calc(100dvh - 160px); padding: 24px 20px; background: #f5f7fa; }
-        .x-auth .x-acard { width: 100%; padding: 25px 22px 23px; border: 1px solid #dce3ec; border-radius: 10px; background: #fbfcfe; box-shadow: 0 8px 22px rgba(20,42,72,.07); }
-        .x-auth .x-acard::before { margin-bottom: 14px; }
-        .x-auth .x-acard > p { margin-bottom: 21px; }
-        .x-aver { color: #8793a4; }
+        .x-auth { grid-template-columns: 1fr; grid-template-rows: 1fr; background: #f3f5f8; }
+        .x-auth::after { display: none; }
+        .x-chart { left: 78%; top: 35%; width: 1000px; height: 1000px; opacity: .11; }
+        .x-sky canvas { opacity: .14; }
+        .x-brandp { top: 20px; left: 20px; }
+        .x-formp { min-height: 100dvh; height: auto; padding: 84px 20px 32px; background: transparent; }
+        .x-auth .x-acard { width: min(420px, 100%); padding: 29px 24px 25px; border-radius: 7px; }
+        .x-auth .x-acard > p { margin-bottom: 23px; }
+        .x-af .x-input, .x-auth button.x-btn.x-btn--pri { min-height: 44px; height: 44px; }
+        .x-aver { width: min(420px, 100%); color: #818b99; }
       }
-      @media (max-width: 380px) { .x-auth .x-acard { padding-right: 18px; padding-left: 18px; } }
       @media (prefers-reduced-motion: reduce) { .x-trails, .x-tw circle { animation: none; } }
     </style>
   </head>
@@ -1655,7 +1655,7 @@
         const card = $("acard");
         if (view === "login") {
           let mem = ""; try { mem = localStorage.getItem("xs-remember") || ""; } catch {}
-          card.innerHTML = `<h1>欢迎登录</h1><p>使用平台账号登录 星枢 Matrix</p>
+          card.innerHTML = `<h1>登录星枢</h1><p>使用平台账号进入研发与运维工作台</p>
             <form class="x-af" id="lf" novalidate>
               <p class="x-aerr" id="lerr" role="alert" hidden></p>
               <label><span>用户名</span><input class="x-input" name="u" autocomplete="username" placeholder="请输入用户名" value="${esc(mem)}" /></label>
