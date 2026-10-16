@@ -606,12 +606,30 @@
       .x-kv code { font: 12px "Geist Mono", monospace; }
       .x-kxtools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
       .x-kxtabs { border-bottom: 1px solid var(--x-line); margin-bottom: 16px; overflow-x: auto; }
-      .x-helm { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
-      .x-helm .x-hcard { display: grid; gap: 10px; align-content: start; padding: 16px; box-shadow: none; }
+      .x-helm { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); gap: 8px; }
+      .x-helm .x-hcard { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; padding: 10px 14px; border: 1px solid var(--x-line); border-radius: 8px; background: #fff; }
+      .x-helm .x-hcard:hover { border-color: #d0d5dd; }
       .x-helm .x-hcard[hidden] { display: none; }
-      .x-hcard p { margin: 0; font-size: 13px; line-height: 1.6; }
+      .x-hcard .x-logo { grid-column: 1; grid-row: 1 / span 2; }
+      .x-hhd { grid-column: 2; grid-row: 1; display: flex; align-items: baseline; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; }
+      .x-hhd .x-frac { overflow: hidden; text-overflow: ellipsis; }
+      .x-hcard p { grid-column: 2; grid-row: 2; margin: 0; font-size: 13px; line-height: 1.5; color: var(--x-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .x-hact { grid-column: 3; grid-row: 1 / span 2; display: flex; align-items: center; gap: 10px; }
       .x-hrow { display: flex; align-items: center; gap: 10px; min-width: 0; }
-      .x-hicon { flex: none; width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center; background: var(--c); color: #fff; font-weight: 600; font-size: 18px; }
+      .x-logo { flex: none; display: block; width: 32px; height: 32px; }
+      .x-logo svg { display: block; width: 100%; height: 100%; }
+      /* 中间件 (#/middleware) */
+      .x-mwtab { display: inline-flex; align-items: center; gap: 6px; }
+      .x-mwlag { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+      .x-mwlag i { display: block; width: 96px; height: 6px; border-radius: 3px; background: var(--x-line); overflow: hidden; }
+      .x-mwlag em { display: block; height: 100%; background: var(--c); }
+      .x-mwlag strong { font-weight: 600; color: var(--c); font-variant-numeric: tabular-nums; }
+      .x-mwsp { width: 80px; height: 24px; display: block; overflow: visible; }
+      .x-mwsp polyline { fill: none; stroke: var(--c); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+      .x-mwdown > td { background: #fff1f0; }
+      .x-mwp > .x-panel + .x-panel { margin-top: 16px; }
+      .x-mwp .x-h2 { margin: 0 0 12px; }
+      .x-mwp .x-tbar .x-h2 { margin: 0; }
       .x-hsp { width: 80px; height: 24px; display: block; overflow: visible; }
       .x-hsp polyline { fill: none; stroke: var(--x-blue); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
       .x-kxfs { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
@@ -1731,7 +1749,9 @@
           { "name": "节点磁盘使用率过高", "expr": "(1 - node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 > 80", "p": "P3", "dur": "15m", "ch": ["邮件"], "on": true },
           { "name": "Pod 频繁重启", "expr": "increase(kube_pod_container_status_restarts_total[30m]) > 3", "p": "P2", "dur": "5m", "ch": ["飞书"], "on": true },
           { "name": "容器内存使用率过高", "expr": "container_memory_working_set_bytes / container_spec_memory_limit_bytes > 0.9", "p": "P1", "dur": "5m", "ch": ["钉钉"], "on": false },
-          { "name": "证书即将过期", "expr": "(probe_ssl_earliest_cert_expiry - time()) / 86400 < 14", "p": "P3", "dur": "1h", "ch": ["邮件"], "on": true }
+          { "name": "证书即将过期", "expr": "(probe_ssl_earliest_cert_expiry - time()) / 86400 < 14", "p": "P3", "dur": "1h", "ch": ["邮件"], "on": true },
+          { "name": "Kafka 消费堆积", "expr": "sum by (consumergroup) (kafka_consumergroup_lag) > 50000", "p": "P1", "dur": "5m", "ch": ["飞书"], "on": true },
+          { "name": "RabbitMQ 节点宕机", "expr": "up{job=\"rabbitmq\"} == 0", "p": "P0", "dur": "1m", "ch": ["飞书", "企业微信"], "on": true }
         ],
         "firing": [
           { "rule": "订单服务 5xx 错误率过高", "val": "2.1%", "who": "王芳" },
@@ -1863,6 +1883,7 @@
         traffic: { label: "流量治理", icon: "flow", render: renderTraffic },
         netpol: { label: "网络策略", icon: "net", render: renderNetpol },
         observe: { label: "监控告警", icon: "eye", render: renderObserve },
+        middleware: { label: "中间件", icon: "mq", render: (el) => renderMW(el) },
         trace: { label: "链路追踪", icon: "flow", render: renderTrace },
         logs: { label: "日志检索", icon: "doc", render: (el) => renderLogs(el) },
         approvals: { label: "变更审批", icon: "check", render: renderApprovals },
@@ -4658,7 +4679,12 @@
       const opsOn = () => demo || linked() || userClusters();
       let OPS = null;
       const ops = () => (OPS = OPS || JSON.parse($("ops-demo").textContent));
-      const liveAlerts = () => (opsOn() ? ops().alerts.filter((a) => !a.ack) : []);
+      // 中间件告警 (demo only): raised by the 中间件 page's demo instances, listed in 告警事件 with a link back (mw)
+      const MW_ALERTS = [
+        { p: "P1", app: "kafka-prod", env: "生产", msg: "Kafka 消费堆积：消费组 order-events Lag 128k，持续上涨", rule: "Kafka 消费堆积", val: "128k", t: "22 分钟", who: "", st: "告警中", mw: "#/middleware/kafka/kafka-prod" },
+        { p: "P0", app: "rabbitmq-prod", env: "生产", msg: "RabbitMQ 节点宕机：rabbit@rabbitmq-prod-2 不可达，集群 2/3 运行", rule: "RabbitMQ 节点宕机", val: "2/3", t: "9 分钟", who: "", st: "告警中", mw: "#/middleware/rabbitmq/rabbitmq-prod" },
+      ];
+      const liveAlerts = () => (opsOn() ? [...ops().alerts, ...(demo ? MW_ALERTS : [])].filter((a) => !a.ack) : []);
       function setDemo(v) {
         demo = v; if (v) { OPS = null; aiSeedDemo(); }
         try { localStorage.setItem(DEMO_KEY, v ? "1" : "0"); } catch {}
@@ -6500,7 +6526,33 @@
       }
       // 应用商店 (#/cluster/helm): 目录 / 已安装 / 仓库. Demo repos and releases (demo: true) show only with 加载演示数据; the catalog lists charts of the repos present
       const HM_CATS = ["数据库", "中间件", "监控", "网络", "CI-CD", "安全"], HM_TABS = ["目录", "已安装", "仓库"];
-      const HM_COL = ["#1677ff", "#13a8a8", "#fa8c16", "#722ed1", "#eb2f96", "#389e0d", "#d4380d"];
+      // Software logos: simplified brand marks on a 32×32 grid; logo(name) falls back to a generic box
+      const LOGOS = {
+        mysql: '<path fill="#00758F" d="M4.5 24.5c1-5.2 4.2-9.8 9.4-11.8 3-1.2 5.2-1.4 7.2-3.6.8-.9 1.4-2 1.7-3.1 1 1.7 1 3.6.1 5.3 2.3.9 3.9 2.8 4.3 5.2-1.4-.9-2.7-1.3-4.1-1.3-.8 2.7-.1 5.1 1.3 7.2-2.6-.6-4.4-2.4-5.3-4.8-3.3.8-5.7 2.7-8 5.4-2 1.4-4.2 1.9-6.6 1.5z"/><path fill="#F29111" d="M23.4 18.6c1.4.6 2.5 1.7 3.1 3.1-1.4-.2-2.5-.8-3.3-1.7z"/><circle cx="22.3" cy="11.8" r=".9" fill="#fff"/>',
+        postgresql: '<path fill="#336791" d="M16 3.5c-6.1 0-10.5 4.1-10.5 9.8 0 3.1 1.3 5.7 3.2 7.5v6.7l3.6-2.6v-2.5c1.1.3 2.3.5 3.6.5v5.6h3.2v-6c4.6-1.3 7.4-4.8 7.4-8.9 0-5.9-4.4-10.1-10.5-10.1z"/><circle cx="19.6" cy="11.6" r="1.5" fill="#fff"/><path fill="none" stroke="#fff" stroke-width="1.3" stroke-linecap="round" d="M10.6 9.4c1.5-1.9 3.3-2.7 5.2-2.7"/>',
+        redis: '<path fill="#A41E11" d="M3 21v3l13 5 13-5v-3l-13 5z"/><path fill="#DC382D" d="m3 21 13-5 13 5-13 5z"/><path fill="#A41E11" d="M3 15v3l13 5 13-5v-3l-13 5z"/><path fill="#DC382D" d="m3 15 13-5 13 5-13 5z"/><path fill="#A41E11" d="M3 9v3l13 5 13-5V9l-13 5z"/><path fill="#DC382D" d="m3 9 13-5 13 5-13 5z"/><ellipse cx="11.5" cy="9" rx="3" ry="1.3" fill="#fff"/><path fill="#7A0C00" d="m18.5 7.4 4.6 1.6-4.6 1.6z"/>',
+        mongodb: '<path fill="#47A248" d="M16 2c-.4 2-1.4 3-3 4.6C10.6 9 9 12 9 16c0 5 3.4 8.4 6.2 9.6L16 30l.8-4.4C19.6 24.4 23 21 23 16c0-4-1.6-7-4-9.4C17.4 5 16.4 4 16 2z"/><path fill="#3F9A3F" d="M16 2c.4 2 1.4 3 3 4.6 2.4 2.4 4 5.4 4 9.4 0 5-3.4 8.4-6.2 9.6L16 30z"/><path fill="none" stroke="#B8C4C2" stroke-width="1.2" d="M16 10v20"/>',
+        kafka: '<g fill="none" stroke="#231F20" stroke-width="2"><circle cx="16" cy="16" r="3.5"/><circle cx="16" cy="5.5" r="2.5"/><circle cx="16" cy="26.5" r="2.5"/><circle cx="25" cy="11" r="2.5"/><circle cx="25" cy="21" r="2.5"/><path d="M16 8v4.5M16 19.5V24M19 14.3l3.8-2.1M19 17.7l3.8 2.1"/></g>',
+        rabbitmq: '<path fill="#FF6600" d="M27.5 13H20a1 1 0 0 1-1-1V4.5A1.5 1.5 0 0 0 17.5 3h-2A1.5 1.5 0 0 0 14 4.5V12a1 1 0 0 1-1 1h-1.5a1 1 0 0 1-1-1V4.5A1.5 1.5 0 0 0 9 3H7a1.5 1.5 0 0 0-1.5 1.5v23A1.5 1.5 0 0 0 7 29h20.5a1.5 1.5 0 0 0 1.5-1.5v-13a1.5 1.5 0 0 0-1.5-1.5zM24 23a1.5 1.5 0 0 1-1.5 1.5h-2A1.5 1.5 0 0 1 19 23v-2a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 24 21z"/>',
+        keycloak: '<path fill="#4D4D4D" d="M9 4h14l7 12-7 12H9L2 16z"/><path fill="#E1E1E1" d="M16 4h7l7 12-7 12h-7z" opacity=".25"/><path fill="#00B8E3" d="m12 10-3.5 6 3.5 6h2.2l-3.4-6 3.4-6zM20 10h-2.2l3.4 6-3.4 6H20l3.5-6z"/>',
+        prometheus: '<circle cx="16" cy="16" r="14" fill="#E6522C"/><path fill="#fff" d="M16 5.5c1 3 5 5 5 9.5 0 1.6-.6 2.8-1.6 3.5h-6.8c-1-.7-1.6-1.9-1.6-3.5 0-2.2 1.4-3.6 2.4-4.6.1 1.5.7 2.4 1.5 3 .1-2.4 1.5-4.9 1.1-7.9z"/><rect x="10" y="19.5" width="12" height="2" rx=".5" fill="#fff"/><rect x="11.5" y="22.5" width="9" height="1.8" rx=".5" fill="#fff"/><path fill="#fff" d="M13.5 25.2h5c0 1.3-1.1 2.3-2.5 2.3s-2.5-1-2.5-2.3z"/>',
+        grafana: '<circle cx="16" cy="16" r="12" fill="none" stroke="#F46800" stroke-width="3" stroke-dasharray="3.5 2.8"/><circle cx="16" cy="16" r="9.5" fill="#F46800"/><circle cx="16" cy="16" r="5.5" fill="#fff"/><path fill="#FBCA0A" d="M16 16h5.5a5.5 5.5 0 0 0-5.5-5.5z"/>',
+        "ingress-nginx": '<path fill="#009639" d="M16 2 28 9v14l-12 7-12-7V9z"/><path fill="#fff" d="M11.5 22V10h2.2l5.3 7.6V10h2.5v12h-2.2l-5.3-7.6V22z"/>',
+        "cert-manager": '<path fill="#326CE5" d="m16 3 10 4v8c0 6.5-4.3 11.2-10 14C10.3 26.2 6 21.5 6 15V7z"/><path fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="m11 16 3.5 3.5L21 13"/>',
+        jenkins: '<path fill="#D33833" d="m9.5 27.5 6.5-2.2 6.5 2.2-2 2.5h-9z"/><circle cx="16" cy="14.5" r="10.5" fill="#F0D6B7" stroke="#335061" stroke-width="1.5"/><path fill="#335061" d="M5.6 13C5.6 7 10 3.5 16 3.5S26.4 7 26.4 13c-2.2-3.4-6-5-10.4-5s-8.2 1.6-10.4 5z"/><circle cx="12.5" cy="14.5" r="1.2" fill="#335061"/><circle cx="19.5" cy="14.5" r="1.2" fill="#335061"/><path fill="none" stroke="#335061" stroke-width="1.3" stroke-linecap="round" d="M12.5 19c2 1.5 5 1.5 7 0"/>',
+        gitlab: '<path fill="#E24329" d="m16 28.5 5.2-16H10.8z"/><path fill="#FC6D26" d="m16 28.5-5.2-16H3.5zm0 0 5.2-16h7.3z"/><path fill="#FCA326" d="m3.5 12.5-1.6 4.9c-.1.4 0 .9.4 1.2L16 28.5zm25 0 1.6 4.9c.1.4 0 .9-.4 1.2L16 28.5z"/><path fill="#E24329" d="M3.5 12.5h7.3L7.7 3c-.2-.5-.9-.5-1 0zm25 0h-7.3L24.3 3c.2-.5.9-.5 1 0z"/>',
+        "argo-cd": '<path fill="none" stroke="#E9654B" stroke-width="2.5" stroke-linecap="round" d="M10 21c-1 3-3 5-5 6m9-4c0 2.5-1 4.5-2 6m6-6c0 2.5 1 4.5 2 6m2-8c1 3 3 5 5 6"/><circle cx="16" cy="13" r="10" fill="#E9654B"/><circle cx="16" cy="13" r="7.2" fill="#EFEFEF"/><circle cx="13.3" cy="13" r="1.4" fill="#2E2E2E"/><circle cx="18.7" cy="13" r="1.4" fill="#2E2E2E"/>',
+        nacos: '<path fill="none" stroke="#2BA3D9" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" d="M7 25V7l18 18V7"/><circle cx="25" cy="25" r="2.4" fill="#5CC6E6"/>',
+        cilium: '<path fill="none" stroke="#8C9196" stroke-width="1.4" d="M20 18.3 16 20.6l-4-2.3v-4.6l4-2.3 4 2.3z"/><path fill="#F8C517" d="m28.6 18.3-4 2.3-4-2.3v-4.6l4-2.3 4 2.3z"/><path fill="#F17323" d="m24.3 25.7-4 2.3-4-2.3v-4.6l4-2.3 4 2.3z"/><path fill="#E82629" d="m15.7 25.7-4 2.3-4-2.3v-4.6l4-2.3 4 2.3z"/><path fill="#8061A9" d="m11.4 18.3-4 2.3-4-2.3v-4.6l4-2.3 4 2.3z"/><path fill="#6389C6" d="m15.7 10.9-4 2.3-4-2.3V6.3l4-2.3 4 2.3z"/><path fill="#98CA3F" d="m24.3 10.9-4 2.3-4-2.3V6.3l4-2.3 4 2.3z"/>',
+        elasticsearch: '<path fill="#FEC514" d="M5 11h20.5A12 12 0 0 0 5 11z"/><path fill="#343741" d="M4.2 13.5h17a2.5 2.5 0 0 1 0 5h-17a12 12 0 0 1 0-5z"/><path fill="#00BFB3" d="M5 21h20.5A12 12 0 0 1 5 21z"/>',
+        loki: '<g fill="#F46800"><rect x="5" y="4" width="5" height="4" rx="1"/><rect x="5" y="10" width="5" height="4" rx="1"/><rect x="5" y="16" width="5" height="4" rx="1"/></g><g fill="#F99A1C"><rect x="5" y="22" width="5" height="5" rx="1"/><rect x="12" y="22" width="5" height="5" rx="1"/></g><rect x="19" y="22" width="8" height="5" rx="1" fill="#FBCA0A"/><rect x="12" y="16" width="5" height="4" rx="1" fill="#F46800" opacity=".55"/>',
+        jaeger: '<circle cx="16" cy="19" r="9" fill="#60D0E4"/><path fill="#648C1A" d="M5 13c2-6 6-9 11-9s9 3 11 9c-3-1.5-7-2.2-11-2.2S8 11.5 5 13z"/><circle cx="12.5" cy="18" r="2" fill="#fff"/><circle cx="19.5" cy="18" r="2" fill="#fff"/><circle cx="12.8" cy="18.2" r="1" fill="#1D2129"/><circle cx="19.8" cy="18.2" r="1" fill="#1D2129"/><path fill="#E8D5B0" d="M14 22h4l-2 2.5z"/>',
+        harbor: '<circle cx="16" cy="16" r="13" fill="none" stroke="#4495D1" stroke-width="2.4"/><path fill="#60B932" d="m13 27 1.5-14h3L19 27z"/><path fill="#4495D1" d="M12.5 13h7l-1-2.5h-5zm2-2.5V8L16 6.5 17.5 8v2.5z"/><path fill="#fff" d="M14.2 17.5h3.6l.2 2h-4z"/>',
+        rocketmq: '<path fill="#1F5CA9" d="m10 16.5-4 4.5v4.5l4-2.2zm12 0 4 4.5v4.5l-4-2.2z"/><path fill="#D77310" d="M16 3c4 3 6 7.5 6 12.5V23H10v-7.5C10 10.5 12 6 16 3z"/><circle cx="16" cy="13" r="2.6" fill="#fff"/><path fill="#F5A623" d="M13 23h6l-1.2 5.5h-3.6z"/>',
+        _box: '<g fill="none" stroke="#86909C" stroke-width="1.6" stroke-linejoin="round"><path d="M5 10 16 4.5 27 10v12L16 27.5 5 22z"/><path d="m5 10 11 5.5L27 10M16 15.5v12"/></g>',
+      };
+      const LOGO_AS = { "kube-prometheus-stack": "prometheus", "prometheus-node-exporter": "prometheus", "gitlab-runner": "gitlab", argocd: "argo-cd", nginx: "ingress-nginx" };
+      const logo = (n, s = 32) => { const k = String(n).toLowerCase(); return `<span class="x-logo"${s !== 32 ? ` style="width:${s}px;height:${s}px"` : ""} aria-hidden="true"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">${LOGOS[LOGO_AS[k] || k] || LOGOS._box}</svg></span>`; };
       const hmNow = () => { const d = new Date(), p = (n) => String(n).padStart(2, "0"); return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
       const hmR = (n, url, type) => ({ n, url, type, sync: "今天 08:00", demo: true });
       const HM_REPOS = [hmR("bitnami", "https://charts.bitnami.com/bitnami", "HTTP"), hmR("prometheus-community", "https://prometheus-community.github.io/helm-charts", "HTTP"),
@@ -6523,6 +6575,12 @@
         hmC("argo-cd", "harbor", "CI-CD", 8080, "GitOps 持续交付", "6.9.2", "6.7.18"),
         hmC("nacos", "harbor", "中间件", 8848, "服务注册发现与配置中心", "2.3.2", "2.3.0"),
         hmC("cilium", "harbor", "网络", 4240, "基于 eBPF 的 CNI 与网络策略", "1.15.5", "1.15.3"),
+        hmC("grafana", "bitnami", "监控", 3000, "指标、日志与链路的统一可视化大盘", "11.3.5", "11.2.1"),
+        hmC("elasticsearch", "bitnami", "数据库", 9200, "Elasticsearch 集群，主节点、数据节点分离", "21.1.0", "20.0.4"),
+        hmC("loki", "harbor", "监控", 3100, "Grafana Loki 日志聚合，按标签索引", "6.6.4", "6.5.2"),
+        hmC("jaeger", "harbor", "监控", 16686, "分布式链路追踪，兼容 OpenTelemetry", "3.0.10", "2.2.0"),
+        hmC("harbor", "harbor", "CI-CD", 443, "企业级镜像仓库，支持漏洞扫描与镜像签名", "1.15.0", "1.14.2"),
+        hmC("rocketmq", "harbor", "中间件", 9876, "RocketMQ 5 集群，NameServer + 主从 Broker", "5.2.0", "5.1.4"),
       ];
       const hmRel = (n, chart, ns, cl, hist) => ({ n, chart, ns, cl, st: "已部署", hist: hist.map(([ver, t], k) => ({ rev: k + 1, ver, t })), vals: "", demo: true });
       const HM_REL = [
@@ -6545,12 +6603,12 @@
         const body = {
           目录: () => !C.length ? `<p class="x-empty">${P.length ? "仓库中暂无 Chart，请先同步仓库。" : "暂无 Chart 仓库，请在「仓库」中添加，或在头像菜单中加载演示数据。"}</p>`
             : `<div class="x-tbar"><input class="x-input x-search" type="search" id="hmQ" placeholder="搜索 Chart / 描述" aria-label="搜索 Chart" value="${esc(hs.q)}" /><select class="x-select" style="width:auto" id="hmCat" aria-label="按分类筛选"><option value="">全部分类</option>${opt(HM_CATS, hs.cat)}</select><span class="x-frac" id="hmNone" hidden>无匹配 Chart</span></div>
-              <div class="x-helm">${C.map((c) => `<article class="x-card x-hcard" data-cat="${c.cat}" data-txt="${esc((c.n + " " + c.d + " " + c.repo).toLowerCase())}">
-                <div class="x-hrow"><span class="x-hicon" style="--c:${HM_COL[HM_CHARTS.indexOf(c) % HM_COL.length]}" aria-hidden="true">${c.n[0].toUpperCase()}</span><div style="min-width:0"><span class="x-name">${esc(c.n)}</span><br /><span class="x-frac">${esc(c.repo)} · <span class="x-mono">${c.vers[0]}</span></span></div></div>
-                <p>${esc(c.d)}</p><div class="x-hrow"><span class="x-tag x-grey x-tag--s">${c.cat}</span><button class="x-btn x-btn--pri" style="margin-left:auto" data-hmi="${HM_CHARTS.indexOf(c)}">安装</button></div></article>`).join("")}</div>`,
+              <div class="x-helm">${C.map((c) => `<article class="x-hcard" data-cat="${c.cat}" data-txt="${esc((c.n + " " + c.d + " " + c.repo).toLowerCase())}">
+                ${logo(c.n)}<div class="x-hhd"><span class="x-name">${esc(c.n)}</span><span class="x-mono x-frac">${c.vers[0]}</span><span class="x-frac">· ${esc(c.repo)}</span></div>
+                <p title="${esc(c.d)}">${esc(c.d)}</p><div class="x-hact"><span class="x-tag x-grey x-tag--s">${c.cat}</span><button class="x-btn" data-hmi="${HM_CHARTS.indexOf(c)}" aria-label="安装 ${esc(c.n)}">安装</button></div></article>`).join("")}</div>`,
           已安装: () => !R.length ? '<p class="x-empty">暂无已安装的 Release，可在「目录」中选择 Chart 安装。</p>'
             : k8Table(["Release", "Chart", "版本", "命名空间", "状态", "Revision", "更新时间", "操作"], R.map((r) => { const i = HM_REL.indexOf(r), c = hmChart(r.chart), cur = hmCur(r), newer = c ? c.vers.indexOf(cur.ver) !== 0 : false, busy = r.st !== "已部署"; return k8Row("", [
-              `<span class="x-name">${esc(r.n)}</span><br /><span class="x-frac">${esc(r.cl)}</span>`, esc(r.chart), `<span class="x-mono">${esc(cur.ver)}</span>`, esc(r.ns),
+              `<span class="x-name">${esc(r.n)}</span><br /><span class="x-frac">${esc(r.cl)}</span>`, `<span class="x-hrow" style="gap:8px">${logo(r.chart, 20)}${esc(r.chart)}</span>`, `<span class="x-mono">${esc(cur.ver)}</span>`, esc(r.ns),
               pillTag(r.st, busy ? "x-orange" : "x-green"), cur.rev, `<span class="x-frac">${cur.t}</span>`,
               `<span class="x-kacts">${k8Act("hmu", i, "升级", newer && !busy, busy ? "部署中" : "已是最新版本")}${k8Act("hmb", i, "回滚", r.hist.length > 1 && !busy, busy ? "部署中" : "暂无历史版本")}${k8Act("hmx", i, "卸载", !busy, "部署中")}</span>`]); }), false),
           仓库: () => `<div class="x-tbar"><span class="x-frac">Chart 来自这些仓库，同步后更新目录</span><button class="x-btn x-btn--pri" id="hmAdd" style="margin-left:auto">+ 添加仓库</button></div>` + (!P.length ? '<p class="x-empty">暂无仓库，点击「添加仓库」接入 Helm 或 OCI 仓库，或在头像菜单中加载演示数据。</p>'
@@ -6620,6 +6678,122 @@
           if (HM_REPOS.some((r) => r.n === n)) return hmErr(`仓库「${n}」已存在`);
           if (!(E.t.value === "OCI" ? /^oci:\/\/\S+$/ : /^https?:\/\/\S+$/).test(u)) return hmErr(E.t.value === "OCI" ? "OCI 仓库 URL 需以 oci:// 开头" : "URL 需以 http:// 或 https:// 开头");
           HM_REPOS.push({ n, url: u, type: E.t.value, sync: "未同步", demo: false }); closeAll(); k8Draw(); toast(`已添加仓库 ${n}，点击「同步」拉取索引`);
+        };
+      }
+      // 中间件 (#/middleware, #/middleware/<type>/<id>): Kafka / RabbitMQ / RocketMQ 实例、节点/Broker、Topic/队列与消费组堆积。
+      // 演示实例只在「加载演示数据」时出现（关闭时为空状态）；新建的 Topic/队列只在内存中。MW_ALERTS (above) feed 告警事件
+      const MW_T = {
+        kafka: { t: "Kafka", node: "Broker", topic: "Topic", part: "分区", grp: "消费组" },
+        rabbitmq: { t: "RabbitMQ", node: "节点", topic: "队列", part: "类型", grp: "消费者" },
+        rocketmq: { t: "RocketMQ", node: "Broker", topic: "Topic", part: "队列数", grp: "消费组" },
+      };
+      const mwN = (n, addr, role, load, disk, up = true) => ({ n, addr, role, load, disk, up });
+      const mwTp = (n, part, rep, rate) => ({ n, part, rep, rate });
+      const mwG = (n, topic, mem, trend) => ({ n, topic, mem, trend, lag: trend[trend.length - 1] });
+      const MW = { tab: "kafka", list: {
+        kafka: [
+          { id: "kafka-prod", cl: "prod-bj", ns: "middleware", ver: "3.7.0",
+            nodes: [mwN("broker-0", "10.0.3.11:9092", "Controller", "Leader 412 分区", "58%"), mwN("broker-1", "10.0.3.12:9092", "Broker", "Leader 398 分区", "61%"), mwN("broker-2", "10.0.3.13:9092", "Broker", "Leader 405 分区", "57%")],
+            topics: [mwTp("order-events", 12, 3, 1840), mwTp("payment-events", 6, 3, 620), mwTp("user-activity", 24, 3, 3210), mwTp("audit-log", 3, 3, 85)],
+            groups: [
+              mwG("order-events", "order-events", 4, [18200, 22400, 30900, 40100, 51800, 61200, 72600, 84900, 96300, 108400, 119100, 128000]),
+              mwG("analytics-etl", "user-activity", 6, [9100, 10400, 12800, 11600, 13900, 15200, 14100, 12700, 13300, 14800, 13600, 14200]),
+              mwG("payment-settle", "payment-events", 3, [410, 380, 520, 290, 340, 460, 300, 280, 390, 350, 310, 320]),
+              mwG("audit-sink", "audit-log", 2, [12, 0, 4, 0, 0, 8, 0, 0, 3, 0, 0, 0]),
+            ] },
+          { id: "kafka-test", cl: "test-sh", ns: "middleware", ver: "3.6.1",
+            nodes: [mwN("broker-0", "10.1.3.11:9092", "Controller", "Leader 96 分区", "34%")],
+            topics: [mwTp("order-events", 3, 1, 42), mwTp("user-activity", 6, 1, 77)],
+            groups: [mwG("order-events-test", "order-events", 1, [30, 12, 44, 8, 0, 16, 20, 4, 0, 10, 6, 12])] },
+        ],
+        rabbitmq: [
+          { id: "rabbitmq-prod", cl: "prod-bj", ns: "middleware", ver: "3.13.2",
+            nodes: [mwN("rabbit@rabbitmq-prod-0", "10.0.4.21:5672", "disc", "内存 1.6 / 4 GiB", "42%"), mwN("rabbit@rabbitmq-prod-1", "10.0.4.22:5672", "disc", "内存 1.9 / 4 GiB", "45%"), mwN("rabbit@rabbitmq-prod-2", "10.0.4.23:5672", "disc", "", "", false)],
+            topics: [mwTp("notify.sms", "quorum", 3, 240), mwTp("notify.email", "quorum", 3, 96), mwTp("billing.invoice", "quorum", 3, 42), mwTp("order.timeout.delay", "classic", 1, 18)],
+            groups: [
+              mwG("sms-sender", "notify.sms", 4, [120, 160, 140, 190, 230, 180, 150, 200, 260, 240, 220, 210]),
+              mwG("email-sender", "notify.email", 2, [300, 420, 610, 580, 720, 900, 1040, 980, 1150, 1220, 1260, 1300]),
+              mwG("invoice-worker", "billing.invoice", 1, [0, 0, 2, 0, 1, 0, 0, 3, 0, 0, 1, 0]),
+              mwG("order-timeout-worker", "order.timeout.delay", 2, [0, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0]),
+            ] },
+        ],
+        rocketmq: [
+          { id: "rocketmq-prod", cl: "prod-bj", ns: "middleware", ver: "5.2.0",
+            nodes: [mwN("broker-a", "10.0.5.31:10911", "Master", "TPS 2,340", "51%"), mwN("broker-a-s", "10.0.5.32:10911", "Slave", "同步延迟 0 ms", "51%"), mwN("broker-b", "10.0.5.33:10911", "Master", "TPS 1,980", "47%"), mwN("broker-b-s", "10.0.5.34:10911", "Slave", "同步延迟 2 ms", "47%")],
+            topics: [mwTp("TRADE_ORDER", 16, 2, 1260), mwTp("STOCK_DEDUCT", 8, 2, 740), mwTp("COUPON_ISSUE", 8, 2, 130)],
+            groups: [
+              mwG("CG_TRADE_ORDER", "TRADE_ORDER", 6, [800, 950, 1100, 1020, 1240, 1180, 1300, 1150, 1260, 1210, 1190, 1200]),
+              mwG("CG_STOCK", "STOCK_DEDUCT", 4, [40, 70, 55, 90, 60, 45, 80, 65, 50, 75, 58, 60]),
+              mwG("CG_COUPON", "COUPON_ISSUE", 2, [0, 5, 0, 0, 12, 0, 3, 0, 0, 6, 0, 0]),
+            ] },
+        ],
+      } };
+      const mwList = (k) => (demo ? MW.list[k] : []);
+      const mwHash = (k, x) => `#/middleware/${k}/${encodeURIComponent(x.id)}`;
+      const mwUp = (x) => x.nodes.filter((n) => n.up).length;
+      const mwSt = (x) => (mwUp(x) < x.nodes.length ? ["节点异常", "x-red"] : x.groups.some((g) => g.lag >= 5e4) ? ["消费堆积", "x-orange"] : ["运行中", "x-green"]);
+      const mwLagC = (v) => (v >= 5e4 ? "#cf1322" : v >= 1e4 ? "#d46b08" : "#389e0d");
+      const mwK = (v) => (v >= 1000 ? (v / 1000).toFixed(v < 1e4 ? 1 : 0).replace(/\.0$/, "") + "k" : String(v));
+      const mwSpark = (a, c, label) => { const mn = Math.min(...a), d = Math.max(...a) - mn || 1; return `<svg class="x-mwsp" viewBox="0 0 80 24" preserveAspectRatio="none" style="--c:${c}" role="img" aria-label="${label}"><polyline points="${a.map((v, i) => `${((i * 80) / (a.length - 1)).toFixed(1)},${(22 - ((v - mn) / d) * 20).toFixed(1)}`).join(" ")}" /></svg>`; };
+      const mwSrc = '<p class="x-frac" style="margin:12px 0 0">数据来源 Kafka Admin API / RabbitMQ Management API / RocketMQ Admin（接入后）</p>';
+      const mwTag = () => (demo && !linked() ? '<span class="x-tag x-orange x-pill">演示数据</span>' : "");
+      function renderMW(el) {
+        const [, , k, id] = location.hash.split("/"), x = MW_T[k] ? mwList(k).find((i) => i.id === decodeURIComponent(id || "")) : null;
+        if (MW_T[k]) MW.tab = k;
+        if (k && !x) history.replaceState(null, "", "#/middleware");
+        return x ? mwDetail(el, k, x) : mwIndex(el);
+      }
+      function mwIndex(el) {
+        const k = MW.tab, T = MW_T[k], L = mwList(k);
+        el.innerHTML = phead("中间件", "Kafka、RabbitMQ 与 RocketMQ 实例的节点状态、Topic/队列与消费堆积", mwTag()) +
+          `<div class="x-bar"><div class="x-tabs" role="tablist">${Object.entries(MW_T).map(([t, v]) => `<button role="tab" data-mwt="${t}" aria-selected="${t === k}" class="${t === k ? "on" : ""}"><span class="x-mwtab">${logo(t, 18)}${v.t}</span><b>${mwList(t).length}</b></button>`).join("")}</div></div>
+          <section class="x-panel">${!L.length ? `<p class="x-empty">暂无 ${T.t} 实例。接入集群后自动发现 ${T.t} 实例，或在头像菜单中加载演示数据。</p>`
+            : k8Table(["实例", "集群 / 命名空间", "版本", T.node === "Broker" ? "Broker" : "节点", "状态", "操作"], L.map((x) => { const st = mwSt(x), up = mwUp(x), h = mwHash(k, x); return k8Row(` class="x-go" data-mwh="${h}" tabindex="0" aria-label="打开 ${esc(x.id)} 详情"`, [
+              `<span class="x-hrow">${logo(k, 24)}<a class="x-tlink x-name" href="${h}">${esc(x.id)}</a></span>`, `${esc(x.cl)} <span class="x-frac">/ ${esc(x.ns)}</span>`, `<span class="x-mono">${esc(x.ver)}</span>`,
+              `<b${up < x.nodes.length ? ' style="color:#cf1322"' : ""}>${up}</b><span class="x-frac"> / ${x.nodes.length} 在线</span>`, pillTag(st[0], st[1]), `<a class="x-act" href="${h}" style="padding:0">详情</a>`]); }))}
+            ${mwSrc}</section>`;
+        el.querySelectorAll("[data-mwt]").forEach((b) => (b.onclick = () => { MW.tab = b.dataset.mwt; mwIndex(el); el.querySelector(`[data-mwt="${MW.tab}"]`).focus(); }));
+        el.querySelectorAll("[data-mwh]").forEach((r) => { r.onclick = (e) => { if (!e.target.closest("a")) location.hash = r.dataset.mwh; }; r.onkeydown = (e) => { if (e.key === "Enter" && e.target === r) location.hash = r.dataset.mwh; }; });
+      }
+      function mwDetail(el, k, x) {
+        const T = MW_T[k], h = mwHash(k, x), st = mwSt(x), up = mwUp(x), al = MW_ALERTS.filter((a) => a.mw === h), top = Math.max(0, ...x.groups.map((g) => g.lag));
+        const kpi = (t, v, c) => `<div class="x-card x-kpi"><p>${t}</p><strong${c ? ` style="color:${c}"` : ""}>${v}</strong></div>`;
+        const dash = '<span class="x-frac">—</span>';
+        el.innerHTML = `<p class="x-crumb"><a class="x-tlink" href="#/middleware">中间件</a><i>/</i>${T.t}<i>/</i><b>${esc(x.id)}</b></p>` +
+          phead(`<span class="x-hrow">${logo(k)}${esc(x.id)}</span>`, `${T.t} ${esc(x.ver)} · ${esc(x.cl)} / ${esc(x.ns)}`, mwTag() + pillTag(st[0], st[1])) +
+          (al.length ? `<div class="x-kxwarn" role="status"><b>告警中</b>${al.map((a) => `<span>${esc(a.msg)}</span>`).join("")}<a class="x-tlink" href="#/observe/events" style="margin-left:auto">查看告警事件 →</a></div>` : "") +
+          `<div class="x-cards x-cards4">${kpi(`${T.node}在线`, `${up}<small>/ ${x.nodes.length}</small>`, up < x.nodes.length ? "#cf1322" : "")}${kpi(T.topic, x.topics.length)}${kpi(T.grp, x.groups.length)}${kpi("最大堆积", mwK(top), mwLagC(top))}</div>
+          <div class="x-mwp">
+            <section class="x-panel"><h2 class="x-h2">${T.node}状态</h2>${k8Table([T.node, "地址", "角色", "负载", "磁盘", "状态"], x.nodes.map((n) => k8Row(n.up ? "" : ' class="x-mwdown"', [
+              `<span class="x-name">${esc(n.n)}</span>`, `<span class="x-mono">${esc(n.addr)}</span>`, esc(n.role), n.up ? esc(n.load) : dash, n.up ? esc(n.disk) : dash, n.up ? pillTag("运行中", "x-green") : pillTag("宕机", "x-red")])))}</section>
+            <section class="x-panel"><div class="x-tbar"><h2 class="x-h2">${T.topic}列表</h2><button class="x-btn x-btn--pri" id="mwNew" style="margin-left:auto">+ 新建 ${T.topic}</button></div>${k8Table([T.topic, T.part, "副本", "消息/秒"], x.topics.map((t) => k8Row("", [
+              `<span class="x-name">${esc(t.n)}</span>${t.isNew ? ' <span class="x-tag x-blue x-tag--s">新建</span>' : ""}`, k === "rabbitmq" ? `<span class="x-tag x-grey x-tag--s">${esc(t.part)}</span>` : t.part, t.rep, `<span class="x-mono">${t.rate.toLocaleString()}</span>`])))}</section>
+            <section class="x-panel"><h2 class="x-h2">${T.grp}</h2>${k8Table([T.grp, `订阅${T.topic}`, "成员", "堆积 (Lag)", "近 1 小时"], x.groups.map((g) => { const c = mwLagC(g.lag); return k8Row("", [
+              `<span class="x-name">${esc(g.n)}</span>`, esc(g.topic), g.mem,
+              `<span class="x-mwlag" style="--c:${c}"><i><em style="width:${g.lag ? Math.max(3, Math.min(100, (g.lag / 15e4) * 100)) : 0}%"></em></i><strong>${mwK(g.lag)}</strong></span>`,
+              `<span title="近 1 小时 ${mwK(g.trend[0])} → ${mwK(g.lag)}">${mwSpark(g.trend, c, `近 1 小时堆积从 ${mwK(g.trend[0])} 到 ${mwK(g.lag)}`)}</span>`]); }))}
+              <p class="x-frac" style="margin:8px 0 0">堆积 ≥ 50k 标红${k === "kafka" ? "并触发「Kafka 消费堆积」告警" : ""}，10k–50k 标橙</p>${mwSrc}</section>
+          </div>`;
+        $("mwNew").onclick = () => mwNew(k, x, el);
+      }
+      function mwNew(k, x, el) {
+        const T = MW_T[k], up = mwUp(x), rb = k === "rabbitmq";
+        dlg(`新建 ${T.topic} · ${esc(x.id)}`, `<form class="x-form" id="mwf" novalidate>
+          <label><span class="x-req">${T.topic}名称</span><input class="x-input" name="n" maxlength="200" placeholder="${rb ? "如 notify.push" : k === "kafka" ? "如 order-refund" : "如 TRADE_REFUND"}" autocomplete="off" spellcheck="false" /></label>
+          <div class="x-row2">${rb ? `<label><span class="x-req">类型</span><select class="x-select" name="p">${opt(["quorum", "classic", "stream"])}</select></label>` : `<label><span class="x-req">${T.part}</span><input class="x-input" name="p" type="number" min="1" max="256" value="${k === "kafka" ? 6 : 8}" /></label>`}
+          <label><span class="x-req">副本数</span><input class="x-input" name="r" type="number" min="1" max="${up}" value="${Math.min(3, up)}" /></label></div>
+          <p class="x-frac" style="margin:0">当前 ${up} 个${T.node}运行，副本数最多 ${up}${rb ? "；classic 队列固定 1 副本" : ""}</p>
+          <span class="x-err" id="mwerr" role="alert" hidden></span></form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="mwf">创建</button>');
+        const f = $("mwf"), E = f.elements, err = (m, i) => { const e = $("mwerr"); e.textContent = m; e.hidden = false; if (i) i.focus(); return false; };
+        if (rb) E.p.onchange = () => { const c = E.p.value === "classic"; E.r.disabled = c; if (c) E.r.value = 1; };
+        f.onsubmit = (e) => {
+          e.preventDefault();
+          const n = E.n.value.trim(), p = rb ? E.p.value : +E.p.value, r = +E.r.value;
+          if (!/^[A-Za-z0-9._-]{1,200}$/.test(n)) return err(`${T.topic}名称只能包含字母、数字与 . _ -`, E.n);
+          if (x.topics.some((t) => t.n === n)) return err(`${T.topic}「${n}」已存在`, E.n);
+          if (!rb && !(Number.isInteger(p) && p >= 1 && p <= 256)) return err(`${T.part}需为 1–256 的整数`, E.p);
+          if (!(Number.isInteger(r) && r >= 1 && r <= up)) return err(`副本数需为 1–${up} 的整数`, E.r);
+          x.topics.unshift({ n, part: p, rep: rb && p === "classic" ? 1 : r, rate: 0, isNew: true }); closeAll(); mwDetail(el, k, x); toast(`已创建 ${T.topic} ${n}`);
         };
       }
       // 访问控制 (#/cluster/rbac): Role/ClusterRole, 绑定, ServiceAccount 与权限检查. Demo rows (demo: true) show only with 加载演示数据
@@ -7379,6 +7553,8 @@
           ob.src = o;
           ob.ev = [...o.alerts.map((a, i) => Object.assign(a, { st: "告警中", rule: d.firing[i].rule, val: d.firing[i].val, who: a.who ?? d.firing[i].who })), ...d.resolved.map((e) => ({ ...e, st: "已恢复" }))];
         }
+        ob.ev = ob.ev.filter((e) => !e.mw);
+        if (demo) ob.ev.unshift(...MW_ALERTS);
       }
 
       // 指标监控: series derived from per-app base levels; the selection and range seed the shape
@@ -7835,7 +8011,7 @@
               `${esc(e.app)} <span class="x-tag x-grey x-tag--s">${e.env}</span>`, `<b>${esc(e.val)}</b>`,
               `<span class="x-tags">${live ? tfTag("告警中", "x-red") : tfTag("已恢复", "x-green")}${e.ack ? '<span class="x-tag x-green x-tag--s">已确认</span>' : ""}${s ? `<span class="x-tag x-grey x-tag--s">静默至 ${hm(new Date(s))}</span>` : ""}</span>${live ? "" : `<span class="x-frac">恢复于 ${e.end}</span>`}`,
               `<span style="white-space:nowrap">${e.t}</span>`, e.who ? esc(e.who) : '<span class="x-frac">未指派</span>',
-              `<span style="white-space:nowrap">${live ? `${e.ack ? "" : `<button class="x-act" data-eack="${i}">确认</button>`}<button class="x-act" data-easn="${i}">指派</button><button class="x-act" data-esil="${i}">${s ? "取消静默" : "静默"}</button>` : ""}${TR_SVCS.includes(e.app) ? `<a class="x-act" href="${trHref(e.app)}" aria-label="查看 ${esc(e.app)} 的链路">链路</a>` : live ? "" : '<span class="x-frac">—</span>'}</span>`];
+              `<span style="white-space:nowrap">${live ? `${e.ack ? "" : `<button class="x-act" data-eack="${i}">确认</button>`}<button class="x-act" data-easn="${i}">指派</button><button class="x-act" data-esil="${i}">${s ? "取消静默" : "静默"}</button>` : ""}${e.mw ? `<a class="x-act" href="${e.mw}" aria-label="查看中间件实例 ${esc(e.app)}">查看实例</a>` : ""}${TR_SVCS.includes(e.app) ? `<a class="x-act" href="${trHref(e.app)}" aria-label="查看 ${esc(e.app)} 的链路">链路</a>` : live ? "" : '<span class="x-frac">—</span>'}</span>`];
           })) : `<p class="x-empty">暂无${ob.evf === "全部" ? "" : ob.evf}的告警事件</p>`}</section>`;
       };
       OB_AFTER.events = (el) => bindBar(el, "#/observe/events");
@@ -8251,6 +8427,7 @@
         swap: '<path d="M4 8h14l-3-3M20 16H6l3 3"/>',
         logout: '<path d="M15 4h4v16h-4M10 16l4-4-4-4M14 12H4"/>',
         flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+        mq: '<rect x="3" y="5" width="18" height="5" rx="1.5"/><rect x="3" y="14" width="18" height="5" rx="1.5"/><path d="M7 7.5h2M7 16.5h2M13 7.5h4M13 16.5h4"/>',
       });
       const ic = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[k] || ""}</svg>`;
       const reqN = (k) => state.reqs.filter(TABS.find((t) => t[0] === k)[2]).length;
@@ -9398,7 +9575,7 @@ spec:
           return "cluster";
         }
         const m = { delivery: "pipeline", appstatus: "pipeline", cicd: "pipeline", coding: "pipeline", release: "change", approvals: "change",
-          traffic: "net", netpol: "net", observe: "monitor", logs: "log", trace: "trace", bastion: "bastion", audit: "bastion", oncall: "oncall", iam: "iam",
+          middleware: "workload", traffic: "net", netpol: "net", observe: "monitor", logs: "log", trace: "trace", bastion: "bastion", audit: "bastion", oncall: "oncall", iam: "iam",
           requirements: "qa", project: "qa", bugs: "qa", testing: "qa" };
         return m[k] || "gen";
       }
@@ -9772,7 +9949,7 @@ spec:
         { k: "ops", t: "运维中心", c: "#0d9488", items: [
           { t: "总览", i: "pulse", h: "#/sre" },
           { t: "集群", i: "cube", kids: (([l, n, p, h, r]) => [rn(l, "集群列表"), n, p, rn(h, "主机"), { t: MC_PAGE.t, i: "globe", h: MC_PAGE.h, s: MC_PAGE.s }, rn(r, "集群 RBAC")])(k8L("list", "nodes", "nodepools", "hosts", "rbac")) },
-          { t: "工作负载", i: "apps", kids: (([w, c, d, p, h, a, cr, b]) => [w, c, rn(d, "CRD"), rn(p, "项目与配额"), rn(h, "Helm 应用"), a, cr, b])(k8L("workloads", "config", "crd", "projects", "helm", "hpa", "cron", "backup")) },
+          { t: "工作负载", i: "apps", kids: (([w, c, d, p, h, a, cr, b]) => [w, c, rn(d, "CRD"), rn(p, "项目与配额"), rn(h, "Helm 应用"), { t: "中间件", i: "mq", h: "#/middleware", s: "Kafka、RabbitMQ 与 RocketMQ 实例的节点、Topic/队列与消费堆积", free: true }, a, cr, b])(k8L("workloads", "config", "crd", "projects", "helm", "hpa", "cron", "backup")) },
           // 应用 lists every app with its status (old #/appstatus redirects here); 构建 / 制品 hold every app's builds, filtered by app from its detail page
           { t: "应用交付", i: "ship", kids: [
             { t: "应用", i: "apps", h: "#/delivery/apps", n: () => APPS.length },
