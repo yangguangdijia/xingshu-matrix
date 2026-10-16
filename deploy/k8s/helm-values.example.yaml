@@ -1,0 +1,6 @@
+# 若使用 Helm/Kustomize 管理，可参考以下可调项（当前仓库提供原生清单 xingshu-matrix.yaml）
+image: ghcr.io/yangguangdijia/xingshu-matrix:latest
+replicas: 2
+ingress:
+  host: matrix.example.com
+  tls: false
