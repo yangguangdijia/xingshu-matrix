@@ -1,156 +1,149 @@
-# 登录页排版修复：右侧竖排标语偏小 + 页脚版权位置漂移
+# 登录页排版修复（最终版）：右侧竖排标语字号 + 页脚版权位置
 
-适用范围：`public/index.html`（内联 `<style>` 中的 `.x-auth` 登录页样式块 + 登录页 DOM）
-提交：`4dc4fcd fix: enlarge right-side vertical note on login and tie footer to the form card`
+适用范围：`public/index.html` 内联 `<style>` 中的 `.x-auth` 样式块 + 登录页 DOM
+相关提交：
+- `4dc4fcd fix: enlarge right-side vertical note on login and tie footer to the form card`（第一版，被否）
+- `064b494 fix: shrink login side note to 15px and center copyright at page bottom`（最终版）
 
 ---
 
 ## 一、报错问题
 
-用户在 `http://localhost:4173/#/login` 截图指出两处问题（红框标注）：
+### 第一轮反馈
+用户截图（红框）指出两点：
+1. 「右侧这栏字我不是说有点小吗，你怎么没改啊」——右侧竖排标语「让运维更简单」偏小，且上一轮只把 `11px` 调到 `13px`，用户认为等于没改。
+2. 「你觉得下面这行字位置对吗？」——右下角「© 星枢 Matrix · 私有化部署版 v1.0」位置不对。
 
-1. **右侧竖排标语「让运维更简单」太小**。用户反馈原话大致是「右侧这栏字我不是说有点小吗，你怎么没改啊」——说明上一轮已经提过，但我只把 `font-size` 从 `11px` 调到 `13px`，用户仍然认为没改。
-2. **页面右下角那行「© 星枢 Matrix · 私有化部署版 v1.0」位置不对**，用户直接问「你觉得下面这行字位置对吗」。
+### 第二轮反馈（第一版修改被否）
+用户原话：「右侧字体过大了；下面那个你觉得位置对吗？不应该在下面最中心吗或者其他位置，你放的这个位置根本就不行」。
 
-改前实测（视口 `1600×900`，`devicePixelRatio=1`）：
+第一版的两个错误：
+- 竖排标语从 `13px` 直接拉到 **`18px`**（+38%），在 1690×950 视口下 6 个字总长 140px，视觉上压过了正文，明显过大；
+- 页脚被我挂在卡片右下方（16px 间距、右对齐卡片右边缘）。用户要的是**页面底部居中**的页脚，不是卡片的附属说明。
 
-| 元素 | 选择器 | 字号 | 颜色 | 盒子 | 与参照物的关系 |
+### 最终实测（视口 `1690×950`，`dpr=1`，与用户截图同尺寸）
+
+| 元素 | 选择器 | 字号 | 颜色 | 盒子 | 位置 |
 | --- | --- | --- | --- | --- | --- |
-| 竖排标语 | `.x-aside` | `13px` | `#7c93b0`（`rgb(124,147,176)`） | `20 × 98`，`right: 6px` | 距右边缘 6px，6 个字总长仅 98px |
-| 页脚版权 | `.x-bcopy` | `12px` | `#7c8da3` | `188 × 19` | 在卡片正下方 **58px**（视口更高时可达 130px+），靠 `justify-self: end` 对齐列尾 |
-| 登录卡片 | `.x-formp` | — | — | `520 × 642`，`t=152, b=794` | 在 `grid-template-rows: minmax(0,1fr) auto` 的第一行内垂直居中 |
+| 竖排标语 | `.x-aside` | `15px` / `500` | `#46628a` | `26 × 108`，`right: 10px` | 垂直居中，贴右侧 10px |
+| 页脚版权 | `.x-bcopy` | `12px` | `#7c8da3` | `188 × 19` | 水平中心 `845` = 页面中心 `845`；距底部 `28px` |
+| 登录卡片 | `.x-formp` | — | — | `520 × 642`，`t=177, b=819` | 右列，垂直居中 |
 
-视觉表现：一条 13px、浅灰蓝（`#7c93b0`，对浅蓝底对比度极低）的竖排小字贴在屏幕最右缘，远看几乎是一条虚线；版权行孤零零落在页面右下角，与卡片之间有几十到上百 px 的空白，只靠「右边缘刚好和卡片对齐」这一条弱关系维系，看起来像掉在角落里的备注。
+三个版本的对照，方便回滚判断：
+
+| 版本 | 标语字号 | 6 字总长 | 页脚位置 |
+| --- | --- | --- | --- |
+| 原始 | `13px` | 98px | 页面右下角（跨列 `justify-self: end`） |
+| 第一版（被否） | `18px` | 140px | 卡片正下方、右对齐卡片（`.x-formcol` flex 列） |
+| **最终版** | **`15px`** | **108px** | **页面底部、水平居中** |
 
 ---
 
 ## 二、原因
 
-### 2.1 竖排标语「改了还是小」的三层原因
+### 2.1 第一版把字放太大
+用户说「有点小」时，我在没有中间基准的情况下直接跳到 `18px`，用的是「越大越保险」的思路。但登录页已有明确的字号层级：主标题 `clamp(38px,3.6vw,54px)`、副文案 `17px`、顶部标语 `13px`、表单正文 `14px`。竖排装饰标语不属于信息主体，应该落在 `14~16px` 这一档——`15px` 既比原来（13px）明显，也不抢正文。
 
-1. **改动幅度不够**：历史提交 `c7bd64b` 把竖排字从 `12px` 改到 `11px`（更小），提交 `db7eb52` 又调到 `13px`。相对正文 `14px`，`13px` 依然是整页最小的字；竖排 + `letter-spacing: .26em` 后单个字形本身很小，视觉上比同 px 的横排字更弱。
-2. **对比度才是「看不清」的主因**：`#7c93b0` 在 `#eef4fc ~ #e4eefb` 的浅蓝渐变底上，明度差过小（相当于约 2:1 的对比），即使放大到 14~15px 也依旧是「灰雾」。只调字号不调颜色，主观感受几乎不变——这是用户觉得「你怎么没改啊」的直接原因。
-3. **装饰件没跟着放大**：图标 `16px`、竖线 `40px`、间距按 11px 的字设计，字号一提就会显出头重脚轻，所以我上一轮不敢往大写，形成了「改不动」的循环。
+### 2.2 第一版把页脚理解错了
+我把「位置不对」读成了「没有归属」，于是把版权塞进卡片列。但从信息结构看，版权行是**页面级页脚**（版本号、部署形态），不是表单的说明文字；页面级页脚的标准位置是**页面底部、水平居中**。历史上这个元素本来就是跨列元素（`grid-column: 1 / -1`），只是被 `justify-self: end` 推到了右下角——真正要改的是 `justify-self`，不是层级关系。
 
-### 2.2 版权行位置漂移的原因
+另一层原因是 `.x-ashell` 的网格：卡片在 `minmax(0,1fr)` 行里垂直居中，页脚在 `auto` 行贴底。屏幕越高，两者之间的空白越大（720 高时 18px，950 高时 80px+）。空白本身不是问题——**居中的页脚天生就该在页面底部**；问题是它偏在右下方，偏了就等于「漂着」。
 
-`.x-ashell` 是二维网格：
-
-```css
-.x-ashell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 520px;
-  grid-template-rows: minmax(0, 1fr) auto;  /* ← 问题根源 */
-  align-items: center;
-  min-height: 100vh;
-}
-```
-
-- 卡片 `.x-formp` 在第 1 行，行高 `minmax(0,1fr)`，`align-items: center` 让它**在剩余空间里垂直居中**；
-- 版权 `.x-bcopy` 是 `grid-column: 1 / -1` 的第 2 行（`auto` 行），被推到**网格底部**。
-
-两行之间没有任何绑定关系，于是「卡片居中、版权贴底」，屏幕越高，两者之间的空白越大（`1280×720` 时 18px，`1600×900` 时 58px，更高视口 130px 以上）。版权行既不属于卡片，也不属于页面页脚，处于「半吊子」位置——这就是它看起来不对的原因。
+### 2.3 为什么只改颜色也解决不了「小」
+`#7c93b0` 压浅蓝底（`#eef4fc → #e4eefb`）对比度约 2:1。第一版把颜色压到 `#40597f`（约 5:1）是对的，但那一步被我同时把字号拉到 18px，掩盖了。最终版保留深色（`#46628a`，约 4.5:1）+ 15px + `500` 字重，靠对比度和字重支撑可读性，不靠巨大的字号。
 
 ---
 
 ## 三、解决方案
 
-### 3.1 竖排标语：字号 + 字重 + 字色 + 装饰件整体放大
+### 3.1 竖排标语：15px，装饰件按比例收回到中间态
 
 ```css
 /* public/index.html 内联样式，约第 1625 行 */
 .x-aside {
   display: block; position: fixed; right: 10px; top: 50%;
   transform: translateY(-50%); z-index: 2;
-  width: 32px; margin: 0;
-  color: #40597f;            /* 原 #7c93b0 */
-  font-size: 18px;           /* 原 13px */
-  font-weight: 500;          /* 新增，中文细体竖排更飘 */
-  letter-spacing: .3em;      /* 原 .26em */
-  line-height: 30px;         /* 原 20px */
+  width: 26px; margin: 0;
+  color: #46628a;          /* 原 #7c93b0，压深以扛对比度 */
+  font-size: 15px;         /* 13px → 18px（被否）→ 15px */
+  font-weight: 500;
+  letter-spacing: .2em;
+  line-height: 26px;
   text-align: center;
   writing-mode: vertical-rl;
 }
-.x-aside svg { position: absolute; top: -36px; left: 50%; width: 20px; height: 20px; margin-left: -10px; fill: #2f5fe0; }
-.x-aside::before, .x-aside::after { content: ""; position: absolute; left: 50%; width: 1px; height: 48px; background: linear-gradient(180deg, transparent, #c3d3e6); }
-.x-aside::before { top: -92px; }
-.x-aside::after  { bottom: -92px; background: linear-gradient(0deg, transparent, #c3d3e6); }
+.x-aside svg { position: absolute; top: -32px; left: 50%; width: 18px; height: 18px; margin-left: -9px; fill: #2f5fe0; }
+.x-aside::before, .x-aside::after { content: ""; position: absolute; left: 50%; width: 1px; height: 42px; background: linear-gradient(180deg, transparent, #c3d3e6); }
+.x-aside::before { top: -84px; }
+.x-aside::after  { bottom: -84px; background: linear-gradient(0deg, transparent, #c3d3e6); }
 ```
 
-逐参数说明：
+逐参数（三版对照）：
 
-| 参数 | 改前 | 改后 | 作用 |
-| --- | --- | --- | --- |
-| `right` | `6px` | `10px` | 宽度从 20 加到 32 后，整体仍离屏幕右缘 10px，字形居中在 `32px` 盒内 |
-| `width` | `20px` | `32px` | 容纳 18px 字形 + 竖排对齐，避免 `text-align: center` 时贴边 |
-| `font-size` | `13px` | `18px` | 6 个字总长由 98px → 140px，占 900px 视口高度约 15.6%，远看是一个明确的竖排标签 |
-| `font-weight` | 400（继承） | `500` | 中文细体在浅底上发虚，加半档字重 |
-| `color` | `#7c93b0` | `#40597f` | 明度差从约 2:1 提到约 5:1，这是「看得清」的关键，比单纯加字号有效 |
-| `letter-spacing` | `.26em` | `.3em` | 竖排字距随字号同比微调，避免 18px 下显得挤 |
-| `line-height` | `20px` | `30px` | 单行竖排时为行盒下限，同时给图标留出呼吸位 |
-| 图标 `width/height` | `16px` | `20px` | 与字号同比（约 1.1 倍字高） |
-| 图标 `top` | `-38px` | `-36px` | 图标底边距文字顶端 16px |
-| 竖线 `height` | `40px` | `48px` | 装饰线随整体放大，长度约为图标与文字的合计间距 |
-| `::before top` | `-86px` | `-92px` | 线与图标之间留 8px 断口（`-92+48=-44`，图标在 `-36`） |
-| `::after bottom` | `-86px` | `-92px` | 下方对称，保持视觉平衡 |
+| 参数 | 原始 | 第一版（被否） | 最终 | 说明 |
+| --- | --- | --- | --- | --- |
+| `font-size` | `13px` | `18px` | **`15px`** | 落在 14~16px 装饰档，6 字总长 108px |
+| `font-weight` | 400 | 500 | **500** | 中文细体在浅底发虚，保半档 |
+| `color` | `#7c93b0` | `#40597f` | **`#46628a`** | 对比度约 4.5:1，比 18px 时的 `#40597f` 略轻，避免 15px 下显得太重 |
+| `letter-spacing` | `.26em` | `.3em` | **`.2em`** | 18px 时 `.3em` 字距偏散，7px 间隙看起来像断开 |
+| `line-height` | `20px` | `30px` | **`26px`** | 单行竖排的行盒下限 |
+| `width` | `20px` | `32px` | **`26px`** | 容纳 15px 字形 + 居中余量 |
+| `right` | `6px` | `10px` | **`10px`** | 与屏幕右缘的视觉边距 |
+| 图标 | `16px` | `20px` | **`18px`** | 与字号的 1.1~1.2 倍关系 |
+| 图标 `top` | `-38px` | `-36px` | **`-32px`** | 图标底边距文字顶端 18px |
+| 竖线 `height` | `40px` | `48px` | **`42px`** | 装饰线随字号缩放 |
+| `::before top` / `::after bottom` | `-86px` | `-92px` | **`-84px`** | 线与图标之间留 10px 断口（`-84+42=-42`，图标在 `-32`） |
 
-断点策略不变：`@media (max-width: 1359px) { .x-aside { display: none; } }`，`1180px` 以下同样隐藏，避免窄屏与卡片打架。实测 `1360×768` 时标语左边缘距卡片右边缘仍有 14px。
+断点策略不变：`@media (max-width: 1359px)` 与 `@media (max-width: 1180px)` 都隐藏该元素，避免窄屏与卡片打架。
 
-### 3.2 版权行：改为「卡片列内、卡片正下方」的从属元素
+### 3.2 页脚：恢复为「跨两列 + 页面底部 + 水平居中」
 
-DOM 由两兄弟改成一层包裹（约第 1687 行）：
+DOM 回到两个同级子元素（约第 1688 行）：
 
 ```html
-<!-- 改前 -->
 <div class="x-formp"><div class="x-aform" id="acard"></div></div>
 <p class="x-bcopy">© 星枢 Matrix · 私有化部署版 v1.0</p>
-
-<!-- 改后 -->
-<div class="x-formcol">
-  <div class="x-formp"><div class="x-aform" id="acard"></div></div>
-  <p class="x-bcopy">© 星枢 Matrix · 私有化部署版 v1.0</p>
-</div>
 ```
 
-配套 CSS：
+样式：
 
 ```css
-.x-formcol { justify-self: end; width: 100%; max-width: 520px; display: flex; flex-direction: column; align-items: stretch; }
-.x-bcopy { align-self: flex-end; margin: 16px 2px 0; color: #7c8da3; font-size: 12px; line-height: 1.6; }
+.x-ashell { grid-template-rows: minmax(0, 1fr) auto; }   /* 第 1 行卡片（居中），第 2 行页脚（贴底） */
+.x-bcopy {
+  grid-column: 1 / -1;      /* 跨两列 = 铺满内容区宽度，居中才是页面中心 */
+  justify-self: center;     /* 原来的 justify-self: end 就是「右下角」的元凶 */
+  align-self: end;
+  margin: 18px 0 0;
+  color: #7c8da3; font-size: 12px; line-height: 1.6;
+  text-align: center;
+}
 ```
 
-- `.x-formcol` 承接原来 `.x-formp` 在网格里的定位职责（`justify-self: end` + `max-width: 520px`）；
-- `.x-formp` 的 `max-width: 520px` 保留作兜底，在 flex 列里等价；
-- `.x-bcopy` 去掉 `grid-column` / `justify-self`，改为 `align-self: flex-end`，**永远贴着卡片下边缘、16px 间距、右对齐卡片右边缘（内缩 2px 与描边/圆角对齐）**；
-- `.x-ashell` 的 `grid-template-rows` 从 `minmax(0, 1fr) auto` 改为 `minmax(0, 1fr)`，删掉那条只为放版权而存在的空行。
+要点：
 
-响应式补丁（按断点逐个核对）：
+- `grid-column: 1 / -1` 必须保留，否则居中只会相对右列（卡片所在列）居中，落点会偏到右侧；
+- `justify-self: center` 让页脚在**内容区**水平居中，而 `.x-ashell` 是 `max-width:1600px; margin:0 auto`，所以内容区中心 = 页面中心；
+- `.x-formcol` 包装层已删除（第一版产物），`.x-ashell` 的 `grid-template-rows` 恢复 `minmax(0,1fr) auto`；
+- `@media (max-width:900px)` 里同步删掉 `.x-formcol { justify-self: stretch; max-width:none; }`，`.x-bcopy` 保留 `align-self:center; text-align:center`（单列下同样居中）；
+- `@media (max-height:820px)` 保留 `.x-bcopy { margin-top: 10px }` 与 `.x-ashell { padding-bottom: 6px }`，否则 720px 高视口下页脚会把页面撑出 13px 滚动条。
 
-| 断点 | 追加规则 | 原因 |
-| --- | --- | --- |
-| `max-height: 820px` | `.x-bcopy { margin-top: 10px; }`；`.x-ashell { padding-bottom: 16px → 6px }` | 卡片 + 版权合计高度在 720px 高的视口里会溢出 13px，出现滚动条；收紧后 `scrollHeight` 由 733 回到 720 |
-| `max-width: 900px` | `.x-formcol { justify-self: stretch; max-width: none; }`、`.x-bcopy { align-self: center; text-align: center; }` | 单列布局下卡片占满宽度，版权右对齐会显得吊在右边；移动端改为居中 |
-| `max-width: 600px` | 沿用 `.x-bcopy { margin-top: 22px; }` | 小屏留白稍大 |
+### 3.3 改后逐视口实测
 
-### 3.3 改后实测（同一 page，逐视口量 `getBoundingClientRect()`）
-
-| 视口 | 标语 | 标语与卡片间距 | 版权距卡片底 | `scrollHeight` | 结论 |
+| 视口 | 标语 | 页脚中心 vs 页面中心 | 页脚距底 | `scrollHeight` / `innerHeight` | 结论 |
 | --- | --- | --- | --- | --- | --- |
-| `1760×1000` | `32×140`，18px，`#40597f` | 94px | 16px | 1000（无滚动） | 正常 |
-| `1600×900` | `32×140` | — | 16px | 900 | 正常 |
-| `1440×900` | `32×140` | 14px | 16px | 900 | 紧凑但不重叠 |
-| `1360×768` | `32×140` | 14px | 10px | 768 | 正常 |
-| `1280×720` | 隐藏（`<1359px`） | — | 10px | 720（无滚动条） | 正常 |
-| `390×844` | 隐藏 | — | 19px，居中 | 1221（正常滚动） | 正常 |
+| `1690×950`（用户截图尺寸） | `26×108`，15px | `845` = `845` ✅ | 28px | 950 / 950 | 无滚动 |
+| `1280×720` | 隐藏（`<1359px`） | `640` = `640` ✅ | 6px | 720 / 720 | 无滚动条 |
+| `1024×768` | 隐藏 | `505` vs `512`（差 7px = 滚动条宽 15px 的一半）✅ | — | 867 / 768 | 页面滚动，页脚在内容末尾（该断点 `padding-bottom:88px` 为既有行为） |
+| `390×844` | 隐藏 | `195` = `195` ✅ | — | 1261 / 844 | 正常滚动 |
 
 ---
 
 ## 四、如何避免
 
-1. **「太小」不要只调 `font-size`**。竖排浅色小字的主因通常是**对比度**：先算一下字色与底色的明度差（`#7c93b0` 对 `#eef4fc` 约 2:1，正文级至少 4.5:1），颜色不到位时，字号 +2px 用户基本无感。改动同时给出「字号/字重/字色」三项的最终值，而不是只调一项。
-2. **一次到位，不要 11px → 13px 这样试探**。用户明确说了「这栏字小」，就该按「明显变大」的量级改（本次 13 → 18px，约 +38%），并在回复里给出改前/改后的 px 数值，让用户可验证。
-3. **装饰件（图标、竖线、字距、行盒）必须跟着字号同比例换算**，否则放大文字会破坏对齐。本次按约 1.1 倍字高重算图标 `20px`、竖线 `48px`、断口 8px。
-4. **grid 里「跨列贴底」的元素最容易变成孤儿**。判断标准：这个元素和谁有语义关系？有，就把它和那个元素**放进同一个 flex 列/同一个 box**，而不是靠 `grid-column: 1 / -1` + `justify-self: end` 制造「看起来对齐」的巧合。空出来的 `auto` 行要一并删掉。
-5. **每个断点都要实测，不要只改主样式**：`getBoundingClientRect()` 量 `card.bottom`、`copy.top` 的差，再量 `document.querySelector('.x-auth').scrollHeight` 与 `innerHeight`；相减为正就是在溢出（本次就靠这个抓到 720px 高度下多出的 13px 滚动条）。
-6. **本地预览必须绕过缓存**。`python -m http.server` 会因浏览器缓存返回旧页面，改完样式却在页面上看不到变化，很容易误判「没生效」。验证时用带版本参数的 URL（如 `?v=5#/login` 配合 `navigate --force`），或直接 `curl` 服务端文件确认新规则真的在响应里。
-7. **登录页样式集中在 `public/index.html` 的内联 `<style>` 里，没有独立 CSS 文件**，两次出现过「改了别的文件、页面没变」的情况；以后改登录页，先 `grep -n "x-aside\|x-bcopy" public/index.html` 确认改的就是被页面引用的那一段。
+1. **用户说「小」时，一次只跨一个档位并给出数值**。13px → 15px 是可感知但克制的调整；直接 13px → 18px 等于赌一把，赌错就多一轮往返。改动后在回复里写「改前 13px / 改后 15px」，用户能立刻判断，而不是靠感觉。
+2. **先确定这个元素在信息层级里的位置，再决定字号**。同页已存在 `13px`（顶部标语）、`14px`（表单正文）、`15px`（eyebrow）、`17px`（副文案）四档，装饰性竖排标语落到 `15px` 这一档就不会抢主体。
+3. **「位置不对」要先问自己：这是页面级元素还是某个组件的从属元素**。版权/版本号是页面级页脚 → 页面底部居中；只有当它确实是卡片的说明（比如「首次部署默认账号」）才应该贴卡片。第一版把它挂到卡片下，就是层级判断错了。
+4. **不要我替你发明布局**。用户已明确表达过「参考截图即规格」，遇到「这里不对」这种模糊反馈，优先回到**惯例位置**（页脚居中、表单右对齐等）而不是自创，并且一次只改一处，别把两个改动混在一起（第一版既有字号又有位置，被否时无法分辨是哪一项不行）。
+5. **跨列元素要用 `justify-self` 控制水平位置**：`grid-column: 1 / -1` + `justify-self: end` 就是「右下角」，+ `justify-self: center` 才是「底部居中」。这是同一个元素两种落点，选择取决于它在信息结构里的角色。
+6. **每个断点都要用坐标验证，而不是看截图**。方法：`getBoundingClientRect()` 取元素左右边界求平均，与 `innerWidth/2` 比较；`document.querySelector('.x-auth').scrollHeight` 与 `innerHeight` 比较判断有没有多余滚动条（本次 720px 高度下就靠这个抓到 13px 溢出）。
+7. **本地预览注意缓存**。`python -m http.server` 下浏览器会缓存 `index.html`，改完看不到变化时先 `curl` 服务端文件确认规则已生效，再用 `?v=n` + 强制刷新验证，避免误判「没生效」。
