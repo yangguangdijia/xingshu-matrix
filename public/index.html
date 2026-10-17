@@ -9873,30 +9873,78 @@
 
       function obRuleEdit(r) {
         const v = r || { name: "", expr: "", p: "P2", dur: "5m", ch: ["飞书"], on: true };
-        dlg(r ? `编辑告警规则 · ${esc(r.name)}` : "新建告警规则", `<form class="x-form" id="obr" novalidate>
-            <label><span class="x-req">名称</span><input class="x-input" name="name" maxlength="40" value="${esc(v.name)}" placeholder="例如：订单服务 P99 延迟过高" autocomplete="off" /></label>
-            <label><span class="x-req">PromQL 表达式</span><textarea class="x-input" name="expr" rows="3" spellcheck="false" style="height:auto;padding:8px 12px;font:13px/1.6 'Geist Mono',monospace" placeholder='sum(rate(http_requests_total{code=~"5.."}[5m])) > 10'>${esc(v.expr)}</textarea></label>
+        const METRICS = [
+          ["http_requests_total", "HTTP 请求总量", "counter"],
+          ["http_request_duration_seconds_bucket", "HTTP 请求耗时", "counter"],
+          ["up", "实例存活", "gauge"],
+          ["node_cpu_seconds_total", "节点 CPU", "counter"],
+          ["node_memory_MemAvailable_bytes", "节点可用内存", "gauge"],
+          ["kube_pod_container_status_restarts_total", "容器重启次数", "counter"],
+          ["kafka_consumergroup_lag", "消费组堆积", "gauge"],
+        ];
+        // 计数器用 rate()，瞬时值直接比较，避免对 gauge 用 rate 生成无效 PromQL
+        const buildExpr = () => {
+          const kind = (METRICS.find((m) => m[0] === st.metric) || [])[2] || "gauge";
+          const sel = `${st.metric}{${st.filter}}`;
+          return `${st.agg}(${kind === "counter" ? `rate(${sel}[${st.win}])` : sel}) ${st.op} ${st.th}`;
+        };
+        const st = { mode: "可视化", metric: "http_requests_total", agg: "sum", op: ">", th: "10", win: "5m", filter: 'code=~"5.."' };
+        dlg(r ? `编辑告警规则 · ${esc(r.name)}` : "新建告警规则", `<form class="x-form" id="obr" novalidate><div id="obrbody"></div></form>`, tfFoot("obr", r ? "保存" : "创建"));
+        const draw = () => {
+          $("obrbody").innerHTML = `
+            <label><span class="x-req">名称</span><input class="x-input" name="name" maxlength="40" value="${esc(v.name)}" placeholder="例如：订单服务 5xx 比例过高" autocomplete="off" /></label>
+            <fieldset class="x-radios"><legend>表达式方式</legend>${["可视化", "手写 PromQL"].map((m) => `<label><input type="radio" name="mode" value="${m}"${m === st.mode ? " checked" : ""} />${m}</label>`).join("")}</fieldset>
+            ${st.mode === "可视化" ? `
+              <div class="x-row2"><label><span class="x-req">指标</span><select class="x-select" name="metric">${METRICS.map(([k, t]) => `<option value="${k}"${k === st.metric ? " selected" : ""}>${t}（${k}）</option>`).join("")}</select></label>
+                <label><span>聚合</span><select class="x-select" name="agg">${opt(["sum", "avg", "max", "min"], st.agg)}</select></label></div>
+              <label><span>标签过滤（PromQL 语法）</span><input class="x-input x-mono" name="filter" value="${esc(st.filter)}" placeholder='code=~"5..",namespace="prod"' autocomplete="off" spellcheck="false" /></label>
+              <div class="x-row3"><label><span>统计窗口</span><select class="x-select" name="win">${opt(["1m", "5m", "15m", "1h"], st.win)}</select></label>
+                <label><span>比较符</span><select class="x-select" name="op">${opt([">", ">=", "<", "<="], st.op)}</select></label>
+                <label><span class="x-req">阈值</span><input class="x-input" name="th" value="${esc(st.th)}" inputmode="decimal" /></label></div>`
+            : `<label><span class="x-req">PromQL 表达式</span><textarea class="x-input" name="expr" rows="3" spellcheck="false" style="height:auto;padding:8px 12px;font:13px/1.6 'Geist Mono',monospace" placeholder='sum(rate(http_requests_total{code=~"5.."}[5m])) > 10'>${esc(v.expr)}</textarea></label>`}
+            <div class="x-warn" id="obprev" role="status" style="display:block"></div>
             <fieldset class="x-radios"><legend>级别</legend>${OB_P.map((p) => `<label><input type="radio" name="p" value="${p}"${p === v.p ? " checked" : ""} />${p}</label>`).join("")}</fieldset>
             <label><span>持续时间</span><select class="x-select" name="dur">${opt(OB_DUR, v.dur, (d) => `持续 ${d} 后触发`)}</select></label>
             <fieldset class="x-radios"><legend>通知渠道</legend>${ob.ch.map((c) => `<label><input type="checkbox" name="ch" value="${c.t}"${v.ch.includes(c.t) ? " checked" : ""}${obConf(c) ? "" : " disabled"} />${c.t}${obConf(c) ? "" : '<span class="x-frac">（未配置）</span>'}</label>`).join("")}</fieldset>
             <label class="x-switch"><input type="checkbox" role="switch" name="on"${v.on ? " checked" : ""} /> 保存后启用</label>
-            <span class="x-err" id="obrerr" hidden></span></form>`, tfFoot("obr", r ? "保存" : "创建"));
-        const f = $("obr"), el = f.elements;
-        el.name.focus();
-        f.onsubmit = (e) => {
-          e.preventDefault();
-          const name = el.name.value.trim(), expr = el.expr.value.trim(), ch = [...f.querySelectorAll("[name=ch]:checked")].map((x) => x.value);
-          if (!name) return tfErr("obrerr", "请输入规则名称", el.name);
-          if (ob.rules.some((x) => x !== r && x.name === name)) return tfErr("obrerr", "已有同名规则", el.name);
-          if (!expr) return tfErr("obrerr", "请输入 PromQL 表达式", el.expr);
-          const bal = (o, c) => expr.split(o).length === expr.split(c).length;
-          if (!bal("(", ")") || !bal("{", "}") || !bal("[", "]")) return tfErr("obrerr", "表达式括号不匹配", el.expr);
-          if (!/(>=?|<=?|==|!=)\s*-?[\d.]+/.test(expr)) return tfErr("obrerr", "表达式需包含触发条件，如 > 0.01", el.expr);
-          if (!ch.length) return tfErr("obrerr", "至少选择一个通知渠道", f.querySelector("[name=ch]:not(:disabled)"));
-          const nv = { name, expr, p: f.querySelector("[name=p]:checked").value, dur: el.dur.value, ch, on: el.on.checked };
-          if (r) Object.assign(r, nv); else ob.rules.unshift({ ...nv, sil: 0 });
-          closeAll(); obDraw(); toast(r ? `「${name}」已更新` : `已创建告警规则「${name}」`);
+            <span class="x-err" id="obrerr" hidden></span>`;
+          const f = $("obr");
+          f.elements.name.focus();
+          const sync = () => {
+            if (st.mode === "可视化") {
+              st.metric = f.elements.metric.value; st.agg = f.elements.agg.value; st.filter = f.elements.filter.value.trim();
+              st.op = f.elements.op.value; st.th = f.elements.th.value.trim(); st.win = f.elements.win.value;
+            }
+            const ex = st.mode === "可视化" ? buildExpr() : (f.elements.expr ? f.elements.expr.value.trim() : "");
+            const dur = f.elements.dur.value, pv = (f.querySelector("[name=p]:checked") || {}).value || "P2";
+            const chs = [...f.querySelectorAll("[name=ch]:checked")].map((x) => x.value);
+            $("obprev").innerHTML = `<b>触发条件</b>：当 <span class="x-mono">${esc(ex || "（未填写）")}</span> 连续 <b>${esc(dur)}</b> 成立时，按 <b>${esc(pv)}</b> 级别通知 ${esc(chs.join("、") || "（未选择渠道）")}。<br /><span class="x-frac">生成表达式：<span class="x-mono">${esc(ex)}</span></span>`;
+          };
+          f.oninput = sync; f.onchange = (e) => {
+            if (e.target.name === "mode") { st.mode = e.target.value; draw(); return; }
+            if (e.target.name === "metric") { f.elements.filter.value = ""; st.filter = ""; }
+            sync();
+          };
+          sync();
+          f.onsubmit = (e) => {
+            e.preventDefault();
+            const name = f.elements.name.value.trim();
+            const expr = (st.mode === "可视化" ? buildExpr() : f.elements.expr.value.trim());
+            const ch = [...f.querySelectorAll("[name=ch]:checked")].map((x) => x.value);
+            if (!name) return tfErr("obrerr", "请输入规则名称", f.elements.name);
+            if (ob.rules.some((x) => x !== r && x.name === name)) return tfErr("obrerr", "已有同名规则", f.elements.name);
+            if (!expr) return tfErr("obrerr", "请填写或生成表达式", f.elements.expr || f.elements.et);
+            if (st.mode === "可视化" && !(Number(st.th) || Number(st.th) === 0)) return tfErr("obrerr", "阈值需为数字", f.elements.th);
+            const bal = (o, c) => expr.split(o).length === expr.split(c).length;
+            if (!bal("(", ")") || !bal("{", "}") || !bal("[", "]")) return tfErr("obrerr", "表达式括号不匹配", f.elements.expr);
+            if (!/(>=?|<=?|==|!=)\s*-?[\d.]+/.test(expr)) return tfErr("obrerr", "表达式需包含触发条件，如 > 0.01", f.elements.expr);
+            if (!ch.length) return tfErr("obrerr", "至少选择一个通知渠道", f.querySelector("[name=ch]:not(:disabled)"));
+            const nv = { name, expr, p: f.querySelector("[name=p]:checked").value, dur: f.elements.dur.value, ch, on: f.elements.on.checked };
+            if (r) Object.assign(r, nv); else ob.rules.unshift({ ...nv, sil: 0 });
+            closeAll(); obDraw(); toast(r ? `「${name}」已更新` : `已创建告警规则「${name}」`);
+          };
         };
+        draw();
       }
 
       function obSilence(r, back) {
