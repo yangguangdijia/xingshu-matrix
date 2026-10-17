@@ -4,6 +4,8 @@
 
 ![status](https://img.shields.io/badge/version-v1.0--preview-2f6bff) ![deploy](https://img.shields.io/badge/deploy-K8s%20%7C%20Docker%20%7C%20物理机-0b1a33)
 
+> **技术说明文档**：开发语言、架构、背景、接口逻辑、接口文档索引、已实现与未实现清单见 [docs/PLATFORM.md](docs/PLATFORM.md)。后端为 Go 1.23（`server/`），接口文档在 `docs/api/`。
+
 ---
 
 ## 目录
