@@ -1563,7 +1563,7 @@
       .x-bname { color: #0b1526; font-size: 20px; line-height: 1.3; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
       .x-aslogan { display: flex; align-items: center; gap: 14px; margin: 0; color: #8ea3bf; font-size: 13px; letter-spacing: .16em; }
       .x-aslogan i { display: block; flex: none; width: 46px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, #cbdcf0, #7ea6dc); }
-      .x-ashell { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 1fr) 520px; grid-template-rows: minmax(0, 1fr); gap: 0 clamp(48px, 6vw, 96px); align-items: center; min-height: 100vh; max-width: 1600px; margin: 0 auto; padding: 112px 56px 28px; box-sizing: border-box; }
+      .x-ashell { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 1fr) 520px; grid-template-rows: minmax(0, 1fr) auto; gap: 0 clamp(48px, 6vw, 96px); align-items: center; min-height: 100vh; max-width: 1600px; margin: 0 auto; padding: 112px 56px 28px; box-sizing: border-box; }
       .x-art { min-width: 0; background: transparent; padding: 0; }
       .x-eyebrow { display: flex; align-items: center; gap: 14px; margin: 0 0 20px; color: #6b7c93; font-size: 15px; font-weight: 500; letter-spacing: .18em; }
       .x-eyebrow i { display: block; flex: none; width: 38px; height: 2px; border-radius: 1px; background: #3b82f6; }
@@ -1619,22 +1619,21 @@
       .x-rules li::before { content: "○"; margin-right: 6px; }
       .x-rules li.ok { color: #237804; }
       .x-rules li.ok::before { content: "✓"; }
-      /* 页脚版权：与登录卡片同列，贴在卡片正下方并右对齐卡片右边缘，不再漂在页面右下角 */
-      .x-formcol { justify-self: end; width: 100%; max-width: 520px; display: flex; flex-direction: column; align-items: stretch; }
-      .x-bcopy { align-self: flex-end; margin: 16px 2px 0; color: #7c8da3; font-size: 12px; line-height: 1.6; }
-      /* 右侧竖排标语：18px / 字色加深 / 图标与竖线同步放大 */
-      .x-aside { display: block; position: fixed; right: 10px; top: 50%; transform: translateY(-50%); z-index: 2; width: 32px; margin: 0; color: #40597f; font-size: 18px; font-weight: 500; letter-spacing: .3em; line-height: 30px; text-align: center; writing-mode: vertical-rl; }
-      .x-aside svg { position: absolute; top: -36px; left: 50%; width: 20px; height: 20px; margin-left: -10px; fill: #2f5fe0; }
-      .x-aside::before, .x-aside::after { content: ""; position: absolute; left: 50%; width: 1px; height: 48px; background: linear-gradient(180deg, transparent, #c3d3e6); }
-      .x-aside::before { top: -92px; }
-      .x-aside::after { bottom: -92px; background: linear-gradient(0deg, transparent, #c3d3e6); }
+      /* 页脚版权：跨两列、水平居中、贴页面底部（页面级页脚） */
+      .x-bcopy { grid-column: 1 / -1; justify-self: center; align-self: end; margin: 18px 0 0; color: #7c8da3; font-size: 12px; line-height: 1.6; text-align: center; }
+      /* 右侧竖排标语：15px / 字色加深（对比度是重点），装饰件同比缩回 */
+      .x-aside { display: block; position: fixed; right: 10px; top: 50%; transform: translateY(-50%); z-index: 2; width: 26px; margin: 0; color: #46628a; font-size: 15px; font-weight: 500; letter-spacing: .2em; line-height: 26px; text-align: center; writing-mode: vertical-rl; }
+      .x-aside svg { position: absolute; top: -32px; left: 50%; width: 18px; height: 18px; margin-left: -9px; fill: #2f5fe0; }
+      .x-aside::before, .x-aside::after { content: ""; position: absolute; left: 50%; width: 1px; height: 42px; background: linear-gradient(180deg, transparent, #c3d3e6); }
+      .x-aside::before { top: -84px; }
+      .x-aside::after { bottom: -84px; background: linear-gradient(0deg, transparent, #c3d3e6); }
       @media (max-width: 1359px) { .x-aside { display: none; } }
       .x-auth :is(button, a, input):focus-visible { outline: 2px solid var(--a-blue); outline-offset: 2px; }
       .x-auth:not([hidden]) ~ .x-toast { z-index: 120; }
       .x-auth:not([hidden]) ~ .x-toast::before { content: "i"; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--a-blue); color: #fff; font-size: 11px; vertical-align: -2px; }
       @media (max-height: 820px) { .x-ashell { padding-top: 84px; padding-bottom: 6px; } .x-formp { padding: 26px 36px 20px; } .x-ashell { align-content: center; } .x-bcopy { margin-top: 10px; } .x-bhead { font-size: clamp(32px, 3.1vw, 44px); } .x-bpos { margin-top: 18px; font-size: 15px; } .x-feats { margin-top: 30px; } .x-aform > p { margin-bottom: 20px; } .x-aor { margin: 16px 0; } }
       @media (max-width: 1180px) { .x-ashell { grid-template-columns: minmax(0, 1fr) 460px; gap: 40px; padding: 112px 40px 88px; } .x-atop { left: 40px; right: 40px; }  .x-aside { display: none; } }
-      @media (max-width: 900px) { .x-ashell { grid-template-columns: minmax(0, 1fr); gap: 40px; padding: 40px 32px 72px; min-height: auto; } .x-formcol { justify-self: stretch; max-width: none; } .x-formp { justify-self: stretch; max-width: none; } .x-bhead { font-size: 44px; } .x-bpos { font-size: 16px; } .x-bcopy { margin: 20px 0 0; align-self: center; text-align: center; } .x-atop { position: relative; top: auto; left: auto; right: auto; padding: 26px 32px 0; } .x-aslogan { display: none; } }
+      @media (max-width: 900px) { .x-ashell { grid-template-columns: minmax(0, 1fr); gap: 40px; padding: 40px 32px 72px; min-height: auto; } .x-formp { justify-self: stretch; max-width: none; } .x-bhead { font-size: 44px; } .x-bpos { font-size: 16px; } .x-bcopy { margin: 20px 0 0; align-self: center; text-align: center; } .x-atop { position: relative; top: auto; left: auto; right: auto; padding: 26px 32px 0; } .x-aslogan { display: none; } }
       @media (max-width: 600px) { .x-ashell { padding: 22px 18px 40px; } .x-atop { display: flex; padding: 16px 18px 0; } .x-feats { grid-template-columns: 1fr; gap: 14px; max-width: none; } .x-bhead { font-size: 36px; gap: 12px; } .x-bline { width: 40px; height: 3px; margin-top: 8px; } .x-eyebrow { font-size: 14px; letter-spacing: .26em; } .x-feats { margin-top: 30px; gap: 16px; } .x-feats svg { width: 40px; height: 40px; padding: 9px; } .x-formp { padding: 28px 22px 24px; border-radius: 16px; } .x-aform h1 { font-size: 26px; } .x-bcopy { margin-top: 22px; } }
       @media (prefers-reduced-motion: reduce) { .x-auth *, .x-auth *::before, .x-auth *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
     </style>
@@ -1687,10 +1686,8 @@
             <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c.6 4.5 2.5 6.4 7 7-4.5.6-6.4 2.5-7 7-.6-4.5-2.5-6.4-7-7 4.5-.6 6.4-2.5 7-7z" /><path d="M19 15v4M17 17h4" /></svg><b>AI 助手</b><span>智能诊断 · 效率提升</span></li>
           </ul>
         </section>
-        <div class="x-formcol">
-          <div class="x-formp"><div class="x-aform" id="acard"></div></div>
-          <p class="x-bcopy">© 星枢 Matrix · 私有化部署版 v1.0</p>
-        </div>
+        <div class="x-formp"><div class="x-aform" id="acard"></div></div>
+        <p class="x-bcopy">© 星枢 Matrix · 私有化部署版 v1.0</p>
       </div>
       <p class="x-aside" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M16 6.6Q17.3 14.7 25.4 16Q17.3 17.3 16 25.4Q14.7 17.3 6.6 16Q14.7 14.7 16 6.6Z" /></svg>让运维更简单</p>
     </div>
