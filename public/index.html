@@ -1653,7 +1653,6 @@
         <button class="x-kbtn x-devo" id="kbtn" data-ic="search" aria-label="搜索页面（⌘K）"><span>搜索页面</span><kbd>⌘K</kbd></button>
         <button class="x-envbtn x-devo" id="envbtn" data-pop="env" aria-haspopup="menu" aria-expanded="false"></button>
         <button class="x-envbtn x-devo" id="kcbtn" type="button" data-ic="term" aria-controls="kdock" aria-label="打开 kubectl Web Shell"><span>kubectl</span></button>
-        <button class="x-aibtn x-devo" id="aibtn" type="button" data-ic="spark" aria-haspopup="dialog" aria-controls="drawer"><span>AI 助手</span></button>
         <button class="x-ibtn x-devo" id="bellbtn" data-ic="bell" data-pop="bell" aria-haspopup="true" aria-expanded="false" aria-label="通知"><b class="x-badge" id="badge" hidden></b></button>
         <button class="x-avbtn x-devo" data-pop="me" aria-haspopup="menu" aria-expanded="false" aria-label="个人菜单"><span class="x-avatar">李</span><span class="x-who"><b data-who>李明</b><small>超级管理员</small></span></button>
       </header>
@@ -3855,7 +3854,6 @@
           const d = b.dataset, r = rl.list.find((x) => x.id === (d.rlopen || d.rledit || d.rlrun || d.rldel)); if (!r) return;
           if (d.rlopen) rlOpen(r); else if (d.rledit) rlEdit(r); else if (d.rlrun) rlExec(r); else rlDel(r);
         };
-        rlAiPanel(el);
       }
       function rlRows() {
         const tb = $("rlrows"); if (!tb) return;
@@ -5562,7 +5560,6 @@
         const draw = () => {
           const out = maskApply(st.sample, st.mode, st.pre, st.post);
           $("mkbody").innerHTML = `
-            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" id="mkaiq" value="${esc(st.ai)}" placeholder="如：手机号保留前三后四，邮箱保留首字母" aria-label="用自然语言描述脱敏规则" autocomplete="off" /><button type="button" id="mkaiGo">生成</button></div></div>
             <label><span class="x-req">规则名称</span><input class="x-input" name="name" maxlength="60" autocomplete="off" placeholder="如 手机号脱敏" /></label>
             <div class="x-row2"><label><span>匹配方式</span><select class="x-select" name="by">${opt(["字段名", "正则匹配"], "字段名")}</select></label>
               <label><span class="x-req">字段 / 表达式</span><input class="x-input x-mono" name="field" value="phone" autocomplete="off" placeholder="phone 或 ^1\d{10}$" /></label></div>
@@ -5580,7 +5577,7 @@
             st.out = o;
           };
           f.oninput = sync; f.onchange = sync; sync();
-          $("mkaiGo").onclick = () => {
+          if ($("mkaiGo")) $("mkaiGo").onclick = () => {
             const q = $("mkaiq").value.trim(); if (!q) return $("mkaiq").focus();
             st.ai = q;
             const r = mkAiParse(q);
@@ -5633,7 +5630,6 @@
           '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="dbf">提交工单</button>');
         const draw = () => {
           $("dbbody").innerHTML = `
-            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" id="dbaiq" value="${esc(st.ai)}" placeholder="如：把 users 表所有用户的 status 改成 1" aria-label="用自然语言描述要执行的 SQL" autocomplete="off" /><button type="button" id="dbaiGo">生成 SQL</button></div><p class="x-frac" style="margin:6px 0 0">只生成 SQL 并给出风险提示，不会直接执行</p></div>
             <div class="x-row2"><label><span class="x-req">数据库实例</span><select class="x-select" name="db">${opt(dbs, dbs[0])}</select></label>
               <label><span>库名</span><input class="x-input" name="schema" value="order_db" autocomplete="off" /></label></div>
             <label><span class="x-req">SQL</span><textarea class="x-input x-mono" name="sql" rows="6" spellcheck="false" placeholder="SELECT id, name FROM users WHERE id > 10"></textarea></label>
@@ -5649,7 +5645,7 @@
           };
           f.oninput = sync;
           sync();
-          $("dbaiGo").onclick = () => {
+          if ($("dbaiGo")) $("dbaiGo").onclick = () => {
             const q = $("dbaiq").value.trim(); if (!q) return $("dbaiq").focus();
             st.ai = q;
             const r = dbAiSql(q);
@@ -5698,7 +5694,6 @@
           '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="cmdf">保存规则</button>');
         const draw = () => {
           $("cmdbody").innerHTML = `
-            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" id="cmdaiq" value="${esc(st.ai)}" placeholder="如：禁止 rm -rf，systemctl stop 只告警" aria-label="用自然语言描述命令规则" autocomplete="off" /><button type="button" id="cmdaiGo">生成</button></div></div>
             <label><span class="x-req">规则名称</span><input class="x-input" name="name" maxlength="60" autocomplete="off" placeholder="如 禁止删除根目录" /></label>
             <div class="x-row2"><label><span>匹配方式</span><select class="x-select" name="mode">${opt(["前缀匹配", "正则匹配"], st.mode)}</select></label>
               <label><span>动作</span><select class="x-select" name="action">${opt(["拒绝", "告警", "需审批"], st.action)}</select></label></div>
@@ -5750,7 +5745,7 @@
           if (st.pri) f.elements.pri.value = st.pri;
           f.elements.action.value = st.action;
           validate();
-          $("cmdaiGo").onclick = () => {
+          if ($("cmdaiGo")) $("cmdaiGo").onclick = () => {
             const q = $("cmdaiq").value.trim(); if (!q) return $("cmdaiq").focus();
             st.ai = q;
             const r = cmdAiParse(q);
@@ -5796,7 +5791,6 @@
         const draw = () => {
           const pickA = accts.filter((a) => st.assets.has(a[1]));
           $("bpbody").innerHTML = `
-            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" id="bpaiq" value="${esc(st.ai)}" placeholder="如：让 DBA 组在 30 天内可以连接 db-01 的 dba 账号" aria-label="用自然语言描述授权规则" autocomplete="off" /><button type="button" id="bpaiGo">生成</button></div></div>
             <label><span class="x-req">策略名称</span><input class="x-input" name="name" maxlength="60" autocomplete="off" placeholder="如 DBA 组访问生产数据库" /></label>
             <div class="x-row2"><label><span>授权主体</span><select class="x-select" name="who">${opt(groups, st.who)}</select></label>
               <label><span>有效期</span><select class="x-select" name="days">${opt(["长期", "7 天", "30 天", "90 天"], st.days)}</select></label></div>
@@ -5819,7 +5813,7 @@
           f.oninput = (e) => { if (e.target.name === "asset") { st.assets = new Set([...f.querySelectorAll("[name=asset]:checked")].map((x) => x.value)); draw(); return; } sync(); };
           f.onchange = (e) => { if (e.target.name !== "asset") sync(); };
           sync();
-          $("bpaiGo").onclick = () => {
+          if ($("bpaiGo")) $("bpaiGo").onclick = () => {
             const q = $("bpaiq").value.trim(); if (!q) return $("bpaiq").focus();
             const r = bpAiParse(q);
             st.ai = q;
@@ -5878,7 +5872,6 @@
         const draw = () => {
           const P = BAS_PROTO[st.proto];
           $("babody").innerHTML = `
-            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f" id="baai"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" id="baiq" value="${esc(st.ai)}" placeholder="如：登记 10.0.1.60 的 Linux 服务器，SSH，账号 root" aria-label="用自然语言描述要登记的资产" autocomplete="off" /><button type="button" id="baaiGo">生成</button></div><p class="x-frac" style="margin:6px 0 0">只填表单，不会自动提交</p></div>
             <fieldset class="x-radios"><legend>协议</legend>${Object.keys(BAS_PROTO).map((k) => `<label><input type="radio" name="proto" value="${k}"${k === st.proto ? " checked" : ""} />${k}</label>`).join("")}</fieldset>
             <h3 class="x-h2">基本信息</h3>
             <div class="x-row2"><label><span class="x-req">资产名称</span><input class="x-input" name="name" autocomplete="off" placeholder="如 web-01" /></label>
@@ -5911,7 +5904,7 @@
               if (e.target.value === "私钥") sec.placeholder = "选择私钥文件，内容只在内存中读取";
             }
           };
-          $("baaiGo").onclick = () => {
+          if ($("baaiGo")) $("baaiGo").onclick = () => {
             const q = $("baiq").value.trim(); if (!q) return $("baiq").focus();
             const r = basAiParse(q);
             st.ai = q;
@@ -5922,7 +5915,7 @@
             ["name", "host", "port", "user", "database", "group"].forEach((k) => { if (r[k] && nf.elements[k]) nf.elements[k].value = r[k]; });
             toast(r.hit ? `AI 已按「${r.hit}」填入表单` : "AI 未识别到可填字段，请补充 IP、协议或账号");
           };
-          $("baiq").onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); $("baaiGo").click(); } };
+          if ($("baiq")) $("baiq").onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); $("baaiGo").click(); } };
           $("baTest").onclick = () => {
             const host = f.elements.host.value.trim(), port = f.elements.port.value.trim();
             $("batest").innerHTML = host && port
@@ -6500,7 +6493,6 @@
           const curSets = f0 ? [...f0.querySelectorAll("[name=sets]")] : [];
           const sets = curSets.length ? curSets.filter((x) => x.checked).map((x) => x.value) : GSETS;
           $("plbody").innerHTML = `
-            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" id="plaiq" placeholder="如：每 30 天凌晨 2 点为所有特权账号改 20 位密码" aria-label="用自然语言描述改密计划" autocomplete="off" /><button type="button" id="plaiGo">生成</button></div></div>
             <label><span class="x-req">计划名称</span><input class="x-input" name="n" maxlength="60" autocomplete="off" placeholder="如 生产特权账号月度改密" /></label>
             <label><span class="x-req">目标范围</span><select class="x-select" name="scope">${opt(gScopes(), "全部特权账号")}</select>
               <span class="x-frac" id="plcount" style="display:block;margin-top:4px"></span></label>
@@ -6520,7 +6512,7 @@
             $("plprev").innerHTML = `<b>计划预览</b>：每 ${cyc} 天在 ${esc(at)} 为 <b>${n}</b> 个账号轮换 ${len} 位密码（${st.join("+") || "未选字符集"}），下次执行 ${esc(gFmt(next))}。示例：<span class="x-mono">${esc(gSamplePw(len, st))}</span>${n ? "" : ' <span class="x-tag x-orange x-tag--s">范围内没有账号</span>'}`;
           };
           f.oninput = sync; f.onchange = sync; sync();
-          $("plaiGo").onclick = () => {
+          if ($("plaiGo")) $("plaiGo").onclick = () => {
             const q = $("plaiq").value.trim(); if (!q) return $("plaiq").focus();
             const r = plAiParse(q);
             draw();
@@ -6817,7 +6809,6 @@
         const draw = () => {
           const K = st.k, scal = K === "Deployment" || K === "StatefulSet", job = K === "Job", cron = K === "CronJob";
           $("wlbody").innerHTML = `
-            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f" id="wlai"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" name="q" id="wlaiq" value="${esc(st.ai)}" placeholder="一句话描述，如：3 副本 nginx:1.25，端口 80，CPU 500m 内存 512Mi" aria-label="用自然语言描述要创建的工作负载" autocomplete="off" /><button type="button" id="wlaiGo">生成</button></div><p class="x-frac" style="margin:6px 0 0">生成后填入下方表单，可继续修改，不会直接提交</p></div>
             <fieldset class="x-radios"><legend>工作负载类型</legend>${WL_KINDS.map((k) => `<label><input type="radio" name="kind" value="${k}"${k === K ? " checked" : ""} />${k}</label>`).join("")}</fieldset>
             <div class="x-row2"><label><span class="x-req">名称</span><input class="x-input" name="name" maxlength="63" autocomplete="off" placeholder="如 order-service" /></label>
               <label><span class="x-req">命名空间</span><input class="x-input" name="ns" list="wlns" value="default" autocomplete="off" /><datalist id="wlns">${WL_NS().map((n) => `<option value="${esc(n)}"></option>`).join("")}</datalist></label></div>
@@ -6864,8 +6855,8 @@
             if (nv.img || nv.n) $("wlyaml").textContent = wlYaml(nv);
             toast(r.hit ? `AI 已按「${r.hit}」填入表单` : "AI 未识别到可填字段，请补充副本数、镜像或端口");
           };
-          $("wlaiGo").onclick = aiGo;
-          $("wlaiq").onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); aiGo(); } };
+          if ($("wlaiGo")) $("wlaiGo").onclick = aiGo;
+          if ($("wlaiq")) $("wlaiq").onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); aiGo(); } };
           $("wlf").onsubmit = (e) => {
             e.preventDefault();
             const v = wlFacts(f), bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
@@ -6963,7 +6954,6 @@
         const draw = () => {
           const isSec = st.k === "Secret";
           $("cfbody").innerHTML = `
-            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f" id="cfai"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" name="q" id="cfaiq" value="${esc(st.ai)}" placeholder="如：创建 ConfigMap app-config，含 DB_HOST=db.prod:5432 TIMEOUT=30s" aria-label="用自然语言描述要创建的配置" autocomplete="off" /><button type="button" id="cfaiGo">生成</button></div><p class="x-frac" style="margin:6px 0 0">生成后填入下方表单，可继续修改，不会直接提交</p></div>
             <fieldset class="x-radios"><legend>类型</legend>${["ConfigMap", "Secret"].map((k) => `<label><input type="radio" name="kind" value="${k}"${k === st.k ? " checked" : ""} />${k}</label>`).join("")}</fieldset>
             <div class="x-row2"><label><span class="x-req">名称</span><input class="x-input" name="name" maxlength="253" autocomplete="off" placeholder="如 app-config" /></label>
               <label><span class="x-req">命名空间</span><input class="x-input" name="ns" list="cfns" value="default" autocomplete="off" /><datalist id="cfns">${WL_NS().map((n) => `<option value="${esc(n)}"></option>`).join("")}</datalist></label></div>
@@ -7004,8 +6994,8 @@
             const v = cfFacts(nf); if (v.n) $("cfyaml").textContent = cfYaml(v);
             toast(r.hit ? `AI 已按「${r.hit}」填入表单` : "AI 未识别到可填字段，请用 KEY=value 描述");
           };
-          $("cfaiGo").onclick = aiGo;
-          $("cfaiq").onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); aiGo(); } };
+          if ($("cfaiGo")) $("cfaiGo").onclick = aiGo;
+          if ($("cfaiq")) $("cfaiq").onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); aiGo(); } };
           $("cff").onsubmit = (e) => {
             e.preventDefault();
             const v = cfFacts(f), bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
@@ -7290,7 +7280,6 @@
         $("kNew").onclick = () => k8Create(p.k);
         K8_BIND[p.k](el);
         bindBar(el, p.h);
-        k8AiPanel(p.k, el);
       }
       // 项目: groups namespaces, members (role), ResourceQuota and LimitRange. Demo rows (demo: true) show only with 加载演示数据
       const PJ_ROLES = ["项目所有者", "成员", "只读"];
@@ -8307,7 +8296,6 @@
             ${mwSrc}</section>`;
         el.querySelectorAll("[data-mwt]").forEach((b) => (b.onclick = () => { MW.tab = b.dataset.mwt; mwIndex(el); el.querySelector(`[data-mwt="${MW.tab}"]`).focus(); }));
         el.querySelectorAll("[data-mwh]").forEach((r) => { r.onclick = (e) => { if (!e.target.closest("a")) location.hash = r.dataset.mwh; }; r.onkeydown = (e) => { if (e.key === "Enter" && e.target === r) location.hash = r.dataset.mwh; }; });
-        mwAiPanel(el, k);
       }
       function mwDetail(el, k, x) {
         const T = MW_T[k], h = mwHash(k, x), st = mwSt(x), up = mwUp(x), al = MW_ALERTS.filter((a) => a.mw === h), top = Math.max(0, ...x.groups.map((g) => g.lag));
@@ -11248,6 +11236,8 @@ spec:
       }
       const AIB_CTX = {};
       function aiBtn(scene, ctxFn) {
+        // 产品要求：不再在页面标题栏放独立的 AI 按钮，AI 入口收敛到具体操作与审计流程内
+        return "";
         let t = "通用";
         try { AIB_CTX[scene] = ctxFn; t = (AI_SCENES.find((s) => s[0] === scene) || [, "通用"])[1]; } catch (err) { /* 渲染早于 AI 定义时只输出按钮 */ }
         return `<button class="x-aiscn" type="button" data-aiscn="${scene}" aria-haspopup="dialog" aria-controls="drawer" title="AI · ${t}" aria-label="AI 助手 · ${t}场景">✦ AI</button>`;
@@ -11904,7 +11894,7 @@ spec:
       };
       cmdUl.onclick = (e) => { const a = e.target.closest("a"); if (a) { e.preventDefault(); navGo(a.getAttribute("href")); } };
       $("kbtn").onclick = openCmdk;
-      $("aibtn").onclick = () => { setOpen(false); aiDrawer(); };
+      if ($("aibtn")) $("aibtn").onclick = () => { setOpen(false); aiDrawer(); };
 
       document.querySelectorAll("[data-ic]").forEach((el) => el.insertAdjacentHTML("afterbegin", ic(el.dataset.ic)));
       document.addEventListener("click", (e) => {
