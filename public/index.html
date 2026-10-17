@@ -3651,6 +3651,74 @@
         rlStart(r, true);
       }
 
+      // 发布单页内嵌 AI：基于当前发布单数据分析，可直接打开对应单据
+      function rlAiPanel(el) {
+        const host = el.querySelector(".x-panel"); if (!host) return;
+        host.insertAdjacentHTML("beforebegin",
+          `<section class="x-panel x-aip" aria-label="发布单 AI 分析" style="margin-bottom:12px">
+            <div class="x-xai" style="margin:0"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span>
+              <input class="x-xai-in" id="rlaiq" placeholder="如：哪些发布单还没完成 / 最近为什么回滚 / 发布窗口有没有冲突" aria-label="用自然语言分析发布单" autocomplete="off" />
+              <button type="button" id="rlaigo">分析</button></div>
+              <div class="x-aip-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${["哪些发布单还没完成", "最近为什么回滚", "发布窗口有没有冲突", "哪个应用发布最频繁"].map((q) => `<button type="button" class="x-tag x-tag--s" data-rlq="${esc(q)}" style="cursor:pointer">${esc(q)}</button>`).join("")}</div>
+            </div>
+            <div id="rlaio" aria-live="polite"></div>
+          </section>`);
+        const out = $("rlaio"), inp = $("rlaiq");
+        const run = (q) => {
+          q = (q || "").trim(); if (!q) return inp.focus();
+          const r = rlAiRun(q), L = rl.list || [];
+          out.innerHTML = `<div class="x-aip-r"><p class="x-aip-t">${esc(r.text)}</p>${r.items.length ? `<ul class="x-aip-l">${r.items.map((it, i) => `<li><span class="x-name">${esc(it.n)}</span><span class="x-frac">${esc(it.meta || "")}</span><button type="button" class="x-act" data-rlopen="${esc(it.id)}">打开</button></li>`).join("")}</ul>` : ""}${r.hint ? `<p class="x-frac" style="margin:6px 0 0">${esc(r.hint)}</p>` : ""}</div>`;
+          out.querySelectorAll("[data-rlopen]").forEach((b) => (b.onclick = () => { const x = L.find((v) => v.id === b.dataset.rlopen); if (x) rlOpen(x); }));
+          inp.select();
+        };
+        $("rlaigo").onclick = () => run(inp.value);
+        inp.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); run(inp.value); } };
+        host.parentElement.querySelectorAll("[data-rlq]").forEach((b) => (b.onclick = () => { inp.value = b.dataset.rlq; run(b.dataset.rlq); }));
+      }
+      const rlPlain = (s) => String(s || "").replace(/<[^>]*>/g, "").trim();
+      function rlAiRun(q) {
+        const L = rl.list || [];
+        if (!L.length) return { text: "还没有发布单。", items: [] };
+        if (/未完成|没完成|进行中|待审批|草稿/.test(q)) {
+          const open = L.filter((r) => ["草稿", "待审批", "发布中"].includes(r.st));
+          return {
+            text: open.length ? `${open.length} 张发布单未完成，其中 ${open.filter((r) => r.st === "待审批").length} 张在等审批。` : "所有发布单都已完成。",
+            items: open.slice(0, 6).map((r) => ({ id: r.id, n: `${r.id} ${r.title}`, meta: `${r.st} · ${r.env} · ${r.owner}` })),
+            hint: open.some((r) => r.st === "发布中") ? "发布中的单据可以打开查看每批次进度与日志。" : "",
+          };
+        }
+        if (/回滚|失败|异常|为什么/.test(q)) {
+          const bad = L.filter((r) => r.st === "已回滚" || r.apps.some((a) => a.st === "失败"));
+          const last = bad[0];
+          const logs = last ? [...last.log].reverse().map(rlPlain).filter((l) => !/预案|发起回滚/.test(l)) : [];
+          const line = logs.find((l) => /失败|超时|异常|错误率|不健康|未就绪|5xx/.test(l)) || logs[0] || "";
+          return {
+            text: last ? `${last.id} 最近发生回滚：${line || "详见单据日志"}` : "没有回滚或失败的发布单。",
+            items: bad.slice(0, 5).map((r) => ({ id: r.id, n: `${r.id} ${r.title}`, meta: `${r.st} · ${r.env}` })),
+            hint: bad.length ? "回滚原因通常来自健康检查失败或指标越界，打开单据可看到逐批次日志。" : "",
+          };
+        }
+        if (/窗口|冲突|时间/.test(q)) {
+          const P = L.filter((r) => ["待审批", "发布中"].includes(r.st));
+          const clash = [];
+          for (let i = 0; i < P.length; i++) for (let j = i + 1; j < P.length; j++) {
+            if (P[i].from < P[j].to && P[j].from < P[i].to) clash.push([P[i], P[j]]);
+          }
+          return {
+            text: clash.length ? `发现 ${clash.length} 组发布窗口重叠，同一环境并行发布有互相影响的风险。` : "待审批与发布中的单据之间没有窗口重叠。",
+            items: clash.slice(0, 4).map(([a, b]) => ({ id: a.id, n: `${a.id} ↔ ${b.id}`, meta: `${a.env} · ${rlWin(a)} / ${rlWin(b)}` })),
+            hint: clash.length ? "建议把生产发布错峰，或改用灰度并降低首批比例。" : "",
+          };
+        }
+        const cnt = new Map();
+        L.forEach((r) => r.apps.forEach((a) => cnt.set(a.name, (cnt.get(a.name) || 0) + 1)));
+        const top = [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+        return {
+          text: `共 ${L.length} 张发布单，涉及 ${cnt.size} 个应用。发布最频繁的是：`,
+          items: top.map(([name, n]) => ({ id: (L.find((r) => r.apps.some((a) => a.name === name)) || {}).id, n: name, meta: `${n} 次发布` })),
+          hint: "高频应用建议缩短发布窗口并默认启用灰度，降低单次风险。",
+        };
+      }
       function renderRelease(el) {
         rlSeed();
         const key = "#/release", s = (pbar[key] ||= { q: "", f: "" }), L = rl.list;
@@ -3673,6 +3741,7 @@
           const d = b.dataset, r = rl.list.find((x) => x.id === (d.rlopen || d.rledit || d.rlrun || d.rldel)); if (!r) return;
           if (d.rlopen) rlOpen(r); else if (d.rledit) rlEdit(r); else if (d.rlrun) rlExec(r); else rlDel(r);
         };
+        rlAiPanel(el);
       }
       function rlRows() {
         const tb = $("rlrows"); if (!tb) return;
