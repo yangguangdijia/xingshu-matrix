@@ -5070,7 +5070,7 @@
         el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => { d.rows.splice(+b.dataset.del, 1); secBody(el, s); toast("已删除"); }));
         el.querySelectorAll("[data-conn]").forEach((b) => (b.onclick = () => basConnect(d.rows[+b.dataset.conn], b.dataset.proto)));
         el.querySelectorAll("[data-basdet]").forEach((b) => (b.onclick = () => basAssetDrawer(d.rows[+b.dataset.basdet][0], () => secBody(el, s))));
-        $("secAct").onclick = s.k === "audit" ? () => toast(`已导出 ${d.rows.length} 条审计记录（CSV）`) : s.k === "assets" ? () => basNewAsset(() => secBody(el, s)) : s.k === "policy" ? () => basNewPolicy(() => secBody(el, s)) : () => newRow(d, s.t, () => secBody(el, s));
+        $("secAct").onclick = s.k === "audit" ? () => toast(`已导出 ${d.rows.length} 条审计记录（CSV）`) : s.k === "assets" ? () => basNewAsset(() => secBody(el, s)) : s.k === "policy" ? () => basNewPolicy(() => secBody(el, s)) : s.k === "cmd" ? () => basNewCmdFilter(() => secBody(el, s)) : () => newRow(d, s.t, () => secBody(el, s));
         bindBar(el, key);
       }
 
@@ -5272,6 +5272,103 @@
         };
       }
       // 授权策略规则编辑器：主体 / 资产 / 账号 / 环境 / 有效期 / 命令策略，保存前可见规则预览
+      // 命令过滤规则编辑器：匹配方式、正则校验、动作、优先级、环境范围与命中测试
+      const CMD_META = {};
+      function basNewCmdFilter(done) {
+        const st = { mode: "前缀匹配", action: "拒绝", envs: new Set(ENV_TAGS.map((t) => t[0])), ai: "" };
+        dlg("新建命令过滤规则", '<form class="x-form" id="cmdf" novalidate><div id="cmdbody"></div></form>',
+          '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="cmdf">保存规则</button>');
+        const draw = () => {
+          $("cmdbody").innerHTML = `
+            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" id="cmdaiq" value="${esc(st.ai)}" placeholder="如：禁止 rm -rf，systemctl stop 只告警" aria-label="用自然语言描述命令规则" autocomplete="off" /><button type="button" id="cmdaiGo">生成</button></div></div>
+            <label><span class="x-req">规则名称</span><input class="x-input" name="name" maxlength="60" autocomplete="off" placeholder="如 禁止删除根目录" /></label>
+            <div class="x-row2"><label><span>匹配方式</span><select class="x-select" name="mode">${opt(["前缀匹配", "正则匹配"], st.mode)}</select></label>
+              <label><span>动作</span><select class="x-select" name="action">${opt(["拒绝", "告警", "需审批"], st.action)}</select></label></div>
+            <label><span class="x-req">表达式</span><input class="x-input x-mono" name="expr" id="cmdexpr" autocomplete="off" spellcheck="false" placeholder="${st.mode === "正则匹配" ? "rm\\\\s+-rf\\\\s+/" : "rm -rf /"}" />
+              <span class="x-frac" id="cmdchk" style="display:block;margin-top:4px"></span></label>
+            <div class="x-row2"><label><span>优先级（越小越先）</span><input class="x-input" name="pri" inputmode="numeric" value="10" /></label>
+              <label><span>命中说明</span><input class="x-input" name="note" autocomplete="off" placeholder="如 删除根目录会中断主机" /></label></div>
+            <div><span>环境范围</span><div class="x-pkgs">${ENV_TAGS.map((t) => `<label class="x-rlchk"><input type="checkbox" name="env" value="${esc(t[0])}"${st.envs.has(t[0]) ? " checked" : ""} />${esc(t[0])}</label>`).join("")}</div></div>
+            <h3 class="x-h2">命中测试</h3>
+            <div class="x-row2"><label><span>输入一条命令</span><input class="x-input x-mono" id="cmdsample" value="rm -rf /tmp/cache" autocomplete="off" spellcheck="false" /></label>
+              <div style="align-self:end"><button type="button" class="x-btn" id="cmdtest">测试</button></div></div>
+            <p class="x-frac" id="cmdresult" role="status" style="margin:0"></p>
+            <span class="x-err" id="cmderr" role="alert" hidden></span>`;
+          const f = $("cmdf"), err = $("cmderr");
+          const validate = () => {
+            const mode = f.elements.mode.value, expr = f.elements.expr.value;
+            const chk = $("cmdchk");
+            if (!expr.trim()) { chk.textContent = ""; return false; }
+            if (mode === "正则匹配") {
+              try { new RegExp(expr); } catch (e) { chk.textContent = "正则语法错误：" + e.message; chk.style.color = "#b42318"; return false; }
+              const anchored = /\$$/.test(expr.trim()) || /\(\\s\|\$\)/.test(expr);
+              chk.textContent = anchored ? "正则语法有效，且已限定结尾" : "正则语法有效，但未限定结尾，会误伤 rm -rf /tmp 这类路径（建议追加 (\\s|$)）";
+              chk.style.color = anchored ? "#237804" : "#b54708";
+              return true;
+            }
+            chk.textContent = "前缀匹配会把后续参数视为同一条命令，命中后按动作处理";
+            chk.style.color = "#6b7280";
+            return true;
+          };
+          const hit = (cmd, expr, mode) => {
+            try { return mode === "正则匹配" ? new RegExp(expr).test(cmd) : cmd.trim().startsWith(expr.trim()); } catch { return false; }
+          };
+          f.onchange = (e) => {
+            if (e.target.name === "mode") { st.mode = e.target.value; st.expr = f.elements.expr.value; st.name = f.elements.name.value; st.note = f.elements.note.value; st.pri = f.elements.pri.value; st.action = f.elements.action.value; draw(); return; }
+            validate();
+          };
+          f.oninput = () => validate();
+          $("cmdtest").onclick = () => {
+            const cmd = $("cmdsample").value, expr = f.elements.expr.value.trim(), mode = f.elements.mode.value;
+            if (!expr) return ($("cmdresult").textContent = "先填写表达式");
+            const ok = hit(cmd, expr, mode);
+            $("cmdresult").innerHTML = ok
+              ? `<span class="x-tag x-red x-tag--s">命中</span> 「${esc(cmd)}」将被 <b>${esc(f.elements.action.value)}</b>，并记入运维审计。`
+              : `<span class="x-tag x-green x-tag--s">未命中</span> 「${esc(cmd)}」不匹配当前规则，会正常执行并记录。`;
+          };
+          if (st.name) f.elements.name.value = st.name;
+          if (st.expr) f.elements.expr.value = st.expr;
+          if (st.note) f.elements.note.value = st.note;
+          if (st.pri) f.elements.pri.value = st.pri;
+          f.elements.action.value = st.action;
+          validate();
+          $("cmdaiGo").onclick = () => {
+            const q = $("cmdaiq").value.trim(); if (!q) return $("cmdaiq").focus();
+            st.ai = q;
+            const r = cmdAiParse(q);
+            st.mode = r.mode; st.action = r.action; st.expr = r.expr; st.name = r.name; st.note = r.note; st.pri = r.pri;
+            draw();
+            $("cmdresult").innerHTML = `<span class="x-tag x-blue x-tag--s">已填充</span> ${esc(r.hit)}`;
+            toast(`AI 已按「${r.hit}」填入规则`);
+          };
+          f.onsubmit = (e) => {
+            e.preventDefault();
+            const bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+            const name = f.elements.name.value.trim(), expr = f.elements.expr.value.trim(), mode = f.elements.mode.value;
+            if (!name) return bad("请填写规则名称", f.elements.name);
+            if (!expr) return bad("请填写表达式", f.elements.expr);
+            if (mode === "正则匹配") { try { new RegExp(expr); } catch (e2) { return bad("正则语法错误：" + e2.message, f.elements.expr); } }
+            const envs = [...f.querySelectorAll("[name=env]:checked")].map((x) => x.value);
+            if (!envs.length) return bad("至少选择一个环境", f.querySelector("[name=env]"));
+            if (adm("命令过滤").rows.some((r) => r[0] === expr)) return bad("相同表达式已存在", f.elements.expr);
+            CMD_META[expr] = { name, mode, action: f.elements.action.value, pri: +f.elements.pri.value || 10, note: f.elements.note.value.trim(), envs };
+            adm("命令过滤").rows.push([expr, f.elements.action.value]);
+            adm("命令过滤").rows.sort((a, b) => (CMD_META[a[0]] ? CMD_META[a[0]].pri : 99) - (CMD_META[b[0]] ? CMD_META[b[0]].pri : 99));
+            closeAll(); toast(`已保存命令规则 ${name}`);
+            done && done();
+          };
+        };
+        draw();
+      }
+      function cmdAiParse(q) {
+        const act = /审批/.test(q) ? "需审批" : /告警|提醒/.test(q) ? "告警" : "拒绝";
+        const m = q.match(/(?:禁止|拦截|告警|审批)\s*([^\s，,。]+(?:\s+[^\s，,。]+)?)/);
+        let expr = m ? m[1].trim() : (q.match(/[a-z][\w\s./-]{2,40}/i) || [""])[0].trim();
+        let mode = "前缀匹配";
+        if (/正则|regex/i.test(q)) mode = "正则匹配";
+        const name = (act === "拒绝" ? "禁止 " : act === "告警" ? "告警 " : "需审批 ") + (expr.split(/\s+/)[0] || "命令");
+        return { mode, action: act, expr, name, note: `命中「${expr}」时${act}`, pri: act === "拒绝" ? 10 : act === "需审批" ? 20 : 30, hit: `${act} ${expr}` };
+      }
       function basNewPolicy(done) {
         const groups = [...new Set([...(demo && IAM_DEMO.groups ? IAM_DEMO.groups.map((g) => g.n) : []), ...IAM.groups.map((g) => g.n), "研发一部", "DBA 组", "运维组"])];
         const assets = adm("资产").rows, accts = adm("账号").rows;
