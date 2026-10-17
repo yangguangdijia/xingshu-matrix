@@ -5060,12 +5060,14 @@
         if (s.view) return s.view(el);
         const d = s.d, key = secHash(s), ci = d.columns.indexOf(s.fc);
         // 资产: 连接 button by protocol (SSH rows also get SFTP)
+        const det = (r, j) => (s.k !== "assets" ? "" : `<button class="x-act" data-basdet="${j}">详情</button>`);
         const conn = (r, j) => s.k !== "assets" ? "" : [r[3], ...(r[3] === "SSH" ? ["SFTP"] : [])].map((p, n) =>
           `<button class="x-btn${n ? "" : " x-btn--pri"}" data-conn="${j}" data-proto="${esc(p)}"${r[4] === "在线" ? "" : ' disabled title="资产离线，无法连接"'}>${n ? p : "连接 " + esc(p)}</button>`).join("");
         el.innerHTML = phead(s.t, s.sub) + bar(key, { q: s.q, fl: s.fc, fo: [...new Set(d.rows.map((r) => r[ci]))], fc: ci, act: s.act, id: "secAct" }) +
-          `<div class="x-panel">${tbl([...d.columns, "操作"], d.rows.map((r, j) => [...cells(d.columns, r), `<span class="x-bops">${conn(r, j)}<button class="x-btn" data-del="${j}">删除</button></span>`]))}</div>`;
+          `<div class="x-panel">${tbl([...d.columns, "操作"], d.rows.map((r, j) => [...cells(d.columns, r), `<span class="x-bops">${det(r, j)}${conn(r, j)}<button class="x-btn" data-del="${j}">删除</button></span>`]))}</div>`;
         el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => { d.rows.splice(+b.dataset.del, 1); secBody(el, s); toast("已删除"); }));
         el.querySelectorAll("[data-conn]").forEach((b) => (b.onclick = () => basConnect(d.rows[+b.dataset.conn], b.dataset.proto)));
+        el.querySelectorAll("[data-basdet]").forEach((b) => (b.onclick = () => basAssetDrawer(d.rows[+b.dataset.basdet][0], () => secBody(el, s))));
         $("secAct").onclick = s.k === "audit" ? () => toast(`已导出 ${d.rows.length} 条审计记录（CSV）`) : s.k === "assets" ? () => basNewAsset(() => secBody(el, s)) : () => newRow(d, s.t, () => secBody(el, s));
         bindBar(el, key);
       }
@@ -5178,6 +5180,95 @@
         MySQL: { port: 3306, os: "Linux", extra: "mysql" },
         PostgreSQL: { port: 5432, os: "Linux", extra: "postgres" },
       };
+      // 资产详情抽屉：展示协议参数、账号与凭据状态，支持编辑、轮换凭据、禁用与移除
+      function basAssetDrawer(name, done) {
+        const d = $("drawer"), rows = adm("资产").rows, i = rows.findIndex((r) => r[0] === name);
+        if (i < 0) return toast("资产不存在或已移除");
+        const r = rows[i], m = BAS_META[name] || {}, proto = r[3] || "SSH";
+        const meta = (k, v) => `<dt>${k}</dt><dd>${v}</dd>`;
+        const protoRows = {
+          SSH: [["主机指纹", m.fingerprint ? `<span class="x-mono">${esc(m.fingerprint.slice(0, 32))}…</span>` : "首次连接信任（TOFU）"], ["跳转网关", m.gateway ? `<span class="x-mono">${esc(m.gateway)}</span>` : "直连"], ["SFTP", m.sftp === false ? "已关闭" : "已开启"]],
+          RDP: [["域", esc(m.domain || "未设置")], ["安全层", esc(m.security || "NLA")], ["分辨率", esc(m.res || "1600×900")]],
+          VNC: [["色彩深度", esc(m.depth || "24")], ["只读", m.readonly ? "是" : "否"]],
+          MySQL: [["数据库", `<span class="x-mono">${esc(m.database || "—")}</span>`], ["TLS", esc(m.tls || "require")], ["只读会话", m.readonly ? "是" : "否"]],
+          PostgreSQL: [["数据库", `<span class="x-mono">${esc(m.database || "—")}</span>`], ["TLS", esc(m.tls || "require")], ["只读会话", m.readonly ? "是" : "否"]],
+        }[proto] || [];
+        d.classList.add("x-drawer--wide"); d.setAttribute("aria-label", `资产 ${name}`);
+        d.innerHTML = `<div class="x-dhead"><span class="x-tag x-blue">${esc(proto)}</span><span>${esc(name)}</span>${pillTag(m.disabled ? "已禁用" : r[4] || "在线", m.disabled ? "x-grey" : "x-green")}<button class="x-x" data-close aria-label="关闭">×</button></div>
+          <div class="x-dbody">
+            ${BAS_META[name] ? "" : '<p class="x-frac" style="margin:0 0 10px">该资产来自演示数据，尚未登记协议参数与账号，可用「编辑参数」补充。</p>'}
+            <h3 class="x-h2">基本信息</h3><dl class="x-sum">
+              ${meta("地址", `<span class="x-mono">${esc(r[1])}</span>`)}
+              ${meta("端口", `<span class="x-mono">${esc((BAS_PROTO[proto] || {}).port || "—")}</span>`)}
+              ${meta("操作系统", esc(r[2] || "—"))}
+              ${meta("环境", m.env ? envTag(m.env) : '<span class="x-frac">—</span>')}
+              ${meta("资产组", esc(m.group || "未分组"))}
+              ${meta("标签", m.labels ? esc(m.labels) : "—")}
+            </dl>
+            <h3 class="x-h2">${esc(proto)} 参数</h3><dl class="x-sum">${protoRows.map(([k, v]) => meta(k, v)).join("")}</dl>
+            <h3 class="x-h2">登录账号</h3><dl class="x-sum">
+              ${meta("用户名", `<span class="x-mono">${esc(m.user || "—")}</span>`)}
+              ${meta("认证方式", esc(m.auth || "密码"))}
+              ${meta("凭据", m.secretMask ? `${esc(m.secretMask)} <span class="x-frac">（后端加密存储）</span>` : "未登记")}
+              ${meta("最近轮换", esc(m.rotatedAt || "—"))}
+            </dl>
+            <p class="x-frac" style="margin:12px 0 0">凭据不会在此页面展示明文；轮换后旧凭据立即失效。禁用资产后不再允许新连接，已有会话不受影响。</p>
+          </div>
+          <div class="x-dfoot"><button class="x-btn" data-close>关闭</button><button class="x-btn" data-baedit>编辑参数</button><button class="x-btn" data-barot>轮换凭据</button><button class="x-btn${m.disabled ? "" : " x-bdanger"}" data-batog>${m.disabled ? "启用" : "禁用"}</button><button class="x-btn x-bdanger" data-badel>移除</button></div>`;
+        d.querySelectorAll("[data-close]").forEach((b) => (b.onclick = closeAll));
+        d.querySelector("[data-baedit]").onclick = () => basAssetEdit(name, () => { basAssetDrawer(name, done); });
+        d.querySelector("[data-barot]").onclick = () => {
+          dlg(`轮换凭据 · ${esc(name)}`, `<form class="x-form" id="barf" novalidate><label><span class="x-req">新凭据</span><input class="x-input x-mono" name="s" type="password" autocomplete="new-password" placeholder="新密码或私钥内容" /></label><p class="x-frac" style="margin:0">提交后由后端加密保存，旧凭据立即失效。</p><span class="x-err" id="barerr" role="alert" hidden></span></form>`,
+            '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="barf">确认轮换</button>');
+          $("barf").onsubmit = (e) => {
+            e.preventDefault();
+            const v = $("barf").elements.s.value;
+            if (!v) { $("barerr").textContent = "请输入新凭据"; $("barerr").hidden = false; return; }
+            BAS_META[name] = { ...(BAS_META[name] || {}), secretMask: "******", rotatedAt: fmt(new Date()).slice(0, 16) };
+            closeAll(); toast(`已轮换 ${name} 的凭据`); basAssetDrawer(name, done);
+          };
+        };
+        d.querySelector("[data-batog]").onclick = () => {
+          BAS_META[name] = { ...(BAS_META[name] || {}), disabled: !(BAS_META[name] || {}).disabled };
+          const off = BAS_META[name].disabled;
+          rows[i] = [r[0], r[1], r[2], r[3], off ? "离线" : "在线"];
+          toast(`${name} 已${off ? "禁用，不再接受新连接" : "启用"}`);
+          basAssetDrawer(name, done);
+        };
+        d.querySelector("[data-badel]").onclick = () => {
+          k8Confirm(`移除资产 ${esc(name)}`, `将删除 <b>${esc(name)}（${esc(r[1])}）</b> 的登记信息与账号，历史会话与审计记录保留。`, "移除", () => {
+            rows.splice(i, 1); delete BAS_META[name];
+            closeAll(); toast(`已移除资产 ${name}`); done && done();
+          });
+        };
+        if (!d.classList.contains("open")) { $("mask").hidden = false; requestAnimationFrame(() => d.classList.add("open")); }
+      }
+      // 编辑协议参数：只编辑该协议真正存在的字段
+      function basAssetEdit(name, done) {
+        const m = BAS_META[name] || {}, proto = (adm("资产").rows.find((r) => r[0] === name) || [])[3] || "SSH";
+        const F = {
+          SSH: [["fingerprint", "主机指纹", m.fingerprint || ""], ["gateway", "跳转网关", m.gateway || ""]],
+          RDP: [["domain", "域", m.domain || ""], ["security", "安全层", m.security || "NLA"], ["res", "分辨率", m.res || "1600×900"]],
+          VNC: [["depth", "色彩深度", m.depth || "24"]],
+          MySQL: [["database", "数据库", m.database || ""], ["tls", "TLS", m.tls || "require"]],
+          PostgreSQL: [["database", "数据库", m.database || ""], ["tls", "TLS", m.tls || "require"]],
+        }[proto] || [];
+        dlg(`编辑参数 · ${esc(name)}`, `<form class="x-form" id="baef" novalidate>
+            <label><span>资产组</span><input class="x-input" name="group" value="${esc(m.group || "")}" placeholder="如 Web 集群" autocomplete="off" /></label>
+            <label><span>标签（key=value，空格分隔）</span><input class="x-input x-mono" name="labels" value="${esc(m.labels || "")}" autocomplete="off" /></label>
+            ${F.map(([k, t, v]) => `<label><span>${t}</span><input class="x-input" name="${k}" value="${esc(v)}" autocomplete="off" /></label>`).join("")}
+            ${["SSH", "VNC", "MySQL", "PostgreSQL"].includes(proto) ? `<label class="x-switch"><input type="checkbox" role="switch" name="flag"${(proto === "SSH" ? m.sftp !== false : !!m.readonly) ? " checked" : ""} /> ${proto === "SSH" ? "允许 SFTP 文件传输" : "只读会话"}</label>` : ""}
+          </form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="baef">保存</button>');
+        $("baef").onsubmit = (e) => {
+          e.preventDefault();
+          const f = $("baef"), g = (k) => (f.elements[k] ? f.elements[k].value.trim() : "");
+          const next = { ...m, group: g("group") || m.group, labels: g("labels") };
+          F.forEach(([k]) => (next[k] = g(k)));
+          if (f.elements.flag) { if (proto === "SSH") next.sftp = f.elements.flag.checked; else next.readonly = f.elements.flag.checked; }
+          BAS_META[name] = next;
+          closeAll(); toast(`${name} 的参数已更新`); done && done();
+        };
+      }
       function basNewAsset(done) {
         const st = { proto: "SSH", ai: "" };
         dlg("登记资产", '<form class="x-form" id="baf" novalidate><div id="babody"></div></form>',
