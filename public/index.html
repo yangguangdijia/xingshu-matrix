@@ -6328,16 +6328,61 @@
 
       // 登录安全: MFA, 生产资产二次确认, 会话超时, 终端水印
       function renderLsec(el) {
-        const L = GOV.ls, sw = (k, t) => `<label class="x-switch"><input type="checkbox" role="switch" name="${k}"${L[k] ? " checked" : ""} /> ${t}</label>`;
-        el.innerHTML = phead("登录安全", "作用于经堡垒机登录资产的每一次连接，保存后新连接立即生效") + `<section class="x-panel"><form class="x-form x-gset" id="lsF" style="padding:0">
-          ${sw("mfa", "MFA 多因素认证：连接资产前输入 6 位动态码")}
-          ${sw("prod", "生产资产二次确认：连接生产环境资产时需再次确认")}
-          <label><span>会话超时</span><select class="x-select" name="idle">${opt([0, 10, 15, 30, 60], L.idle, (v) => (v ? `空闲 ${v} 分钟自动断开` : "不限制"))}</select></label>
-          ${sw("wm", "终端水印：Web 终端与远程桌面叠加「用户名 · 日期」水印")}
-          <div><button class="x-btn x-btn--pri">保存</button></div></form></section>`;
-        $("lsF").onsubmit = (e) => { e.preventDefault(); const f = e.target.elements; Object.assign(L, { mfa: f.mfa.checked, prod: f.prod.checked, idle: +f.idle.value, wm: f.wm.checked }); GOV.mfaOk = false; toast("登录安全设置已保存"); };
+        const L = GOV.ls, E = (GOV.lsExtra ||= { mfaScope: "全部资产", maxSess: 3, from: "00:00", to: "23:59", wmText: "{user} · {date} · {host}", lockN: 5, lockMin: 15 });
+        const sw = (k, t) => `<label class="x-switch"><input type="checkbox" role="switch" name="${k}"${L[k] ? " checked" : ""} /> ${t}</label>`;
+        el.innerHTML = phead("登录安全", "作用于经堡垒机登录资产的每一次连接，保存后新连接立即生效") +
+          `<form class="x-form" id="lsF" novalidate style="padding:0">
+            <section class="x-panel"><h2 class="x-h2">身份认证</h2>
+              ${sw("mfa", "MFA 多因素认证：连接资产前输入 6 位动态码")}
+              <label><span>MFA 适用范围</span><select class="x-select" name="mfaScope">${opt(["全部资产", "仅生产资产", "仅特权账号"], E.mfaScope)}</select></label>
+              ${sw("prod", "生产资产二次确认：连接生产环境资产时需再次确认")}
+            </section>
+            <section class="x-panel" style="margin-top:16px"><h2 class="x-h2">会话控制</h2>
+              <div class="x-row2"><label><span>空闲超时</span><select class="x-select" name="idle">${opt([0, 10, 15, 30, 60], L.idle, (v) => (v ? `空闲 ${v} 分钟自动断开` : "不限制"))}</select></label>
+                <label><span>单用户并发会话上限</span><select class="x-select" name="maxSess">${opt([1, 2, 3, 5, 0], E.maxSess, (v) => (v ? v + " 个" : "不限制"))}</select></label></div>
+              <div class="x-row2"><label><span>允许登录时段（起）</span><input class="x-input" type="time" name="from" value="${E.from}" /></label>
+                <label><span>允许登录时段（止）</span><input class="x-input" type="time" name="to" value="${E.to}" /></label></div>
+              <p class="x-frac" style="margin:0">时段外发起的新连接会被拒绝，已建立会话不受影响。</p>
+            </section>
+            <section class="x-panel" style="margin-top:16px"><h2 class="x-h2">终端水印</h2>
+              ${sw("wm", "开启水印：Web 终端与远程桌面叠加文字")}
+              <label><span>水印内容（支持 {user} {date} {host}）</span><input class="x-input x-mono" name="wmText" value="${esc(E.wmText)}" maxlength="60" autocomplete="off" /></label>
+            </section>
+            <section class="x-panel" style="margin-top:16px"><h2 class="x-h2">登录失败锁定</h2>
+              <div class="x-row2"><label><span>连续失败次数阈值</span><select class="x-select" name="lockN">${opt([3, 5, 10], E.lockN, (v) => v + " 次")}</select></label>
+                <label><span>锁定时长</span><select class="x-select" name="lockMin">${opt([5, 15, 30, 60], E.lockMin, (v) => v + " 分钟")}</select></label></div>
+            </section>
+            <div class="x-warn" id="lsDiff" role="status" style="display:block">修改任意项后会在这里列出保存将带来的变化。</div>
+            <span class="x-err" id="lsErr" role="alert" hidden></span>
+            <div style="margin-top:12px"><button class="x-btn x-btn--pri" type="submit">保存设置</button></div>
+          </form>`;
+        const f = $("lsF");
+        const cur = () => ({
+          mfa: f.elements.mfa.checked, mfaScope: f.elements.mfaScope.value, prod: f.elements.prod.checked,
+          idle: +f.elements.idle.value, maxSess: +f.elements.maxSess.value, from: f.elements.from.value, to: f.elements.to.value,
+          wm: f.elements.wm.checked, wmText: f.elements.wmText.value.trim(), lockN: +f.elements.lockN.value, lockMin: +f.elements.lockMin.value,
+        });
+        const base = { mfa: L.mfa, mfaScope: E.mfaScope, prod: L.prod, idle: L.idle, maxSess: E.maxSess, from: E.from, to: E.to, wm: L.wm, wmText: E.wmText, lockN: E.lockN, lockMin: E.lockMin };
+        const label = { mfa: "MFA", mfaScope: "MFA 范围", prod: "生产二次确认", idle: "空闲超时", maxSess: "并发会话上限", from: "登录时段起", to: "登录时段止", wm: "终端水印", wmText: "水印内容", lockN: "失败锁定阈值", lockMin: "锁定时长" };
+        const diff = () => {
+          const c = cur(), out = [];
+          Object.keys(base).forEach((k) => { if (String(c[k]) !== String(base[k])) out.push(`<li>${label[k]}：<span class="x-frac">${esc(String(base[k]))}</span> → <b>${esc(String(c[k]))}</b></li>`); });
+          $("lsDiff").innerHTML = out.length ? `<b>保存后将变更 ${out.length} 项</b><ul style="margin:6px 0 0 18px">${out.join("")}</ul>` : "当前没有未保存的修改。";
+        };
+        f.oninput = diff; f.onchange = diff; diff();
+        f.onsubmit = (e) => {
+          e.preventDefault();
+          const err = $("lsErr"), bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+          const c = cur();
+          if (c.from >= c.to) return bad("登录时段的开始时间必须早于结束时间", f.elements.from);
+          if (c.wm && !c.wmText) return bad("开启水印后需要填写水印内容", f.elements.wmText);
+          Object.assign(L, { mfa: c.mfa, prod: c.prod, idle: c.idle, wm: c.wm });
+          Object.assign(E, { mfaScope: c.mfaScope, maxSess: c.maxSess, from: c.from, to: c.to, wmText: c.wmText, lockN: c.lockN, lockMin: c.lockMin });
+          GOV.mfaOk = false;
+          toast("登录安全设置已保存");
+          renderLsec(el);
+        };
       }
-
       // One ticker: countdowns, auto revoke of expired grants, idle timeout, live monitor
       setInterval(() => {
         const now = Date.now(); let ch = false;
