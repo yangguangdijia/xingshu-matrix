@@ -5070,7 +5070,7 @@
         el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => { d.rows.splice(+b.dataset.del, 1); secBody(el, s); toast("已删除"); }));
         el.querySelectorAll("[data-conn]").forEach((b) => (b.onclick = () => basConnect(d.rows[+b.dataset.conn], b.dataset.proto)));
         el.querySelectorAll("[data-basdet]").forEach((b) => (b.onclick = () => basAssetDrawer(d.rows[+b.dataset.basdet][0], () => secBody(el, s))));
-        $("secAct").onclick = s.k === "audit" ? () => toast(`已导出 ${d.rows.length} 条审计记录（CSV）`) : s.k === "assets" ? () => basNewAsset(() => secBody(el, s)) : s.k === "policy" ? () => basNewPolicy(() => secBody(el, s)) : s.k === "cmd" ? () => basNewCmdFilter(() => secBody(el, s)) : () => newRow(d, s.t, () => secBody(el, s));
+        $("secAct").onclick = s.k === "audit" ? () => toast(`已导出 ${d.rows.length} 条审计记录（CSV）`) : s.k === "assets" ? () => basNewAsset(() => secBody(el, s)) : s.k === "policy" ? () => basNewPolicy(() => secBody(el, s)) : s.k === "cmd" ? () => basNewCmdFilter(() => secBody(el, s)) : s.k === "db" ? () => basNewDbTicket(() => secBody(el, s), d) : () => newRow(d, s.t, () => secBody(el, s));
         bindBar(el, key);
       }
 
@@ -5274,6 +5274,90 @@
       // 授权策略规则编辑器：主体 / 资产 / 账号 / 环境 / 有效期 / 命令策略，保存前可见规则预览
       // 命令过滤规则编辑器：匹配方式、正则校验、动作、优先级、环境范围与命中测试
       const CMD_META = {};
+      // 数据库审查：可视化 SQL 工单 + 实时风险分级（本地规则，不连真实数据库）
+      function sqlRisk(sql) {
+        const s = (sql || "").trim().toLowerCase();
+        if (!s) return { lv: 0, label: "—", cls: "x-grey", notes: [] };
+        const notes = []; let lv = 1;
+        const ro = /^(select|show|explain|desc|describe)\b/.test(s);
+        if (ro) notes.push("只读查询，不修改数据");
+        if (/^(insert|update|delete|replace)\b/.test(s)) { lv = 2; notes.push("数据写入，会影响业务数据"); }
+        if (/^(alter|create|rename|comment)\b/.test(s)) { lv = 2; notes.push("结构变更，可能锁表"); }
+        if (/^(drop|truncate)\b/.test(s)) { lv = 3; notes.push("删除对象或清空表，数据不可恢复"); }
+        if (/\bdelete\b/.test(s) && !/\bwhere\b/.test(s)) { lv = 3; notes.push("DELETE 缺少 WHERE，会清空整张表"); }
+        if (/\bupdate\b/.test(s) && !/\bwhere\b/.test(s)) { lv = 3; notes.push("UPDATE 缺少 WHERE，会改写全表"); }
+        if (/;\s*\S/.test(s)) { lv = 3; notes.push("包含多条语句，需拆分为独立工单"); }
+        if (/\bjoin\b/.test(s) && ro) notes.push("含 JOIN，执行前确认索引与扫描行数");
+        if (/\bwhere\b/.test(s) && /(^|[^a-z])1\s*=\s*1\b/.test(s)) { lv = 3; notes.push("WHERE 1=1 等价于全表操作"); }
+        const label = lv >= 3 ? "高" : lv === 2 ? "中" : "低";
+        return { lv, label, cls: lv >= 3 ? "x-red" : lv === 2 ? "x-orange" : "x-green", notes };
+      }
+      function basNewDbTicket(done, table) {
+        const dbs = TA_X.filter((x) => x.t === "db").map((x) => x.n);
+        const st = { ai: "" };
+        dlg("提交数据库工单", '<form class="x-form" id="dbf" novalidate><div id="dbbody"></div></form>',
+          '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="dbf">提交工单</button>');
+        const draw = () => {
+          $("dbbody").innerHTML = `
+            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" id="dbaiq" value="${esc(st.ai)}" placeholder="如：把 users 表所有用户的 status 改成 1" aria-label="用自然语言描述要执行的 SQL" autocomplete="off" /><button type="button" id="dbaiGo">生成 SQL</button></div><p class="x-frac" style="margin:6px 0 0">只生成 SQL 并给出风险提示，不会直接执行</p></div>
+            <div class="x-row2"><label><span class="x-req">数据库实例</span><select class="x-select" name="db">${opt(dbs, dbs[0])}</select></label>
+              <label><span>库名</span><input class="x-input" name="schema" value="order_db" autocomplete="off" /></label></div>
+            <label><span class="x-req">SQL</span><textarea class="x-input x-mono" name="sql" rows="6" spellcheck="false" placeholder="SELECT id, name FROM users WHERE id > 10"></textarea></label>
+            <div class="x-warn" id="dbrisk" role="status" style="display:block"></div>
+            <label><span>变更说明</span><input class="x-input" name="why" maxlength="120" autocomplete="off" placeholder="如 修复状态字段为空的订单" /></label>
+            <span class="x-err" id="dberr" role="alert" hidden></span>`;
+          const f = $("dbf");
+          const sync = () => {
+            const sql = f.elements.sql.value, r = sqlRisk(sql);
+            $("dbrisk").innerHTML = !sql.trim()
+              ? "<b>风险</b>：填写 SQL 后自动评估。只读直接执行，写入与结构变更需审批。"
+              : `<b>风险</b>：<span class="x-tag ${r.cls} x-tag--s">${r.label}</span><ul style="margin:6px 0 0 18px">${r.notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul><p class="x-frac" style="margin:6px 0 0">${r.lv >= 2 ? "提交后进入「待审核」，审批通过才执行。" : "只读查询提交后直接执行并记录审计。"}</p>`;
+          };
+          f.oninput = sync;
+          sync();
+          $("dbaiGo").onclick = () => {
+            const q = $("dbaiq").value.trim(); if (!q) return $("dbaiq").focus();
+            st.ai = q;
+            const r = dbAiSql(q);
+            draw();
+            const nf = $("dbf");
+            nf.elements.sql.value = r.sql;
+            if (r.db && dbs.includes(r.db)) nf.elements.db.value = r.db;
+            nf.dispatchEvent(new Event("input", { bubbles: true }));
+            toast(`已生成 SQL：${r.why}`);
+          };
+          f.onsubmit = (e) => {
+            e.preventDefault();
+            const err = $("dberr"), bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+            const sql = f.elements.sql.value.trim();
+            if (!sql) return bad("请填写 SQL", f.elements.sql);
+            const r = sqlRisk(sql);
+            const id = "DB-" + (2042 + table.rows.length);
+            const status = r.lv >= 2 ? "待审核" : "已执行";
+            table.rows.unshift([id, `${f.elements.db.value}/${f.elements.schema.value || "default"}`, sql.replace(/\s+/g, " ").slice(0, 60), gMe(), status]);
+            closeAll();
+            toast(`${id} 已提交（风险 ${r.label}，${status}）`);
+            done && done();
+          };
+        };
+        draw();
+      }
+      // 中文描述 → SQL 草稿 + 风险说明
+      function dbAiSql(q) {
+        const t = q.trim();
+        const tbl = (t.match(/([a-z_][a-z0-9_]{1,40})\s*表/i) || [])[1] || "users";
+        const setm = t.match(/([a-z_][a-z0-9_]{1,30})\s*(?:改成|设为|置为|设置为)\s*([^\s，,。]+)/i);
+        if (/删除|清空/.test(t)) {
+          const w = t.match(/(?:id\s*=\s*|id\s*为\s*)(\d+)/);
+          return { sql: `DELETE FROM ${tbl}${w ? ` WHERE id = ${w[1]}` : ""};`, db: "mysql-order", why: w ? "按 id 删除单行" : "删除整表数据，高风险" };
+        }
+        if (/新增|插入/.test(t)) return { sql: `INSERT INTO ${tbl} (name) VALUES ('demo');`, db: "mysql-order", why: "插入一行示例数据，请替换字段与值" };
+        if (setm) {
+          const w = t.match(/(?:id\s*=\s*|id\s*为\s*)(\d+)/);
+          return { sql: `UPDATE ${tbl} SET ${setm[1]} = '${setm[2]}'${w ? ` WHERE id = ${w[1]}` : ""};`, db: "mysql-order", why: w ? "按 id 更新单行" : "缺少 WHERE，会更新全表" };
+        }
+        return { sql: `SELECT * FROM ${tbl} LIMIT 100;`, db: "mysql-order", why: "默认生成只读查询" };
+      }
       function basNewCmdFilter(done) {
         const st = { mode: "前缀匹配", action: "拒绝", envs: new Set(ENV_TAGS.map((t) => t[0])), ai: "" };
         dlg("新建命令过滤规则", '<form class="x-form" id="cmdf" novalidate><div id="cmdbody"></div></form>',
