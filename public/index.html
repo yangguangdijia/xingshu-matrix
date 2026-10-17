@@ -4611,7 +4611,7 @@
             <label><span>地域</span><select class="x-select" name="rg"></select></label>
             <p class="x-frac" style="margin:0">密钥只用于拉取集群凭证，保存后脱敏展示，Secret 不落库。</p></div>
           <div class="x-msec" data-m="Agent 云托管" hidden>${envField("生产")}</div>
-          ${lblField()}<span class="x-err" id="claerr" role="alert" hidden></span></form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="claf">接入</button>');
+          ${lblField()}<div class="x-warn" id="clpre" role="status" style="display:block"></div><span class="x-err" id="claerr" role="alert" hidden></span></form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="claf">接入</button>');
         const f = $("claf"), bad = formBad("claerr"); envBind(f);
         let KC = [];
         const mode = () => f.querySelector("[name=mode]:checked").value;
@@ -4630,7 +4630,31 @@
         f.elements.kc.oninput = kcDraw;
         f.elements.kf.onchange = () => { const file = f.elements.kf.files[0]; if (!file) return; file.text().then((t) => { f.elements.kc.value = t; kcDraw(); }); };
         f.elements.kc.focus();
+        const pre = () => {
+          const m = mode(), rows = [];
+          if (m === "kubeconfig") {
+            rows.push([KC.length ? "ok" : "bad", KC.length ? `解析到 ${KC.length} 个 context` : "尚未解析到 context，请上传或粘贴 kubeconfig"]);
+            if (KC.length) rows.push(["ok", `默认 API Server：${KC[0].server || "kubeconfig 未声明"}`]);
+            rows.push(["warn", "真实连通性由后端 cluster 模块用该 kubeconfig 探测 /version，本页只校验格式"]);
+          } else if (m === "Agent") {
+            const api = f.elements.api.value.trim();
+            rows.push([/^https?:\/\/\S+$/.test(api) ? "ok" : "bad", api ? `API Server：${api}` : "填写 API Server 地址"]);
+            rows.push(["warn", "需在目标集群部署 matrix-cluster-agent，由集群主动回连平台"]);
+          } else {
+            const ak = f.elements.ak.value.trim(), sk = f.elements.sk.value.trim();
+            rows.push([ak.length >= 8 ? "ok" : "bad", "AccessKey ID " + (ak ? "已填写" : "未填写")]);
+            rows.push([sk.length >= 8 ? "ok" : "bad", "AccessKey Secret " + (sk ? "已填写" : "未填写")]);
+            rows.push(["warn", "该 AK 需具备查询集群列表与拉取 kubeconfig 的权限"]);
+          }
+          rows.push(["info", "接入后平台需要的最小权限：nodes / pods / deployments / services 的 list 与 get，按需读取 secrets"]);
+          const ic = { ok: "✓", bad: "✗", warn: "!", info: "·" }, cl = { ok: "#237804", bad: "#b42318", warn: "#b54708", info: "#6b7280" };
+          $("clpre").innerHTML = `<b>接入预检</b><ul style="margin:6px 0 0 18px;padding:0;list-style:none">${rows.map(([k, t]) => `<li style="color:${cl[k]}">${ic[k]} ${esc(t)}</li>`).join("")}</ul>`;
+        };
+        f.addEventListener("input", pre);
+        f.addEventListener("change", pre);
+        pre();
         f.onsubmit = (e) => {
+
           e.preventDefault();
           const m = mode(), lr = lblParse(f.elements.lbl.value); if (lr.err) return bad(lr.err, f.elements.lbl);
           const taken = new Set(clAll().map((c) => c.n)), nameOk = (n) => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(n), add = [];
