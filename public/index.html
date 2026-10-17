@@ -6173,19 +6173,61 @@
       }
 
       // 访问申请: 申请 → 审批 → 临时授权 (countdown) → 到期自动回收
+      // 访问申请单：资产 → 账号级联、时长、事由、审批链与到期时间预览
+      function basNewRequest(done) {
+        const assets = adm("资产").rows.filter((r) => r[3] !== "SFTP");
+        dlg("新建访问申请", '<form class="x-form" id="rqf" novalidate><div id="rqbody"></div></form>',
+          '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="rqf">提交申请</button>');
+        const draw = () => {
+          $("rqbody").innerHTML = `
+            <div class="x-row2"><label><span class="x-req">目标资产</span><select class="x-select" name="asset">${assets.map((r) => `<option value="${esc(r[0])}">${esc(r[0])} · ${esc(r[1])} · ${esc(r[3])}</option>`).join("")}</select></label>
+              <label><span class="x-req">登录账号</span><select class="x-select" name="acct"></select></label></div>
+            <div class="x-row2"><label><span>授权时长</span><select class="x-select" name="min">${opt([15, 30, 60, 120, 240], 60, (v) => (v < 60 ? v + " 分钟" : v / 60 + " 小时"))}</select></label>
+              <label><span>自定义分钟数（选填）</span><input class="x-input" name="custom" inputmode="numeric" placeholder="如 45" /></label></div>
+            <label><span class="x-req">申请事由</span><textarea class="x-input" name="why" rows="3" maxlength="200" style="font:inherit" placeholder="如 排查订单服务 5xx，需要登录 web-01 查看 nginx 日志"></textarea></label>
+            <div class="x-warn" id="rqprev" role="status" style="display:block"></div>
+            <span class="x-err" id="rqerr" role="alert" hidden></span>`;
+          const f = $("rqf");
+          const fillAccts = () => {
+            const a = assets.find((r) => r[0] === f.elements.asset.value);
+            const list = a ? basAccts(a).map((x) => x[0]) : [];
+            f.elements.acct.innerHTML = list.length ? list.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("") : '<option value="">该资产未登记账号</option>';
+          };
+          const sync = () => {
+            const a = assets.find((r) => r[0] === f.elements.asset.value) || {};
+            const min = +f.elements.custom.value || +f.elements.min.value || 60;
+            const env = basMeta(a[1] ? a : ["", "", "", ""]).env || "生产";
+            const until = new Date(Date.now() + min * 6e4);
+            const chain = env === "生产" ? "应用负责人 → 运维审批" : "应用负责人";
+            $("rqprev").innerHTML = `<b>申请预览</b>：以 <b>${esc(f.elements.acct.value || "（无账号）")}</b> 登录 <b>${esc(a[0] || "")}</b>（${esc(a[3] || "")} · ${esc(env)}），审批链 ${esc(chain)}；通过后授权 ${min} 分钟，约 ${fmt(until).slice(5, 16)} 到期自动回收。`;
+          };
+          f.onchange = (e) => { if (e.target.name === "asset") fillAccts(); sync(); };
+          f.oninput = sync;
+          fillAccts(); sync();
+          f.onsubmit = (e) => {
+            e.preventDefault();
+            const err = $("rqerr"), bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+            const acct = f.elements.acct.value, why = f.elements.why.value.trim();
+            const min = +f.elements.custom.value || +f.elements.min.value || 60;
+            if (!acct) return bad("该资产没有可用账号，请先在「账号」中登记", f.elements.acct);
+            if (!why || why.length < 4) return bad("请填写至少 4 个字的申请事由", f.elements.why);
+            if (min < 5 || min > 480) return bad("授权时长需在 5–480 分钟之间", f.elements.custom || f.elements.min);
+            const q = { id: "AR-" + ++GOV.rq, u: gMe(), host: f.elements.asset.value, acct, min, why, st: "待审批", at: basNow() };
+            GOV.reqs.unshift(q); drawNav(); closeAll();
+            toast(`已提交 ${q.id}，等待审批`);
+            done && done();
+          };
+        };
+        draw();
+      }
       function renderReq(el) {
         const R = GOV.reqs, pairs = adm("资产").rows.filter((r) => r[3] !== "SFTP").flatMap((r) => basAccts(r).map((a) => `${a[0]}@${r[0]}`));
         const ops = (q, i) => q.st === "待审批" ? k8Act("rqok", i, "批准") + k8Act("rqno", i, "拒绝") : q.st === "已授权" ? k8Act("rqgo", i, "连接") + k8Act("rqrv", i, "撤销") : "";
         el.innerHTML = phead("访问申请", "申请 → 审批 → 临时授权（倒计时）→ 到期自动回收；授权期间写入「授权策略」，回收时删除策略并断开相关会话") +
-          `<section class="x-panel"><form class="x-btool" id="rqF" style="margin:0"><select class="x-select" name="p" aria-label="账号与资产">${opt(pairs, "")}</select><select class="x-select" name="m" aria-label="授权时长">${opt([15, 30, 60, 120, 240], 60, (v) => (v < 60 ? v + " 分钟" : v / 60 + " 小时"))}</select><input class="x-input" name="why" placeholder="申请事由" aria-label="申请事由" style="flex:1;min-width:180px" /><button class="x-btn x-btn--pri">提交申请</button></form></section>
+          `<section class="x-panel"><div class="x-tbar"><span class="x-frac">申请 → 审批 → 临时授权 → 到期自动回收；生产环境需运维审批</span><button class="x-btn x-btn--pri" id="rqNew">+ 新建申请</button></div></section>
           <section class="x-panel" style="margin-top:16px">${tbl(["工单", "申请人", "资产 / 账号", "时长", "事由", "提交", "状态", "剩余", "操作"], R.map((q, i) => [`<span class="x-mono">${q.id}</span>`, esc(q.u), `<b>${esc(q.host)}</b> · ${esc(q.acct)}`, q.min + " 分钟", `<span class="x-frac">${esc(q.why)}</span>`, q.at, pillTag(q.st, RQC[q.st]),
             q.st === "已授权" ? `<span class="x-mono" data-cd="${q.until}">${gLeft(q.until)}</span>` : "—", `<span class="x-kacts">${ops(q, i)}</span>`]))}</section>`;
-        $("rqF").onsubmit = (e) => {
-          e.preventDefault(); const f = e.target.elements, why = f.why.value.trim();
-          if (!why) { f.why.focus(); return toast("请填写申请事由"); }
-          const [acct, host] = f.p.value.split("@"), q = { id: "AR-" + ++GOV.rq, u: gMe(), host, acct, min: +f.m.value, why, st: "待审批", at: basNow() };
-          R.unshift(q); drawNav(); renderReq(el); toast(`已提交 ${q.id}，等待审批`);
-        };
+        $("rqNew").onclick = () => basNewRequest(() => renderReq(el));
         on(el, "rqok", (i) => { const q = R[i]; q.st = "已授权"; q.until = Date.now() + q.min * 6e4; govGrant(q); basAudit(q.host, `临时授权 ${q.id} 生效（${q.u} · ${q.acct} · ${q.min} 分钟）`); drawNav(); renderReq(el); toast(`${q.id} 已批准，临时授权 ${q.min} 分钟，到期自动回收`); });
         on(el, "rqno", (i) => { R[i].st = "已拒绝"; drawNav(); renderReq(el); toast(`${R[i].id} 已拒绝`); });
         on(el, "rqrv", (i) => { govRevoke(R[i], "已撤销", "被手动撤销"); renderReq(el); toast(`${R[i].id} 授权已撤销`); });
