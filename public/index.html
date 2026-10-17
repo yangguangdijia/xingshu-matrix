@@ -3426,6 +3426,56 @@
         e.insts.push({ ip: `172.${19 + k}.1.${200 + i}`, host: `10.0.${k}.${11 + i}`, ver: e.ver, st, start, cpu: rnd(6, 24), mem: (rnd(14, 26) / 10).toFixed(1) });
       }
 
+      // 新建应用：仓库、构建方式、环境映射、健康检查与审批人，创建后可直接进入流水线与发布
+      function appNewDlg(el) {
+        const owners = OWN, envs = ["dev", "测试环境", "预发", "生产"];
+        dlg("新建应用", `<form class="x-form" id="anf" novalidate>
+            <div class="x-row2"><label><span class="x-req">应用名</span><input class="x-input" name="name" placeholder="pay-service" autocomplete="off" /></label>
+              <label><span>负责人</span><select class="x-select" name="owner">${opt(owners)}</select></label></div>
+            <label><span class="x-req">代码仓库</span><input class="x-input x-mono" name="repo" placeholder="git@code.xingshu.dev:demo/pay-service.git" autocomplete="off" /></label>
+            <div class="x-row2"><label><span>构建方式</span><select class="x-select" name="build">${opt(["Dockerfile", "Buildpacks", "自定义命令"], "Dockerfile")}</select></label>
+              <label><span id="anPathLab">Dockerfile 路径</span><input class="x-input x-mono" name="path" value="Dockerfile" autocomplete="off" /></label></div>
+            <label><span>构建命令（自定义命令时使用）</span><input class="x-input x-mono" name="cmd" placeholder="make build && make image" autocomplete="off" /></label>
+            <h3 class="x-h2">环境映射</h3>
+            <div class="x-row2"><label><span>开发</span><input class="x-input x-mono" name="ns_dev" value="dev" /></label><label><span>测试</span><input class="x-input x-mono" name="ns_test" value="test" /></label></div>
+            <div class="x-row2"><label><span>预发</span><input class="x-input x-mono" name="ns_pre" value="pre" /></label><label><span>生产</span><input class="x-input x-mono" name="ns_prod" value="prod" /></label></div>
+            <h3 class="x-h2">健康检查与发布</h3>
+            <div class="x-row2"><label><span>健康检查路径</span><input class="x-input x-mono" name="health" value="/healthz" autocomplete="off" /></label><label><span>容器端口</span><input class="x-input" name="port" value="8080" inputmode="numeric" /></label></div>
+            <div class="x-row2"><label><span>默认发布策略</span><select class="x-select" name="strategy">${opt(["滚动发布", "灰度发布", "蓝绿发布"], "滚动发布")}</select></label>
+              <label><span>发布审批人</span><select class="x-select" name="approver">${opt(owners)}</select></label></div>
+            <div class="x-warn" id="anprev" role="status" style="display:block"></div>
+            <span class="x-err" id="anerr" role="alert" hidden></span></form>`,
+          '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="anf">创建</button>');
+        const f = $("anf");
+        f.elements.name.focus();
+        const sync = () => {
+          const n = f.elements.name.value.trim().toLowerCase();
+          const envList = [f.elements.ns_dev.value, f.elements.ns_test.value, f.elements.ns_pre.value, f.elements.ns_prod.value].filter(Boolean);
+          $("anprev").innerHTML = `<b>创建后</b>：应用 <b>${esc(n || "（未命名）")}</b> 会出现在应用列表，仓库 <span class="x-mono">${esc(f.elements.repo.value || "未填写")}</span>，按 ${esc(f.elements.build.value)} 构建，环境命名空间 ${esc(envList.join(" / "))}，健康检查 <span class="x-mono">${esc(f.elements.health.value || "/healthz")}:${esc(f.elements.port.value || "8080")}</span>，默认 ${esc(f.elements.strategy.value)}，审批人 ${esc(f.elements.approver.value)}。`;
+        };
+        f.oninput = sync; f.onchange = sync; sync();
+        f.elements.build.onchange = () => { $("anPathLab").textContent = f.elements.build.value === "自定义命令" ? "工作目录" : f.elements.build.value === "Buildpacks" ? "源码目录" : "Dockerfile 路径"; sync(); };
+        f.onsubmit = (ev) => {
+          ev.preventDefault();
+          const err = $("anerr"), bad = (m, x) => { err.textContent = m; err.hidden = false; x && x.focus(); };
+          const name = f.elements.name.value.trim().toLowerCase();
+          if (!/^[a-z][a-z0-9-]{1,40}$/.test(name)) return bad("应用名需以字母开头，仅含小写字母、数字与 -", f.elements.name);
+          if (APPS.some((x) => x.name === name)) return bad("应用名已存在", f.elements.name);
+          if (!f.elements.repo.value.trim()) return bad("请填写代码仓库地址", f.elements.repo);
+          const port = +f.elements.port.value;
+          if (!(port > 0 && port < 65536)) return bad("容器端口需在 1–65535 之间", f.elements.port);
+          if (!/^\//.test(f.elements.health.value)) return bad("健康检查路径需以 / 开头", f.elements.health);
+          const ns = { dev: f.elements.ns_dev.value, 测试环境: f.elements.ns_test.value, 预发: f.elements.ns_pre.value, 生产: f.elements.ns_prod.value };
+          APPS.push({
+            name, owner: f.elements.owner.value, envs: ["dev", "测试环境", "生产"], last: "—",
+            repo: f.elements.repo.value.trim(), build: f.elements.build.value, path: f.elements.path.value.trim(),
+            cmd: f.elements.cmd.value.trim(), ns, health: f.elements.health.value, port,
+            strategy: f.elements.strategy.value, approver: f.elements.approver.value,
+          });
+          closeAll(); renderDelivery(el);
+          toast(`应用 ${name} 已创建，可在流水线中关联该仓库`);
+        };
+      }
       function renderDelivery(el) {
         const a = APPS.find((x) => x.name === cd.app);
         if (!a) {
@@ -3436,18 +3486,7 @@
           el.querySelector("tbody").innerHTML = APPS.map((x) => { const h = appHealth(x); return `<tr data-app="${x.name}" tabindex="0"><td class="x-name">${esc(x.name)}</td><td>${esc(x.owner)}</td><td>${x.envs.length}</td><td>${stTag(h.ok === h.n ? "运行中" : "启动中")}<small class="x-frac x-blk">${h.ok}/${h.n} 实例就绪</small></td><td class="x-mono">${x.last}</td></tr>`; }).join("");
           bindBar(el, "#/delivery/apps");
           $("appNew").onclick = () => {
-            dlg("新建应用", `<form class="x-form" id="anf" novalidate><label><span class="x-req">应用名</span><input class="x-input" name="name" placeholder="pay-service" autocomplete="off" /></label><label><span>负责人</span><select class="x-select" name="owner">${opt(OWN)}</select></label><span class="x-err" id="anerr" hidden></span></form>`,
-              '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="anf">创建</button>');
-            const f = $("anf");
-            f.elements.name.focus();
-            f.onsubmit = (ev) => {
-              ev.preventDefault();
-              const name = f.elements.name.value.trim().toLowerCase();
-              const err = !/^[a-z][a-z0-9-]{1,40}$/.test(name) ? "应用名需以字母开头，仅含小写字母、数字与 -" : APPS.some((x) => x.name === name) ? "应用名已存在" : "";
-              if (err) { $("anerr").textContent = err; $("anerr").hidden = false; return f.elements.name.focus(); }
-              APPS.push({ name, owner: f.elements.owner.value, envs: ["dev", "测试环境", "生产"], last: "—" });
-              closeAll(); renderDelivery(el); toast(`应用 ${name} 已创建`);
-            };
+            appNewDlg(el);
           };
           el.querySelectorAll("[data-app]").forEach((tr) => {
             const go = () => { cd.app = tr.dataset.app; cd.menu = "导览"; cd.env = "测试环境"; renderDelivery(el); };
