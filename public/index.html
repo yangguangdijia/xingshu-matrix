@@ -3850,7 +3850,8 @@
           <div class="x-tbar"><input class="x-input x-search" type="search" id="rlq" placeholder="搜索单号 / 标题 / 应用 / 负责人" aria-label="搜索发布单" value="${esc(s.q)}" />
             <select class="x-select" style="width:auto" id="rlenv" aria-label="按目标环境筛选"><option value="">全部环境</option>${opt(PL_ENV, rl.env)}</select>
             <select class="x-select" style="width:auto" id="rlapp" aria-label="按应用筛选"><option value="">全部应用</option>${opt(APPS.map((a) => a.name), rl.app)}</select>
-            <span class="x-frac" id="rlcnt" role="status"></span></div>
+            <span class="x-frac" id="rlcnt" role="status"></span>
+            <span class="x-frac" id="rlnote" role="status"></span></div>
           <section class="x-panel x-setform"><div style="overflow-x:auto"><table class="x-table x-table--plain"><thead><tr><th>单号</th><th>标题</th><th>应用</th><th>目标环境</th><th>发布窗口</th><th>负责人</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="rlrows"></tbody></table></div></section>`;
         rlRows();
         $("rlNew").onclick = () => rlEdit(null);
@@ -3867,7 +3868,7 @@
       function rlRows() {
         const tb = $("rlrows"); if (!tb) return;
         const s = pbar["#/release"], q = s.q.toLowerCase();
-        const L = rl.list.filter((r) => (!s.f || r.st === s.f) && (!rl.env || r.env === rl.env) && (!rl.app || r.apps.some((x) => x.name === rl.app)) &&
+        const L = rl.list.filter((r) => (!s.f || r.st === s.f) && (nav.env === "全部" || (r.env || "").includes(nav.env)) && (!rl.env || r.env === rl.env) && (!rl.app || r.apps.some((x) => x.name === rl.app)) &&
           (!q || [r.id, r.title, r.owner, r.env, ...r.apps.map((x) => x.name)].join(" ").toLowerCase().includes(q)));
         tb.innerHTML = L.length ? L.map((r) => `<tr><td><button class="x-act x-mono" data-rlopen="${r.id}" style="padding:0">${r.id}</button></td>
             <td><span class="x-name">${esc(r.title)}</span>${r.reqs.length + r.chg.length ? `<br /><span class="x-frac">关联 ${r.reqs.length} 个需求 · ${r.chg.length} 个变更</span>` : ""}</td>
@@ -3877,6 +3878,8 @@
             <td style="white-space:nowrap"><button class="x-act" data-rlopen="${r.id}">详情</button>${r.st === "草稿" ? `<button class="x-act" data-rledit="${r.id}">编辑</button><button class="x-act" data-rldel="${r.id}">删除</button>` : ""}${r.st === "待审批" && rlOk(r) ? `<button class="x-act" data-rlrun="${r.id}">执行</button>` : ""}</td></tr>`).join("")
           : `<tr><td colspan="9" class="x-empty">${rl.list.length ? "没有匹配的发布单" : "还没有发布单，点击「新建发布单」创建"}</td></tr>`;
         $("rlcnt").textContent = `共 ${L.length} 张`;
+        const note = document.getElementById("rlnote");
+        if (note) note.textContent = nav.env === "全部" ? "" : `已按顶栏环境 ${nav.env} 筛选，显示 ${L.length} / ${rl.list.length} 张发布单。`;
       }
       function rlDel(r) {
         k8Confirm("删除发布单", `确定删除草稿 <b>${r.id}</b>「${esc(r.title)}」吗？`, "删除", () => {
@@ -8384,6 +8387,8 @@
         ],
       } };
       const mwList = (k) => (demo ? MW.list[k] : []);
+      const mwEnvOf = (x) => (/prod/i.test(x.cl || "") || /-prod$/i.test(x.id || "") ? "生产" : /test/i.test(x.cl || "") || /-test$/i.test(x.id || "") ? "测试" : /pre/i.test(x.cl || "") ? "预发" : "开发");
+      const mwVis = (k) => envRows((demo ? MW.list[k] : []).map((x) => ({ x })), (v) => mwEnvOf(v.x));
       const mwHash = (k, x) => `#/middleware/${k}/${encodeURIComponent(x.id)}`;
       const mwUp = (x) => x.nodes.filter((n) => n.up).length;
       const mwSt = (x) => (mwUp(x) < x.nodes.length ? ["节点异常", "x-red"] : x.groups.some((g) => g.lag >= 5e4) ? ["消费堆积", "x-orange"] : ["运行中", "x-green"]);
@@ -8450,13 +8455,14 @@
         return x ? mwDetail(el, k, x) : mwIndex(el);
       }
       function mwIndex(el) {
-        const k = MW.tab, T = MW_T[k], L = mwList(k);
+        const k = MW.tab, T = MW_T[k], VIS = mwVis(k), L = VIS.map((v) => v.x);
         el.innerHTML = phead("中间件", "Kafka、RabbitMQ 与 RocketMQ 实例的节点状态、Topic/队列与消费堆积", mwTag()) +
-          `<div class="x-bar"><div class="x-tabs" role="tablist">${Object.entries(MW_T).map(([t, v]) => `<button role="tab" data-mwt="${t}" aria-selected="${t === k}" class="${t === k ? "on" : ""}"><span class="x-mwtab">${logo(t, 18)}${v.t}</span><b>${mwList(t).length}</b></button>`).join("")}</div></div>
+          `<div class="x-bar"><div class="x-tabs" role="tablist">${Object.entries(MW_T).map(([t, v]) => `<button role="tab" data-mwt="${t}" aria-selected="${t === k}" class="${t === k ? "on" : ""}"><span class="x-mwtab">${logo(t, 18)}${v.t}</span><b>${mwVis(t).length}</b></button>`).join("")}</div></div>
           <section class="x-panel">${!L.length ? `<p class="x-empty">暂无 ${T.t} 实例。接入集群后自动发现 ${T.t} 实例，或在头像菜单中加载演示数据。</p>`
             : k8Table(["实例", "集群 / 命名空间", "版本", T.node === "Broker" ? "Broker" : "节点", "状态", "操作"], L.map((x) => { const st = mwSt(x), up = mwUp(x), h = mwHash(k, x); return k8Row(` class="x-go" data-mwh="${h}" tabindex="0" aria-label="打开 ${esc(x.id)} 详情"`, [
               `<span class="x-hrow">${logo(k, 24)}<a class="x-tlink x-name" href="${h}">${esc(x.id)}</a></span>`, `${esc(x.cl)} <span class="x-frac">/ ${esc(x.ns)}</span>`, `<span class="x-mono">${esc(x.ver)}</span>`,
               `<b${up < x.nodes.length ? ' style="color:#cf1322"' : ""}>${up}</b><span class="x-frac"> / ${x.nodes.length} 在线</span>`, pillTag(st[0], st[1]), `<a class="x-act" href="${h}" style="padding:0">详情</a>`]); }))}
+            ${envNote(L.length, mwList(k).length, "实例")}
             ${mwSrc}</section>`;
         el.querySelectorAll("[data-mwt]").forEach((b) => (b.onclick = () => { MW.tab = b.dataset.mwt; mwIndex(el); el.querySelector(`[data-mwt="${MW.tab}"]`).focus(); }));
         el.querySelectorAll("[data-mwh]").forEach((r) => { r.onclick = (e) => { if (!e.target.closest("a")) location.hash = r.dataset.mwh; }; r.onkeydown = (e) => { if (e.key === "Enter" && e.target === r) location.hash = r.dataset.mwh; }; });
