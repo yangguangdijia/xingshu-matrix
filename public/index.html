@@ -5070,7 +5070,7 @@
         el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => { d.rows.splice(+b.dataset.del, 1); secBody(el, s); toast("已删除"); }));
         el.querySelectorAll("[data-conn]").forEach((b) => (b.onclick = () => basConnect(d.rows[+b.dataset.conn], b.dataset.proto)));
         el.querySelectorAll("[data-basdet]").forEach((b) => (b.onclick = () => basAssetDrawer(d.rows[+b.dataset.basdet][0], () => secBody(el, s))));
-        $("secAct").onclick = s.k === "audit" ? () => toast(`已导出 ${d.rows.length} 条审计记录（CSV）`) : s.k === "assets" ? () => basNewAsset(() => secBody(el, s)) : s.k === "policy" ? () => basNewPolicy(() => secBody(el, s)) : s.k === "cmd" ? () => basNewCmdFilter(() => secBody(el, s)) : s.k === "db" ? () => basNewDbTicket(() => secBody(el, s), d) : () => newRow(d, s.t, () => secBody(el, s));
+        $("secAct").onclick = s.k === "audit" ? () => toast(`已导出 ${d.rows.length} 条审计记录（CSV）`) : s.k === "assets" ? () => basNewAsset(() => secBody(el, s)) : s.k === "policy" ? () => basNewPolicy(() => secBody(el, s)) : s.k === "cmd" ? () => basNewCmdFilter(() => secBody(el, s)) : s.k === "db" ? () => basNewDbTicket(() => secBody(el, s), d) : s.k === "mask" ? () => basNewMaskRule(() => secBody(el, s), d) : () => newRow(d, s.t, () => secBody(el, s));
         bindBar(el, key);
       }
 
@@ -5291,6 +5291,96 @@
         if (/\bwhere\b/.test(s) && /(^|[^a-z])1\s*=\s*1\b/.test(s)) { lv = 3; notes.push("WHERE 1=1 等价于全表操作"); }
         const label = lv >= 3 ? "高" : lv === 2 ? "中" : "低";
         return { lv, label, cls: lv >= 3 ? "x-red" : lv === 2 ? "x-orange" : "x-green", notes };
+      }
+      // 数据脱敏规则编辑器：匹配方式、脱敏算法、保留位数与实时预览
+      function maskApply(v, mode, pre, post) {
+        const s = String(v == null ? "" : v);
+        if (!s) return "";
+        if (mode === "全部掩码") return "*".repeat(Math.min(12, Math.max(3, s.length)));
+        if (mode === "只保留首尾") {
+          const a = Math.max(0, +pre || 0), b = Math.max(0, +post || 0);
+          if (s.length <= a + b) return "*".repeat(s.length);
+          return s.slice(0, a) + "*".repeat(s.length - a - b) + (b ? s.slice(-b) : "");
+        }
+        if (mode === "截断") return s.slice(0, Math.max(1, +pre || 1)) + "…";
+        if (mode === "哈希") {
+          let h = 2166136261;
+          for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+          return "h" + h.toString(16).padStart(8, "0");
+        }
+        if (mode === "正则替换") return s.replace(/\d{3,}/g, (m) => "*".repeat(m.length));
+        return s;
+      }
+      function basNewMaskRule(done, table) {
+        const st = { mode: "只保留首尾", pre: 3, post: 4, sample: "13800000000", ai: "" };
+        dlg("新建数据脱敏规则", '<form class="x-form" id="mkf" novalidate><div id="mkbody"></div></form>',
+          '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="mkf">保存规则</button>');
+        const draw = () => {
+          const out = maskApply(st.sample, st.mode, st.pre, st.post);
+          $("mkbody").innerHTML = `
+            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" id="mkaiq" value="${esc(st.ai)}" placeholder="如：手机号保留前三后四，邮箱保留首字母" aria-label="用自然语言描述脱敏规则" autocomplete="off" /><button type="button" id="mkaiGo">生成</button></div></div>
+            <label><span class="x-req">规则名称</span><input class="x-input" name="name" maxlength="60" autocomplete="off" placeholder="如 手机号脱敏" /></label>
+            <div class="x-row2"><label><span>匹配方式</span><select class="x-select" name="by">${opt(["字段名", "正则匹配"], "字段名")}</select></label>
+              <label><span class="x-req">字段 / 表达式</span><input class="x-input x-mono" name="field" value="phone" autocomplete="off" placeholder="phone 或 ^1\d{10}$" /></label></div>
+            <div class="x-row2"><label><span>脱敏方式</span><select class="x-select" name="mode">${opt(["只保留首尾", "全部掩码", "截断", "哈希", "正则替换"], st.mode)}</select></label>
+              <label><span>保留前缀 / 后缀</span><div class="x-row2" style="grid-template-columns:1fr 1fr"><input class="x-input" name="pre" inputmode="numeric" value="${st.pre}" aria-label="保留前缀位数" /><input class="x-input" name="post" inputmode="numeric" value="${st.post}" aria-label="保留后缀位数" /></div></label></div>
+            <label><span>示例值</span><input class="x-input x-mono" name="sample" value="${esc(st.sample)}" autocomplete="off" /></label>
+            <div class="x-warn" style="display:block"><b>脱敏预览</b>：<span class="x-mono">${esc(st.sample)}</span> → <span class="x-mono">${esc(out)}</span>${st.mode === "哈希" ? ' <span class="x-frac">（页内为示例算法，生产由后端执行）</span>' : ""}</div>
+            <div><span>适用范围</span><div class="x-pkgs">${ENV_TAGS.map((t) => `<label class="x-rlchk"><input type="checkbox" name="env" value="${esc(t[0])}" checked />${esc(t[0])}</label>`).join("")}</div></div>
+            <span class="x-err" id="mkerr" role="alert" hidden></span>`;
+          const f = $("mkf");
+          const sync = () => {
+            st.mode = f.elements.mode.value; st.pre = f.elements.pre.value; st.post = f.elements.post.value; st.sample = f.elements.sample.value;
+            const o = maskApply(st.sample, st.mode, st.pre, st.post);
+            f.querySelector(".x-warn").innerHTML = `<b>脱敏预览</b>：<span class="x-mono">${esc(st.sample)}</span> → <span class="x-mono">${esc(o)}</span>`;
+            st.out = o;
+          };
+          f.oninput = sync; f.onchange = sync; sync();
+          $("mkaiGo").onclick = () => {
+            const q = $("mkaiq").value.trim(); if (!q) return $("mkaiq").focus();
+            st.ai = q;
+            const r = mkAiParse(q);
+            st.mode = r.mode; st.pre = r.pre; st.post = r.post; st.sample = r.sample;
+            draw();
+            const nf = $("mkf");
+            nf.elements.name.value = r.name;
+            nf.elements.field.value = r.field;
+            nf.elements.mode.value = r.mode;
+            nf.elements.pre.value = r.pre;
+            nf.elements.post.value = r.post;
+            nf.elements.sample.value = r.sample;
+            nf.dispatchEvent(new Event("input", { bubbles: true }));
+            toast(`AI 已按「${r.name}」填入规则`);
+          };
+          f.onsubmit = (e) => {
+            e.preventDefault();
+            const err = $("mkerr"), bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+            const name = f.elements.name.value.trim(), field = f.elements.field.value.trim();
+            if (!name) return bad("请填写规则名称", f.elements.name);
+            if (!field) return bad("请填写字段名或表达式", f.elements.field);
+            if (f.elements.by.value === "正则匹配") { try { new RegExp(field); } catch (e2) { return bad("正则语法错误：" + e2.message, f.elements.field); } }
+            if (table.rows.some((r) => r[0] === field)) return bad("该字段已有脱敏规则", f.elements.field);
+            sync();
+            table.rows.unshift([field, `${f.elements.mode.value}`, maskApply(st.sample, st.mode, st.pre, st.post)]);
+            closeAll(); toast(`已保存脱敏规则 ${name}`);
+            done && done();
+          };
+        };
+        draw();
+      }
+      function mkAiParse(q) {
+        const out = { name: "字段脱敏", field: "phone", mode: "只保留首尾", pre: 3, post: 4, sample: "13800000000" };
+        if (/邮箱|email|mail/i.test(q)) { out.name = "邮箱脱敏"; out.field = "email"; out.sample = "liming@xingshu.com"; out.mode = "只保留首尾"; out.pre = 1; out.post = 12; }
+        else if (/身份证|id_?card/i.test(q)) { out.name = "身份证脱敏"; out.field = "id_card"; out.sample = "110101199001011234"; out.pre = 6; out.post = 4; }
+        else if (/银行卡|card|账号/.test(q)) { out.name = "银行卡脱敏"; out.field = "bank_card"; out.sample = "6222020200112345678"; out.pre = 4; out.post = 4; }
+        else if (/手机|phone|电话/.test(q)) { out.name = "手机号脱敏"; out.field = "phone"; out.sample = "13800000000"; out.pre = 3; out.post = 4; }
+        if (/全部|全掩码|\*/.test(q)) out.mode = "全部掩码";
+        else if (/哈希|hash/i.test(q)) out.mode = "哈希";
+        else if (/截断/.test(q)) out.mode = "截断";
+        const pre = q.match(/前\s*(\d+)\s*位/), post = q.match(/后\s*(\d+)\s*位/);
+        if (pre) out.pre = +pre[1];
+        if (post) out.post = +post[1];
+        return out;
       }
       function basNewDbTicket(done, table) {
         const dbs = TA_X.filter((x) => x.t === "db").map((x) => x.n);
