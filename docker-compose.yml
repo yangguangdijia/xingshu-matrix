@@ -1,8 +1,51 @@
+# 星枢 Matrix 单机部署：docker compose up -d
+# 首次启动前：cp .env.example .env 并填写 MATRIX_JWT_SECRET / MATRIX_ENCRYPTION_KEY
 services:
-  xingshu-matrix:
+  matrix-server:
     build: .
-    image: xingshu-matrix:latest
-    container_name: xingshu-matrix
-    ports:
-      - "8080:80"
+    image: xingshu/matrix-server:latest
     restart: unless-stopped
+    ports: ["8080:8080"]
+    env_file: [.env]
+    environment:
+      MATRIX_DB_DSN: postgres://matrix:${POSTGRES_PASSWORD:-matrix}@postgres:5432/matrix?sslmode=disable
+      MATRIX_REDIS_ADDR: redis:6379
+      MATRIX_RECORD_DIR: /data/recordings
+      MATRIX_GUACD_ADDR: guacd:4822
+    volumes: [recordings:/data/recordings]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: matrix
+      POSTGRES_USER: matrix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-matrix}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U matrix"], interval: 5s, retries: 20}
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 5s, retries: 20}
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-matrix}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-matrix-minio-secret}
+    volumes: [miniodata:/data]
+    ports: ["9001:9001"]
+
+  guacd:
+    image: guacamole/guacd:1.5.5
+    restart: unless-stopped
+
+volumes: {pgdata: {}, redisdata: {}, miniodata: {}, recordings: {}}
