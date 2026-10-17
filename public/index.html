@@ -6239,26 +6239,89 @@
       }
 
       // 改密计划: scope, 周期, 规则, 下次执行, 立即执行
+      // 改密计划编辑器：目标范围、周期与执行时间、密码规则与影响预览
+      function gSamplePw(len, sets) {
+        const pools = { 大写: "ABCDEFGHJKLMNPQRSTUVWXYZ", 小写: "abcdefghijkmnopqrstuvwxyz", 数字: "23456789", 符号: "!@#$%^&*-_=+" };
+        let pool = sets.map((s) => pools[s] || "").join("") || pools.小写;
+        let out = sets.map((s) => (pools[s] || "")[0] || "").join("");
+        while (out.length < len) out += pool[Math.floor(Math.random() * pool.length)];
+        return out.slice(0, len);
+      }
+      function basNewPlan(el) {
+        const P = GOV.plans;
+        dlg("新建改密计划", '<form class="x-form" id="plf" novalidate><div id="plbody"></div></form>',
+          '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="plf">创建计划</button>');
+        const draw = () => {
+          const f0 = $("plf");
+          const curSets = f0 ? [...f0.querySelectorAll("[name=sets]")] : [];
+          const sets = curSets.length ? curSets.filter((x) => x.checked).map((x) => x.value) : GSETS;
+          $("plbody").innerHTML = `
+            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" id="plaiq" placeholder="如：每 30 天凌晨 2 点为所有特权账号改 20 位密码" aria-label="用自然语言描述改密计划" autocomplete="off" /><button type="button" id="plaiGo">生成</button></div></div>
+            <label><span class="x-req">计划名称</span><input class="x-input" name="n" maxlength="60" autocomplete="off" placeholder="如 生产特权账号月度改密" /></label>
+            <label><span class="x-req">目标范围</span><select class="x-select" name="scope">${opt(gScopes(), "全部特权账号")}</select>
+              <span class="x-frac" id="plcount" style="display:block;margin-top:4px"></span></label>
+            <div class="x-row2"><label><span>周期</span><select class="x-select" name="cyc">${opt([7, 14, 30, 60, 90], 30, (v) => `每 ${v} 天`)}</select></label>
+              <label><span>执行时间</span><input class="x-input" type="time" name="at" value="02:00" /></label></div>
+            <div class="x-row2"><label><span>密码长度</span><select class="x-select" name="len">${opt([12, 16, 20, 32], 20, (v) => v + " 位")}</select></label>
+              <label><span>字符组成</span><div class="x-pkgs" style="margin:6px 0 0">${GSETS.map((s) => `<label class="x-rlchk"><input type="checkbox" name="sets" value="${s}"${sets.includes(s) ? " checked" : ""} />${s}</label>`).join("")}</div></label></div>
+            <div class="x-warn" id="plprev" role="status" style="display:block"></div>
+            <span class="x-err" id="plerr" role="alert" hidden></span>`;
+          const f = $("plf");
+          const sync = () => {
+            const scope = f.elements.scope.value, cyc = +f.elements.cyc.value, at = f.elements.at.value || "02:00";
+            const st = [...f.querySelectorAll("[name=sets]:checked")].map((x) => x.value);
+            const n = gScope(scope).length, len = +f.elements.len.value;
+            const next = gNext(cyc, at);
+            $("plcount").textContent = `当前范围匹配 ${n} 个账号`;
+            $("plprev").innerHTML = `<b>计划预览</b>：每 ${cyc} 天在 ${esc(at)} 为 <b>${n}</b> 个账号轮换 ${len} 位密码（${st.join("+") || "未选字符集"}），下次执行 ${esc(gFmt(next))}。示例：<span class="x-mono">${esc(gSamplePw(len, st))}</span>${n ? "" : ' <span class="x-tag x-orange x-tag--s">范围内没有账号</span>'}`;
+          };
+          f.oninput = sync; f.onchange = sync; sync();
+          $("plaiGo").onclick = () => {
+            const q = $("plaiq").value.trim(); if (!q) return $("plaiq").focus();
+            const r = plAiParse(q);
+            draw();
+            const nf = $("plf");
+            nf.elements.n.value = r.n;
+            nf.elements.scope.value = r.scope;
+            nf.elements.cyc.value = r.cyc;
+            nf.elements.at.value = r.at;
+            nf.elements.len.value = r.len;
+            nf.querySelectorAll("[name=sets]").forEach((c) => (c.checked = r.sets.includes(c.value)));
+            nf.dispatchEvent(new Event("input", { bubbles: true }));
+            toast(`AI 已按「${r.n}」填入计划`);
+          };
+          f.onsubmit = (e) => {
+            e.preventDefault();
+            const err = $("plerr"), bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+            const n = f.elements.n.value.trim();
+            const sets = [...f.querySelectorAll("[name=sets]:checked")].map((x) => x.value);
+            if (!n) return bad("请填写计划名称", f.elements.n);
+            if (!sets.length) return bad("至少选择一种字符组成", f.querySelector("[name=sets]"));
+            const scope = f.elements.scope.value, cyc = +f.elements.cyc.value, at = f.elements.at.value || "02:00";
+            if (!gScope(scope).length) return bad("当前范围没有账号，请换一个范围", f.elements.scope);
+            P.push({ n, scope, cyc, at, len: +f.elements.len.value, sets, next: gNext(cyc, at), last: "—" });
+            closeAll(); renderPlan(el); toast("改密计划已创建");
+          };
+        };
+        draw();
+      }
+      function plAiParse(q) {
+        const cyc = (q.match(/(\d+)\s*天/) || [])[1];
+        const at = (q.match(/(\d{1,2})\s*[:：点]/) || []);
+        const len = (q.match(/(\d{2})\s*位/) || [])[1];
+        const scope = /特权|root|管理员/.test(q) ? "全部特权账号" : /数据库|dba/i.test(q) ? gScopes().find((s) => /数据库/.test(s)) || gScopes()[0] : gScopes()[0];
+        return {
+          n: `${/特权/.test(q) ? "特权账号" : "账号"}每 ${cyc || 30} 天改密`,
+          scope, cyc: String(cyc || 30),
+          at: at.length ? `${String(at[1]).padStart(2, "0")}:00` : "02:00",
+          len: String(len || 20), sets: GSETS,
+        };
+      }
       function renderPlan(el) {
         const P = GOV.plans;
         el.innerHTML = phead("改密计划", "按范围与周期自动轮换资产账号密码，新密码由堡垒机托管，连接时无需知晓", '<button class="x-btn x-btn--pri" id="plNew">+ 新建计划</button>') +
           `<section class="x-panel">${P.length ? tbl(["计划", "范围", "周期", "密码规则", "下次执行", "上次执行", "操作"], P.map((p, i) => { const n = gScope(p.scope).length; return [`<b>${esc(p.n)}</b>`, `${esc(p.scope)} <span class="x-frac">${n} 个账号</span>`, `每 ${p.cyc} 天 · ${p.at}`, `<span class="x-frac">${p.len} 位 · ${p.sets.join("+")}</span>`, `<span class="x-mono">${gFmt(p.next)}</span>`, `<span class="x-frac">${esc(p.last)}</span>`, `<span class="x-kacts">${k8Act("plrun", i, "立即执行", n > 0, "范围内没有账号")}${k8Act("pldel", i, "删除")}</span>`]; })) : '<p class="x-frac">还没有改密计划。</p>'}</section>`;
-        $("plNew").onclick = () => {
-          dlg("新建改密计划", `<form class="x-form" id="plF"><label><span>计划名称</span><input class="x-input" name="n" /></label>
-            <label><span>范围</span><select class="x-select" name="scope">${opt(gScopes(), "全部特权账号")}</select></label>
-            <label><span>周期</span><select class="x-select" name="cyc">${opt([7, 30, 60, 90], 30, (v) => `每 ${v} 天`)}</select></label>
-            <label><span>执行时间</span><input class="x-input" type="time" name="at" value="02:00" /></label>
-            <label><span>密码长度</span><select class="x-select" name="len">${opt([12, 16, 20, 32], 20, (v) => v + " 位")}</select></label>
-            <fieldset class="x-radios"><legend>字符组成</legend>${GSETS.map((s) => `<label><input type="checkbox" name="sets" value="${s}" checked /> ${s}</label>`).join("")}</fieldset></form>`,
-            '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="plF">创建</button>');
-          $("plF").onsubmit = (e) => {
-            e.preventDefault(); const f = e.target.elements, sets = [...e.target.querySelectorAll("[name=sets]:checked")].map((x) => x.value), at = f.at.value || "02:00";
-            if (!f.n.value.trim()) return f.n.focus();
-            if (!sets.length) return toast("至少选择一种字符");
-            P.push({ n: f.n.value.trim(), scope: f.scope.value, cyc: +f.cyc.value, at, len: +f.len.value, sets, next: gNext(+f.cyc.value, at), last: "—" });
-            closeAll(); renderPlan(el); toast("改密计划已创建");
-          };
-        };
+        $("plNew").onclick = () => basNewPlan(el);
         on(el, "plrun", (i) => { const p = P[i], a = gScope(p.scope); a.forEach((r) => basAudit(r[1], `自动改密 · ${r[0]}（${p.n}）`)); p.last = `${basNow()} · 成功 ${a.length} 个`; p.next = gNext(p.cyc, p.at); renderPlan(el); toast(`已为 ${a.length} 个账号改密，新密码已托管`); });
         on(el, "pldel", (i) => k8Confirm("删除计划", `删除「${esc(P[i].n)}」后不再自动改密。`, "删除", () => { P.splice(i, 1); renderPlan(el); toast("已删除"); }));
       }
