@@ -137,6 +137,12 @@
       .x-modal--wide { width: min(680px, calc(100vw - 32px)); top: 6vh; max-height: 88vh; display: flex; flex-direction: column; }
       .x-modal.x-modal--wlg { width: min(780px, calc(100vw - 24px)); }
       .x-modal .x-xai-f > button { flex: none; white-space: nowrap; }
+      .x-aip .x-aip-r { margin-top: 10px; border-top: 1px dashed var(--x-line); padding-top: 10px; }
+      .x-aip .x-aip-t { margin: 0 0 8px; font-weight: 500; }
+      .x-aip .x-aip-l { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+      .x-aip .x-aip-l li { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--x-line); border-radius: 8px; background: #fcfcfd; }
+      .x-aip .x-aip-l li .x-name { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .x-aip .x-aip-l li .x-frac { flex: 1; min-width: 0; }
       .x-kvrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px; align-items: end; margin: 0 0 10px; }
       .x-kvrow > label { min-width: 0; }
       .x-kvrow .x-act { margin-bottom: 8px; }
@@ -5989,6 +5995,87 @@
         };
         draw();
       }
+      // 模块内嵌 AI：在当前页面数据上做分析，结果可直接打开对应详情，不做假数据
+      const K8_AI_CFG = {
+        nodes: { ph: "如：哪些节点压力高 / 已封锁的节点 / Pod 最多的节点", quick: ["压力高的节点", "已封锁的节点", "Pod 最多的 3 个节点"] },
+        workloads: { ph: "如：哪些工作负载未就绪 / 重启最多 / 用了哪些镜像", quick: ["未就绪的工作负载", "重启最多的 3 个", "镜像版本分布"] },
+        config: { ph: "如：哪些配置没有被引用 / 有多少个 Secret", quick: ["未被引用的配置", "Secret 数量"] },
+      };
+      function k8AiPanel(page, el) {
+        const cfg = K8_AI_CFG[page]; if (!cfg) return;
+        const host = el.querySelector(".x-panel"); if (!host) return;
+        host.insertAdjacentHTML("beforebegin",
+          `<section class="x-panel x-aip" aria-label="页面 AI 分析" style="margin-bottom:12px">
+            <div class="x-xai" style="margin:0"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span>
+              <input class="x-xai-in" id="k8aiq" placeholder="${esc(cfg.ph)}" aria-label="用自然语言向本页数据提问" autocomplete="off" />
+              <button type="button" id="k8aigo">分析</button></div>
+              <div class="x-aip-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${cfg.quick.map((q) => `<button type="button" class="x-tag x-tag--s" data-aiq="${esc(q)}" style="cursor:pointer">${esc(q)}</button>`).join("")}</div>
+            </div>
+            <div id="k8aio" aria-live="polite"></div>
+          </section>`);
+        const out = $("k8aio"), inp = $("k8aiq");
+        const run = (q) => {
+          q = (q || "").trim(); if (!q) return inp.focus();
+          const r = k8AiRun(page, q);
+          out.innerHTML = `<div class="x-aip-r"><p class="x-aip-t">${esc(r.text)}</p>${r.items.length ? `<ul class="x-aip-l">${r.items.map((it, k) => `<li><span class="x-name">${esc(it.n)}</span><span class="x-frac">${esc(it.meta || "")}</span>${it.act ? `<button type="button" class="x-act" data-aiopen="${k}">打开</button>` : ""}</li>`).join("")}</ul>` : ""}${r.hint ? `<p class="x-frac" style="margin:6px 0 0">${esc(r.hint)}</p>` : ""}</div>`;
+          out.querySelectorAll("[data-aiopen]").forEach((b) => (b.onclick = () => r.items[+b.dataset.aiopen].act()));
+          inp.select();
+        };
+        $("k8aigo").onclick = () => run(inp.value);
+        inp.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); run(inp.value); } };
+        host.parentElement.querySelectorAll("[data-aiq]").forEach((b) => (b.onclick = () => { inp.value = b.dataset.aiq; run(b.dataset.aiq); }));
+      }
+      function k8AiRun(page, q) {
+        const low = q.toLowerCase();
+        if (page === "nodes") {
+          const L = K8.nodes.filter((x) => envOk(clEnvOf(x.c)));
+          if (/封锁|cordon/.test(q)) {
+            const on = L.filter((x) => x.cordon);
+            return { text: on.length ? `有 ${on.length} 个节点处于封锁状态，不会接收新 Pod。` : "当前没有处于封锁状态的节点。", items: on.map((x) => ({ n: x.n, meta: `${x.c} · ${x.role}`, act: () => ndDrawer(K8.nodes.indexOf(x), "基本信息") })), hint: "封锁节点后可用「解除封锁」恢复调度。" };
+          }
+          if (/pod/.test(low)) {
+            const top = [...L].sort((a, b) => b.pods - a.pods).slice(0, 3);
+            return { text: `按 Pod 数量排序的前 ${top.length} 个节点：`, items: top.map((x) => ({ n: x.n, meta: `${x.pods} / 110 Pod`, act: () => ndDrawer(K8.nodes.indexOf(x), "Pod") })) };
+          }
+          const hot = L.filter((x) => x.cpu >= 80 || x.mem >= 80);
+          const list = (hot.length ? hot : [...L].sort((a, b) => Math.max(b.cpu, b.mem) - Math.max(a.cpu, a.mem)).slice(0, 3));
+          return {
+            text: hot.length ? `${hot.length} 个节点 CPU 或内存超过 80%，建议先看 Pod 分布再决定驱逐或扩容。` : "没有节点超过 80%，这里按负载从高到低列出前 3 个。",
+            items: list.map((x) => ({ n: x.n, meta: `CPU ${x.cpu}% · 内存 ${x.mem}% · ${x.pods} Pod`, act: () => ndDrawer(K8.nodes.indexOf(x), "监控") })),
+            hint: "打开详情后在「监控」页签可切换 1h / 6h / 24h 观察趋势。",
+          };
+        }
+        if (page === "workloads") {
+          if (/镜像|image/.test(low)) {
+            const m = new Map();
+            K8.wl.forEach((w) => { const img = w.img.replace(KREG, ""); m.set(img, (m.get(img) || 0) + 1); });
+            return { text: `当前 ${K8.wl.length} 个工作负载共使用 ${m.size} 个不同镜像：`, items: [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([img, n]) => ({ n: img, meta: `${n} 个工作负载` })) };
+          }
+          if (/重启|restart/.test(low)) {
+            const rows = K8.wl.map((w, i) => ({ w, i, rs: podsOf(w).reduce((s, p) => s + (p.rs || 0), 0) })).sort((a, b) => b.rs - a.rs).slice(0, 3);
+            return { text: `重启次数最多的 ${rows.filter((r) => r.rs > 0).length || 0} 个工作负载：`, items: rows.map((r) => ({ n: r.w.n, meta: `${r.w.k} · ${r.w.ns} · 重启 ${r.rs} 次`, act: () => k8Drawer(r.i, "Pod") })), hint: "重启集中时先看 Pod 事件里的 BackOff / OOMKilled。" };
+          }
+          const bad = K8.wl.map((w, i) => ({ w, i })).filter(({ w }) => w.ready[0] < w.ready[1]);
+          return {
+            text: bad.length ? `${bad.length} 个工作负载就绪副本不足，可能需要回滚或排查调度。` : "所有工作负载都已达到期望副本数。",
+            items: bad.slice(0, 6).map(({ w, i }) => ({ n: w.n, meta: `${w.k} · ${w.ready[0]}/${w.ready[1]} · ${w.ns}`, act: () => k8Drawer(i, "概览") })),
+            hint: bad.length ? "就绪不足常见原因：镜像拉取失败、探针失败、资源不足。" : "",
+          };
+        }
+        if (page === "config") {
+          if (/secret|密钥/.test(low)) {
+            return { text: `当前有 ${K8.sec.length} 个 Secret，${K8.cm.length} 个 ConfigMap。`, items: K8.sec.slice(0, 6).map((s) => ({ n: s.n, meta: `${s.ns} · ${s.type}` })) };
+          }
+          const ref = (n) => K8.wl.some((w) => w.n.includes(n) || n.includes(w.n));
+          const orphan = K8.cm.filter((c) => !ref(c.n));
+          return {
+            text: orphan.length ? `${orphan.length} 个 ConfigMap 名称与现有工作负载没有明显对应关系，建议确认是否仍被挂载。` : "所有 ConfigMap 都能对应到同名工作负载。",
+            items: orphan.slice(0, 8).map((c) => ({ n: c.n, meta: `${c.ns} · ${Object.keys(c.data).length} 个键` })),
+            hint: "这里按名称做启发式匹配，挂载关系以工作负载详情里的卷配置为准。",
+          };
+        }
+        return { text: "没有可分析的内容。", items: [] };
+      }
       function k8Create(page) {
         if (page === "workloads") return k8NewWorkload();
         if (page === "config") return k8NewConfig();
@@ -6170,6 +6257,7 @@
         $("kNew").onclick = () => k8Create(p.k);
         K8_BIND[p.k](el);
         bindBar(el, p.h);
+        k8AiPanel(p.k, el);
       }
       // 项目: groups namespaces, members (role), ResourceQuota and LimitRange. Demo rows (demo: true) show only with 加载演示数据
       const PJ_ROLES = ["项目所有者", "成员", "只读"];
