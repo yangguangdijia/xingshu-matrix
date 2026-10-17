@@ -4699,7 +4699,7 @@
         const AG = { 在线: "x-green", 离线: "x-grey", 未安装: "x-orange" };
         const agent = (h) => h.ag === "安装中" ? `<span class="x-hprog"><span class="x-bigprog"><i style="width:${h.p || 0}%"></i></span><small class="x-frac">安装中 ${h.p || 0}%</small></span>` : pillTag(h.ag, AG[h.ag] || "x-grey");
         el.innerHTML = phead(p.t, p.sub, '<button class="x-btn x-btn--pri" id="hImp">+ 导入主机</button>') + envNote(vis.length, HOSTS.length, "主机") +
-          `<div class="x-hlay"><nav class="x-tree" aria-label="主机分组"><h2>分组</h2><ul>${tn("全部", "全部主机", vis.length)}<ul>${groups.map((g) => tn(g, g, vis.filter((h) => h.g === g).length) + "</li>").join("")}</ul></li></ul></nav>
+          `<div class="x-hlay"><nav class="x-tree" aria-label="主机分组"><h2>分组<button class="x-act" id="hGrpMg" type="button" style="margin-left:auto">管理</button></h2><ul>${tn("全部", "全部主机", vis.length)}<ul>${groups.map((g) => tn(g, g, vis.filter((h) => h.g === g).length) + "</li>").join("")}</ul></li></ul></nav>
           <section class="x-panel">${bar(p.h, { q: "搜索主机名 / IP" })}<div class="x-batch"><span class="x-frac" id="hsn"></span><button class="x-btn" id="hBEnv">批量环境</button><button class="x-btn" id="hBBas">批量加入堡垒机</button><button class="x-btn" id="hBAg">批量安装 Agent</button><button class="x-btn" id="hBDel">批量移除</button></div>${rows.length ? k8Table(['<input type="checkbox" class="x-sel" id="hAllSel" aria-label="全选主机" />', "主机", "分组", "系统", "规格", "环境", "Agent", "操作"], rows.map((h) => { const i = HOSTS.indexOf(h); return k8Row("", [
             `<input type="checkbox" class="x-sel" data-hsel="${i}" aria-label="选择 ${esc(h.n)}"${hs.sel.has(h.n) ? " checked" : ""} />`,
             `<span class="x-name">${esc(h.n)}</span><br /><span class="x-mono">${h.user ? esc(h.user) + "@" : ""}${esc(h.ip)}${h.port && h.port !== 22 ? ":" + h.port : ""}</span>`, esc(h.g), esc(h.os), esc(h.spec), envTag(h.env), agent(h),
@@ -4734,8 +4734,49 @@
         on(el, "hdel", (i) => { const h = HOSTS[i]; k8Confirm(`移除主机 ${esc(h.n)}`, `移除后平台不再管理 <b>${esc(h.n)}（${esc(h.ip)}）</b>，已安装的 Agent 会在下次心跳时自行停止。`, "移除", () => { if (h.demo) HOST_GONE.add(h.ip); HOSTS.splice(HOSTS.indexOf(h), 1); hostsKeep(); clDraw(); toast(`已移除主机 ${h.n}`); }); });
         bindBar(el, p.h);
         hostBatch(el, rows, groups);
+        $("hGrpMg").onclick = () => hostGroupManage(groups, el);
       }
       // 主机批量操作：勾选后统一改环境、加入堡垒机、安装 Agent、移除
+      // 主机分组管理：重命名、合并到其他分组、删除并把主机移走
+      function hostGroupManage(groups, el) {
+        const all = [...new Set(HOSTS.map((h) => h.g || "未分组"))];
+        dlg("管理主机分组", `<form class="x-form" id="hgf" novalidate>
+            <p class="x-frac" style="margin:0">当前 ${all.length} 个分组、${HOSTS.length} 台主机。删除分组不会删除主机，会把主机移到你选择的目标分组。</p>
+            <label><span class="x-req">分组</span><select class="x-select" name="g">${all.map((g) => `<option value="${esc(g)}">${esc(g)} · ${HOSTS.filter((h) => (h.g || "未分组") === g).length} 台</option>`).join("")}</select></label>
+            <label><span>操作</span><select class="x-select" name="op">${opt(["重命名", "合并到其他分组", "删除分组"], "重命名")}</select></label>
+            <label><span id="hgLab">新分组名</span><input class="x-input" name="target" list="hgl2" autocomplete="off" placeholder="如 Web 集群" /><datalist id="hgl2">${all.map((g) => `<option value="${esc(g)}"></option>`).join("")}</datalist></label>
+            <div class="x-warn" id="hgPrev" role="status" style="display:block"></div>
+            <span class="x-err" id="hgErr" role="alert" hidden></span>
+          </form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="hgf">执行</button>');
+        const f = $("hgf");
+        const sync = () => {
+          const g = f.elements.g.value, op = f.elements.op.value;
+          const n = HOSTS.filter((h) => (h.g || "未分组") === g).length;
+          $("hgLab").textContent = op === "删除分组" ? "把主机移到" : op === "合并到其他分组" ? "目标分组" : "新分组名";
+          f.elements.target.placeholder = op === "删除分组" ? "未分组" : "如 Web 集群";
+          $("hgPrev").innerHTML = op === "重命名"
+            ? `<b>影响</b>：把「${esc(g)}」下的 ${n} 台主机改到新名称，分组树上该分组随之改名。`
+            : op === "合并到其他分组"
+              ? `<b>影响</b>：「${esc(g)}」下的 ${n} 台主机并入目标分组，原分组消失。`
+              : `<b>影响</b>：删除「${esc(g)}」，${n} 台主机移到「${esc(f.elements.target.value || "未分组")}」，主机本身保留。`;
+        };
+        f.oninput = sync; f.onchange = sync; sync();
+        f.onsubmit = (e) => {
+          e.preventDefault();
+          const err = $("hgErr"), bad = (m, x) => { err.textContent = m; err.hidden = false; x && x.focus(); };
+          const g = f.elements.g.value, op = f.elements.op.value, t = f.elements.target.value.trim();
+          if ((op === "重命名" || op === "合并到其他分组") && !t) return bad("请填写目标分组名", f.elements.target);
+          if (t && t === g && op === "重命名") return bad("新名称与原名相同", f.elements.target);
+          if (op === "合并到其他分组" && !all.includes(t)) return bad("目标分组不存在，请从列表中选择", f.elements.target);
+          const moved = HOSTS.filter((h) => (h.g || "未分组") === g);
+          if (op === "重命名") moved.forEach((h) => (h.g = t));
+          else moved.forEach((h) => (h.g = op === "删除分组" ? (t || "未分组") : t));
+          hostsKeep();
+          hs.g = op === "删除分组" ? (t || "全部") : t;
+          closeAll(); clDraw();
+          toast(op === "重命名" ? `分组已重命名为「${t}」` : op === "合并到其他分组" ? `已把 ${moved.length} 台主机合并到「${t}」` : `分组已删除，${moved.length} 台主机移到「${t || "未分组"}」`);
+        };
+      }
       function hostBatch(el, rows, groups) {
         const boxes = [...el.querySelectorAll("[data-hsel]")], all = $("hAllSel");
         if (!all) return;
