@@ -3507,6 +3507,35 @@
         pane.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => { cd.menu = b.dataset.go; renderDelivery(el); }));
       }
 
+      // 应用实例详情：状态、版本、资源、事件入口，并可跳到同名工作负载
+      function instDrawer(i, a, e) {
+        const d = $("drawer");
+        if (!i) return;
+        const wIdx = K8.wl.findIndex((w) => w.n === a.name);
+        d.classList.add("x-drawer--wide"); d.setAttribute("aria-label", `实例 ${i.ip}`);
+        d.innerHTML = `<div class="x-dhead"><span class="x-tag x-blue">Instance</span><span class="x-mono">${esc(i.ip)}</span>${stTag(i.st)}<button class="x-x" data-close aria-label="关闭">×</button></div>
+          <div class="x-dbody">
+            <h3 class="x-h2">基本信息</h3><dl class="x-sum">
+              <dt>应用</dt><dd>${esc(a.name)} · ${esc(cd.env)}</dd>
+              <dt>镜像版本</dt><dd class="x-mono">demo/${esc(a.name)}:${esc(i.ver)}</dd>
+              <dt>期望版本</dt><dd class="x-mono">${esc(e.ver)}${i.ver !== e.ver ? ' <span class="x-tag x-red x-tag--s">版本不一致</span>' : ""}</dd>
+              <dt>宿主机</dt><dd class="x-mono">${esc(i.host)}</dd>
+              <dt>启动时间</dt><dd>${esc(i.start)}</dd>
+              <dt>就绪容器</dt><dd>${i.st === "运行中" ? "2 / 2（含网格代理）" : "1 / 2"}</dd>
+            </dl>
+            <h3 class="x-h2">资源使用</h3><dl class="x-sum">
+              <dt>CPU</dt><dd>${i.cpu}% <span class="x-frac">（限额 4 核）</span></dd>
+              <dt>内存</dt><dd>${esc(i.mem)} / 4Gi</dd>
+            </dl>
+            <p class="x-frac" style="margin:12px 0 0">实例级指标来自采集链路；当前环境未接入真实 Prometheus 时，这里的数值来自演示数据。</p>
+          </div>
+          <div class="x-dfoot"><button class="x-btn" data-close>关闭</button><button class="x-btn" data-idet="log">日志</button><button class="x-btn" data-idet="term">终端</button><button class="x-btn" data-idet="ev">事件</button>${wIdx >= 0 ? '<button class="x-btn x-btn--pri" data-iwl>打开工作负载</button>' : ""}</div>`;
+        d.querySelectorAll("[data-close]").forEach((b) => (b.onclick = closeAll));
+        d.querySelectorAll("[data-idet]").forEach((b) => (b.onclick = () => ({ log: openLog, term: openTerm, ev: openEvents })[b.dataset.idet](i, a)));
+        const wb = d.querySelector("[data-iwl]");
+        if (wb) wb.onclick = () => { closeAll(); k8Drawer(wIdx, "概览"); };
+        if (!d.classList.contains("open")) { $("mask").hidden = false; requestAnimationFrame(() => d.classList.add("open")); }
+      }
       const PANES = {
         导览: (p, a, d) => {
           const n = a.envs.reduce((s, e) => s + d.envs[e].insts.length, 0);
@@ -3528,11 +3557,11 @@
               `<span class="x-mono x-blk">${e.ver}</span><span class="x-mono x-blk"${i.ver !== e.ver ? ' style="color:#d4380d"' : ""}>${i.ver}</span>`,
               `${stTag(i.st)}<small class="x-frac x-blk">容器 ${i.st === "运行中" ? 2 : 1}/2 就绪(含网格代理)</small>`,
               i.start, `<span class="x-mono">${i.host}</span>`, `CPU ${i.cpu}% · 内存 ${i.mem}/4Gi`,
-              `<span style="white-space:nowrap">${[["log", "日志"], ["term", "终端"], ["ev", "事件"]].map(([o, t]) => `<button class="x-act" data-op="${o}" data-k="${k}">${t}</button>`).join("")}</span>`,
+              `<span style="white-space:nowrap">${[["det", "详情"], ["log", "日志"], ["term", "终端"], ["ev", "事件"]].map(([o, t]) => `<button class="x-act" data-op="${o}" data-k="${k}">${t}</button>`).join("")}</span>`,
             ]))}`;
           $("env").onchange = (ev) => { cd.env = ev.target.value; refresh(); };
           p.querySelectorAll("[data-rel]").forEach((b) => (b.onclick = () => openRelease(b.dataset.rel, a, e)));
-          p.querySelectorAll("[data-op]").forEach((b) => (b.onclick = () => ({ log: openLog, term: openTerm, ev: openEvents })[b.dataset.op](e.insts[b.dataset.k], a)));
+          p.querySelectorAll("[data-op]").forEach((b) => (b.onclick = () => b.dataset.op === "det" ? instDrawer(e.insts[b.dataset.k], a, e) : ({ log: openLog, term: openTerm, ev: openEvents })[b.dataset.op](e.insts[b.dataset.k], a)));
           $("up").onclick = () => {
             addInst(e, a.envs.indexOf(cd.env), "启动中", "刚刚"); const i = e.insts[e.insts.length - 1];
             setTimeout(() => { i.st = "运行中"; refresh(); }, 1500);
