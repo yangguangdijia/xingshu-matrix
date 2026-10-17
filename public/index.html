@@ -4806,7 +4806,8 @@
           <div id="hiprev" aria-live="polite"></div>
           <label><span>分组</span><input class="x-input" name="g" list="hgl" value="${esc(groups[0] || "默认分组")}" autocomplete="off" /><datalist id="hgl">${groups.map((g) => `<option value="${esc(g)}"></option>`).join("")}</datalist></label>
           ${envField("测试")}
-          <div><span class="x-frac">导入后在主机上执行以下命令安装 Agent，或在列表中点「安装 Agent」由平台通过 SSH 下发：</span>
+          <fieldset class="x-radios"><legend>Agent 安装方式</legend><label><input type="radio" name="agm" value="平台下发" checked />平台下发（通过 SSH 自动安装）</label><label><input type="radio" name="agm" value="手动安装" />手动安装（导入后按命令执行）</label></fieldset>
+          <div><span class="x-frac">手动安装时，在主机上执行以下命令，或在列表中点「安装 Agent」由平台通过 SSH 下发：</span>
           <div class="x-cmd" style="margin-top:6px"><code>curl -fsSL https://matrix.xingshu.com/agent/install.sh | sudo bash -s -- --token xs-agent-7f3a</code></div></div>
           <span class="x-err" id="hierr" role="alert" hidden></span></form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="hif" id="hiGo" disabled>导入</button>');
         const f = $("hif"), bad = formBad("hierr"); envBind(f); f.elements.list.focus();
@@ -4817,7 +4818,8 @@
           const rows = res.rows || [], go = rows.filter((r) => !r.skip), more = rows.length - 100;
           $("hiGo").disabled = !go.length; $("hiGo").textContent = go.length ? `导入 ${go.length} 台` : "导入";
           $("hiprev").innerHTML = res.err ? `<p class="x-err" style="margin:0">${esc(res.err)}</p>` : !rows.length ? ""
-            : `<p class="x-frac" style="margin:0 0 6px">预览：共 ${rows.length} 台，将导入 ${go.length} 台${rows.length > go.length ? `，跳过 ${rows.length - go.length} 台` : ""}</p><div class="x-prev">${k8Table(["IP", "端口", "用户", "主机名", "状态"], rows.slice(0, 100).map((r) => k8Row("", [
+            : (() => { const dup = rows.filter((r) => /已纳管/.test(r.skip)).length, rep = rows.filter((r) => /重复/.test(r.skip)).length, other = rows.length - go.length - dup - rep;
+                return `<div class="x-tags" style="margin:0 0 8px"><span class="x-tag x-green x-tag--s">可导入 ${go.length}</span>${dup ? `<span class="x-tag x-grey x-tag--s">已纳管 ${dup}</span>` : ""}${rep ? `<span class="x-tag x-orange x-tag--s">重复 ${rep}</span>` : ""}${other > 0 ? `<span class="x-tag x-red x-tag--s">其他跳过 ${other}</span>` : ""}<span class="x-frac" style="margin-left:auto">共 ${rows.length} 台</span></div>`; })() + `<div class="x-prev">${k8Table(["IP", "端口", "用户", "主机名", "状态"], rows.slice(0, 100).map((r) => k8Row("", [
               `<span class="x-mono">${esc(r.ip)}</span>`, r.port, esc(r.user), esc(r.n), r.skip ? `<span title="${esc(r.why)}">${pillTag(r.skip, "x-grey")}</span><small class="x-frac" style="display:block">原因：${esc(r.why)}</small>` : pillTag("待导入", "x-green")])))}${more > 0 ? `<p class="x-frac">… 另有 ${more} 台</p>` : ""}</div>`;
         };
         f.elements.list.oninput = prev;
@@ -4830,7 +4832,10 @@
           if (!rows.length) return bad("没有可导入的主机", f.elements.list);
           const g = f.elements.g.value.trim() || "默认分组", env = envRead(f, bad); if (!env) return;
           rows.forEach(({ skip, why, ...r }) => HOSTS.push({ ...r, g, env, spec: "—", ag: "未安装" }));
-          hostsKeep(); hs.g = g; closeAll(); clDraw(); toast(`已导入 ${rows.length} 台主机到「${g}」`);
+          const agm = (f.querySelector("[name=agm]:checked") || {}).value || "平台下发";
+          hostsKeep(); hs.g = g; closeAll(); clDraw();
+          if (agm === "平台下发") { rows.forEach((r) => { const h = HOSTS.find((x) => x.ip === r.ip && x.g === g && x.ag === "未安装"); if (h) hostAgent(h); }); toast(`已导入 ${rows.length} 台主机到「${g}」，正在下发 Agent 安装`); }
+          else toast(`已导入 ${rows.length} 台主机到「${g}」，请按命令手动安装 Agent`);
         };
       }
       // 导入方式：[字段说明, 示例]
