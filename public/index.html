@@ -137,6 +137,9 @@
       .x-modal--wide { width: min(680px, calc(100vw - 32px)); top: 6vh; max-height: 88vh; display: flex; flex-direction: column; }
       .x-modal.x-modal--wlg { width: min(780px, calc(100vw - 24px)); }
       .x-modal .x-xai-f > button { flex: none; white-space: nowrap; }
+      .x-kvrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px; align-items: end; margin: 0 0 10px; }
+      .x-kvrow > label { min-width: 0; }
+      .x-kvrow .x-act { margin-bottom: 8px; }
       .x-wbody { flex: 1; overflow: auto; }
       .x-stepper { list-style: none; margin: 0; padding: 12px 20px; display: flex; gap: 8px; overflow-x: auto; border-bottom: 1px solid var(--x-line); }
       .x-stepper li { display: flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--x-sub); font-size: 12px; }
@@ -5861,7 +5864,8 @@
         if (rep) { set("replicas", rep[1]); hit.push("副本 " + rep[1]); }
         const imgs = [...q.matchAll(/([a-z0-9][a-z0-9.\-]*(?:\/[a-z0-9][a-z0-9.\-]*)*):([a-z0-9][a-z0-9._\-]*)/gi)].filter((m) => /[a-z]/i.test(m[1]));
         if (imgs.length) { const im = imgs[0]; set("image", im[1] + ":" + im[2]); hit.push("镜像 " + im[1] + ":" + im[2]); }
-        const nm = q.match(/(?:名为|叫做|名称是?)\s*([a-z0-9][a-z0-9-]{1,62})/i);
+        const nm = q.match(/(?:名为|叫做|名称是?)\s*([a-z0-9][a-z0-9.-]{1,62})/i);
+        if (nm) { set("name", nm[1]); hit.push("名称 " + nm[1]); }
         if (nm) { set("name", nm[1]); hit.push("名称 " + nm[1]); }
         const port = q.match(/(?:端口|port)\s*[:：]?\s*(\d{1,5})/i);
         if (port) { set("port", port[1]); hit.push("端口 " + port[1]); }
@@ -5881,8 +5885,113 @@
         if (kind === "StatefulSet") { const sn = q.match(/([a-z0-9-]+-service)\b/i); if (sn) set("svc", sn[1]); }
         return { vals, hit: hit.join("、") };
       }
+      // 可视化创建 ConfigMap / Secret：键值行可增删，Secret 可选类型，YAML 仅只读预览
+      const CFG_TYPES = ["Opaque", "kubernetes.io/tls", "kubernetes.io/dockerconfigjson", "kubernetes.io/basic-auth", "kubernetes.io/ssh-auth"];
+      const cfRows = (f) => { let n = 0; while (f.elements["k" + n]) n++; return n; };
+      function cfFacts(f) {
+        const g = (k, d = "") => (f.elements[k] ? f.elements[k].value.trim() : d);
+        const data = [];
+        for (let i = 0; i < cfRows(f); i++) {
+          const k = (f.elements["k" + i].value || "").trim(), v = (f.elements["v" + i].value || "").trim();
+          if (k || v) data.push([k, v]);
+        }
+        return { k: (f.querySelector("[name=kind]:checked") || {}).value || "ConfigMap", n: g("name"), ns: g("ns", "default"), type: g("type", "Opaque"), data };
+      }
+      function cfYaml(v) {
+        const L = ["apiVersion: v1", "kind: " + v.k, "metadata:", "  name: " + v.n, "  namespace: " + v.ns];
+        if (v.k === "Secret") L.push("type: " + (v.type || "Opaque"), "stringData:");
+        else L.push("data:");
+        v.data.forEach(([k, val]) => L.push("  " + k + ": " + JSON.stringify(val)));
+        return L.join("\n");
+      }
+      // 从一句中文里解析配置键值：KEY=value 这样的写法会被直接采用
+      function cfAiParse(q) {
+        const vals = {}, hit = [], rows = [];
+        if (/(secret|密钥|口令|密码)/i.test(q)) { vals.kind = "Secret"; hit.push("Secret"); }
+        if (/(镜像仓库|dockerconfig|拉取凭证)/i.test(q)) vals.type = "kubernetes.io/dockerconfigjson";
+        else if (/(证书|\btls\b)/i.test(q)) vals.type = "kubernetes.io/tls";
+        else if (/(用户名|basic-auth)/i.test(q)) vals.type = "kubernetes.io/basic-auth";
+        const nm = q.match(/(?:名为|叫做|名称是?)\s*([a-z0-9][a-z0-9.-]{1,62})/i) || q.match(/(?:创建|新建)\s*(?:configmap|secret)?\s*([a-z][a-z0-9.-]{1,62})/i);
+        if (nm) { vals.name = nm[1]; hit.push("名称 " + nm[1]); }
+        for (const m of q.matchAll(/([A-Za-z_][A-Za-z0-9._-]*)=([^\s，,、；;]+)/g)) rows.push({ k: m[1], v: m[2] });
+        if (rows.length) hit.push("键值 " + rows.map((r) => r.k).join("/"));
+        return { vals, rows, hit: hit.join("、") };
+      }
+      function k8NewConfig() {
+        const st = { k: "ConfigMap", rows: [{ k: "", v: "" }], ai: "" };
+        dlg("创建配置与密钥", '<form class="x-form" id="cff" novalidate><div id="cfbody"></div></form>',
+          '<button class="x-btn" data-close>取消</button><button class="x-btn" type="button" id="cfYaml">高级：粘贴 YAML</button><button class="x-btn x-btn--pri" type="submit" form="cff">创建</button>');
+        const draw = () => {
+          const isSec = st.k === "Secret";
+          $("cfbody").innerHTML = `
+            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f" id="cfai"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" name="q" id="cfaiq" value="${esc(st.ai)}" placeholder="如：创建 ConfigMap app-config，含 DB_HOST=db.prod:5432 TIMEOUT=30s" aria-label="用自然语言描述要创建的配置" autocomplete="off" /><button type="button" id="cfaiGo">生成</button></div><p class="x-frac" style="margin:6px 0 0">生成后填入下方表单，可继续修改，不会直接提交</p></div>
+            <fieldset class="x-radios"><legend>类型</legend>${["ConfigMap", "Secret"].map((k) => `<label><input type="radio" name="kind" value="${k}"${k === st.k ? " checked" : ""} />${k}</label>`).join("")}</fieldset>
+            <div class="x-row2"><label><span class="x-req">名称</span><input class="x-input" name="name" maxlength="253" autocomplete="off" placeholder="如 app-config" /></label>
+              <label><span class="x-req">命名空间</span><input class="x-input" name="ns" list="cfns" value="default" autocomplete="off" /><datalist id="cfns">${WL_NS().map((n) => `<option value="${esc(n)}"></option>`).join("")}</datalist></label></div>
+            ${isSec ? `<label><span>Secret 类型</span><select class="x-select" name="type">${opt(CFG_TYPES, "Opaque")}</select></label>` : ""}
+            <h3 class="x-h2">数据</h3>
+            <div id="cfrows">${st.rows.map((r, i) => `<div class="x-kvrow" data-row="${i}"><label><span>键</span><input class="x-input x-mono" name="k${i}" value="${esc(r.k)}" placeholder="DB_HOST" autocomplete="off" /></label><label><span>值</span><input class="x-input x-mono" name="v${i}" value="${esc(r.v)}" placeholder="db.prod:5432" autocomplete="off" /></label><button type="button" class="x-act" data-delrow="${i}">删除</button></div>`).join("")}</div>
+            <div class="x-testrow"><button type="button" class="x-btn" id="cfaddrow">+ 添加键值</button><span class="x-frac">键可用字母、数字、-、_、.，且以字母或数字开头</span></div>
+            <span class="x-err" id="cferr" role="alert" hidden></span>
+            <details class="x-adv"><summary>预览将提交的 YAML</summary><pre class="x-log" id="cfyaml"></pre></details>`;
+          const f = $("cff"), err = $("cferr");
+          const stash = () => {
+            const rows = [];
+            for (let i = 0; i < st.rows.length; i++) {
+              const ke = f.elements["k" + i], ve = f.elements["v" + i];
+              rows.push({ k: ke ? ke.value : "", v: ve ? ve.value : "" });
+            }
+            st.rows = rows;
+            st.name = f.elements.name ? f.elements.name.value : "";
+            st.ns = f.elements.ns ? f.elements.ns.value : "default";
+            st.type = f.elements.type ? f.elements.type.value : st.type;
+          };
+          const sync = () => { const v = cfFacts(f); if (v.n) $("cfyaml").textContent = cfYaml(v); };
+          f.oninput = (e) => { if (e.target.name !== "kind") sync(); };
+          f.onchange = (e) => { if (e.target.name === "kind") { stash(); st.k = e.target.value; draw(); } else sync(); };
+          $("cfaddrow").onclick = () => { stash(); st.rows.push({ k: "", v: "" }); draw(); const last = $("cff").elements["k" + (st.rows.length - 1)]; last && last.focus(); };
+          $("cfbody").querySelectorAll("[data-delrow]").forEach((b) => (b.onclick = () => { stash(); st.rows.splice(+b.dataset.delrow, 1); if (!st.rows.length) st.rows.push({ k: "", v: "" }); draw(); }));
+          sync();
+          const aiGo = () => {
+            const q = $("cfaiq").value.trim(); if (!q) return $("cfaiq").focus();
+            const r = cfAiParse(q);
+            st.ai = q;
+            if (r.vals.kind) st.k = r.vals.kind;
+            if (r.rows.length) st.rows = r.rows;
+            draw();
+            const nf = $("cff");
+            if (r.vals.name) nf.elements.name.value = r.vals.name;
+            if (r.vals.type && nf.elements.type) nf.elements.type.value = r.vals.type;
+            const v = cfFacts(nf); if (v.n) $("cfyaml").textContent = cfYaml(v);
+            toast(r.hit ? `AI 已按「${r.hit}」填入表单` : "AI 未识别到可填字段，请用 KEY=value 描述");
+          };
+          $("cfaiGo").onclick = aiGo;
+          $("cfaiq").onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); aiGo(); } };
+          $("cff").onsubmit = (e) => {
+            e.preventDefault();
+            const v = cfFacts(f), bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+            if (!/^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/.test(v.n)) return bad("名称需为小写字母、数字、- 或 .，且以字母或数字开头结尾", f.elements.name);
+            if (!v.data.length) return bad("至少填写一个键值", f.elements.k0);
+            const badKey = v.data.find(([k]) => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(k));
+            if (badKey) return bad(`键名不合法：${badKey[0] || "（空）"}`, f.elements.k0);
+            const dup = v.data.map(([k]) => k).find((k, i, a) => a.indexOf(k) !== i);
+            if (dup) return bad(`键名重复：${dup}`, f.elements.k0);
+            const list = v.k === "Secret" ? K8.sec : K8.cm;
+            if (list.some((r) => r.n === v.n && r.ns === v.ns)) return bad(`${v.ns} 中已存在同名 ${v.k}`, f.elements.name);
+            const data = Object.fromEntries(v.data);
+            if (v.k === "Secret") K8.sec.unshift({ n: v.n, ns: v.ns, type: v.type || "Opaque", data, upd: "刚刚" });
+            else K8.cm.unshift({ n: v.n, ns: v.ns, data, upd: "刚刚" });
+            pbar["#/cluster/config"] = { q: "", f: "" };
+            closeAll(); toast(`已创建 ${v.k} ${v.ns}/${v.n}`);
+            if (location.hash === "#/cluster/config") render(); else location.hash = "#/cluster/config";
+          };
+          $("cfYaml").onclick = () => { closeAll(); k8Create("workloads"); };
+        };
+        draw();
+      }
       function k8Create(page) {
         if (page === "workloads") return k8NewWorkload();
+        if (page === "config") return k8NewConfig();
         const k0 = page === "config" ? "ConfigMap" : "Deployment";
         dlg("YAML 创建", `<form class="x-form" id="kform" novalidate><label><span>资源类型（选择后载入模板）</span><select class="x-select" id="kkind">${opt([...K8_KINDS, "ConfigMap", "Secret"], k0)}</select></label>${yamlBox(k8Tpl(k0))}</form>`,
           '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="kform">创建</button>');
@@ -6057,7 +6166,7 @@
         if (KX_PAGE[k8Cur().k]) return kxRender(el);
         const p = k8Cur(), demoTag = demo && !linked() ? '<span class="x-tag x-orange x-pill">演示数据</span>' : "";
         const fo = { nodes: ops().clusters.map((c) => c[0]), workloads: K8_KINDS, config: [...new Set([...K8.cm, ...K8.sec].map((r) => r.ns))] }[p.k];
-        el.innerHTML = phead(p.t, p.sub, demoTag) + bar(p.h, { q: p.q, fl: p.fl, fo, fc: p.fc, act: p.k === "workloads" ? "+ 创建工作负载" : "YAML 创建", id: "kNew" }) + K8_BODY[p.k]();
+        el.innerHTML = phead(p.t, p.sub, demoTag) + bar(p.h, { q: p.q, fl: p.fl, fo, fc: p.fc, act: p.k === "workloads" ? "+ 创建工作负载" : p.k === "config" ? "+ 创建配置与密钥" : "YAML 创建", id: "kNew" }) + K8_BODY[p.k]();
         $("kNew").onclick = () => k8Create(p.k);
         K8_BIND[p.k](el);
         bindBar(el, p.h);
