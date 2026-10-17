@@ -135,6 +135,8 @@
       .x-toast { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); background: #fff; border-radius: 8px; box-shadow: var(--x-sh), var(--x-sh-l); padding: 8px 16px; z-index: 30; }
       .x-toast::before { content: "✓"; color: #52c41a; margin-right: 8px; font-weight: 600; }
       .x-modal--wide { width: min(680px, calc(100vw - 32px)); top: 6vh; max-height: 88vh; display: flex; flex-direction: column; }
+      .x-modal.x-modal--wlg { width: min(780px, calc(100vw - 24px)); }
+      .x-modal .x-xai-f > button { flex: none; white-space: nowrap; }
       .x-wbody { flex: 1; overflow: auto; }
       .x-stepper { list-style: none; margin: 0; padding: 12px 20px; display: flex; gap: 8px; overflow-x: auto; border-bottom: 1px solid var(--x-line); }
       .x-stepper li { display: flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--x-sub); font-size: 12px; }
@@ -5693,7 +5695,194 @@
       const k8Tpl = (k) => k8Yaml(k === "ConfigMap" ? { k, n: K8_NEW[k], ns: "test", data: { LOG_LEVEL: "info", TIMEOUT: "30s" } }
         : k === "Secret" ? { k, n: K8_NEW[k], ns: "test", type: "Opaque", data: { DB_PASSWORD: "change-me" } }
         : { k, n: K8_NEW[k], ns: "test", ready: [1, 1], img: "nginx:1.27", cron: "0 3 * * *" });
+      // 可视化创建工作负载：字段与各控制器真实 spec 对齐，YAML 仅作为只读预览/高级入口
+      const WL_KINDS = ["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"];
+      const WL_NS = () => [...new Set(["default", "prod", "test", ...K8.wl.map((w) => w.ns), ...K8.cm.map((c) => c.ns)])];
+      function wlFacts(f) {
+        const g = (k, d = "") => (f.elements[k] ? f.elements[k].value.trim() : d);
+        return {
+          k: g("kind", "Deployment"), n: g("name"), ns: g("ns", "default"), img: g("image"), pull: g("pull", "IfNotPresent"),
+          port: g("port"), cmd: g("cmd"), args: g("args"),
+          replicas: g("replicas", "1"), strategy: g("strategy", "RollingUpdate"), surge: g("surge"), unavail: g("unavail"),
+          history: g("history", "10"), progress: g("progress", "600"),
+          svc: g("svc"), pmp: g("pmp", "OrderedReady"), upd: g("upd", "RollingUpdate"),
+          completions: g("completions"), parallelism: g("parallelism"), backoff: g("backoff", "6"),
+          restart: g("restart", "Never"), deadline: g("deadline"),
+          cron: g("cron"), conc: g("conc", "Allow"), suspend: !!(f.elements.suspend && f.elements.suspend.checked),
+          okh: g("okh", "3"), fkh: g("fkh", "1"),
+          cpuR: g("cpuR"), cpuL: g("cpuL"), memR: g("memR"), memL: g("memL"),
+        };
+      }
+      function wlYaml(v) {
+        const L = [];
+        if (v.k === "CronJob") L.push("apiVersion: batch/v1");
+        else if (v.k === "Job") L.push("apiVersion: batch/v1");
+        else if (v.k === "Pod") L.push("apiVersion: v1");
+        else L.push("apiVersion: apps/v1");
+        L.push("kind: " + v.k, "metadata:", "  name: " + v.n, "  namespace: " + v.ns, "  labels:", "    app: " + v.n);
+        if (v.k === "CronJob") {
+          L.push("spec:", "  schedule: " + JSON.stringify(v.cron || "0 3 * * *"), "  concurrencyPolicy: " + v.conc);
+          if (v.suspend) L.push("  suspend: true");
+          if (v.deadline) L.push("  startingDeadlineSeconds: " + v.deadline);
+          L.push("  successfulJobsHistoryLimit: " + v.okh, "  failedJobsHistoryLimit: " + v.fkh);
+          L.push("  jobTemplate:", "    spec:", "      backoffLimit: " + v.backoff, "      template:", "        spec:", "          restartPolicy: " + (v.restart === "Always" ? "OnFailure" : v.restart), "          containers:", "          - name: " + v.n);
+        } else if (v.k === "Job") {
+          L.push("spec:");
+          if (v.completions) L.push("  completions: " + v.completions);
+          if (v.parallelism) L.push("  parallelism: " + v.parallelism);
+          L.push("  backoffLimit: " + v.backoff);
+          if (v.deadline) L.push("  activeDeadlineSeconds: " + v.deadline);
+          L.push("  template:", "    spec:", "      restartPolicy: " + (v.restart === "Always" ? "OnFailure" : v.restart), "      containers:", "      - name: " + v.n);
+        } else if (v.k === "DaemonSet") {
+          L.push("spec:", "  updateStrategy:", "    type: " + v.upd, "  selector:", "    matchLabels:", "      app: " + v.n, "  template:", "    metadata:", "      labels:", "        app: " + v.n, "    spec:", "      containers:", "      - name: " + v.n);
+        } else if (v.k === "StatefulSet") {
+          L.push("spec:", "  serviceName: " + v.svc, "  replicas: " + v.replicas, "  podManagementPolicy: " + v.pmp, "  updateStrategy:", "    type: " + v.upd);
+          L.push("  selector:", "    matchLabels:", "      app: " + v.n, "  template:", "    metadata:", "      labels:", "        app: " + v.n, "    spec:", "      containers:", "      - name: " + v.n);
+        } else if (v.k === "Pod") {
+          L.push("spec:", "  restartPolicy: " + v.restart, "  containers:", "  - name: " + v.n);
+        } else {
+          L.push("spec:", "  replicas: " + v.replicas, "  revisionHistoryLimit: " + v.history, "  progressDeadlineSeconds: " + v.progress);
+          L.push("  strategy:", "    type: " + v.strategy);
+          if (v.strategy === "RollingUpdate") L.push("    rollingUpdate:", "      maxSurge: " + (v.surge || "25%"), "      maxUnavailable: " + (v.unavail || "25%"));
+          L.push("  selector:", "    matchLabels:", "      app: " + v.n, "  template:", "    metadata:", "      labels:", "        app: " + v.n, "    spec:", "      containers:", "      - name: " + v.n);
+        }
+        const ind = v.k === "Pod" ? "    " : v.k === "CronJob" ? "          " : v.k === "Job" ? "      " : "      ";
+        L.push(ind + "image: " + v.img);
+        L.push(ind + "imagePullPolicy: " + v.pull);
+        if (v.port) L.push(ind + "ports:", ind + "- containerPort: " + v.port);
+        if (v.cmd) L.push(ind + "command: [" + v.cmd.split(/\s+/).filter(Boolean).map((x) => JSON.stringify(x)).join(", ") + "]");
+        if (v.args) L.push(ind + "args: [" + v.args.split(/\s+/).filter(Boolean).map((x) => JSON.stringify(x)).join(", ") + "]");
+        if (v.cpuR || v.cpuL || v.memR || v.memL) {
+          L.push(ind + "resources:");
+          if (v.cpuR || v.memR) {
+            L.push(ind + "  requests:");
+            if (v.cpuR) L.push(ind + "    cpu: " + v.cpuR);
+            if (v.memR) L.push(ind + "    memory: " + v.memR);
+          }
+          if (v.cpuL || v.memL) {
+            L.push(ind + "  limits:");
+            if (v.cpuL) L.push(ind + "    cpu: " + v.cpuL);
+            if (v.memL) L.push(ind + "    memory: " + v.memL);
+          }
+        }
+        return L.join("\n");
+      }
+      function k8NewWorkload() {
+        const st = { k: "Deployment", ai: "" };
+        dlg("创建工作负载", '<form class="x-form" id="wlf" novalidate><div id="wlbody"></div></form>',
+          '<button class="x-btn" data-close>取消</button><button class="x-btn" type="button" id="wlYaml">高级：粘贴 YAML</button><button class="x-btn x-btn--pri" type="submit" form="wlf">创建</button>');
+        $("modal").classList.add("x-modal--wlg");
+        const draw = () => {
+          const K = st.k, scal = K === "Deployment" || K === "StatefulSet", job = K === "Job", cron = K === "CronJob";
+          $("wlbody").innerHTML = `
+            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f" id="wlai"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" name="q" id="wlaiq" value="${esc(st.ai)}" placeholder="一句话描述，如：3 副本 nginx:1.25，端口 80，CPU 500m 内存 512Mi" aria-label="用自然语言描述要创建的工作负载" autocomplete="off" /><button type="button" id="wlaiGo">生成</button></div><p class="x-frac" style="margin:6px 0 0">生成后填入下方表单，可继续修改，不会直接提交</p></div>
+            <fieldset class="x-radios"><legend>工作负载类型</legend>${WL_KINDS.map((k) => `<label><input type="radio" name="kind" value="${k}"${k === K ? " checked" : ""} />${k}</label>`).join("")}</fieldset>
+            <div class="x-row2"><label><span class="x-req">名称</span><input class="x-input" name="name" maxlength="63" autocomplete="off" placeholder="如 order-service" /></label>
+              <label><span class="x-req">命名空间</span><input class="x-input" name="ns" list="wlns" value="default" autocomplete="off" /><datalist id="wlns">${WL_NS().map((n) => `<option value="${esc(n)}"></option>`).join("")}</datalist></label></div>
+            <div class="x-row2"><label><span class="x-req">容器镜像</span><input class="x-input x-mono" name="image" autocomplete="off" placeholder="registry.example.com/app:1.0.0" /></label>
+              <label><span>拉取策略</span><select class="x-select" name="pull">${opt(["IfNotPresent", "Always", "Never"], "IfNotPresent")}</select></label></div>
+            <div class="x-row2"><label><span>容器端口</span><input class="x-input" name="port" inputmode="numeric" placeholder="8080" /></label>
+              <label><span>启动命令（空格分隔，选填）</span><input class="x-input x-mono" name="cmd" autocomplete="off" placeholder="/app/server" /></label></div>
+            <label><span>启动参数（空格分隔，选填）</span><input class="x-input x-mono" name="args" autocomplete="off" placeholder="--config /etc/app/config.yaml" /></label>
+            <h3 class="x-h2">控制器参数</h3>
+            ${scal ? `<div class="x-row2"><label><span class="x-req">副本数</span><input class="x-input" name="replicas" inputmode="numeric" value="1" /></label>${K === "StatefulSet" ? `<label><span class="x-req">Service 名称</span><input class="x-input" name="svc" autocomplete="off" placeholder="与 StatefulSet 同名的 headless Service" /></label>` : `<label><span>更新策略</span><select class="x-select" name="strategy">${opt(["RollingUpdate", "Recreate"], "RollingUpdate")}</select></label>`}</div>` : ""}
+            ${K === "Deployment" ? `<div class="x-row2"><label><span>maxSurge</span><input class="x-input" name="surge" placeholder="25%" /></label><label><span>maxUnavailable</span><input class="x-input" name="unavail" placeholder="25%" /></label></div>
+              <div class="x-row2"><label><span>revisionHistoryLimit</span><input class="x-input" name="history" inputmode="numeric" value="10" /></label><label><span>progressDeadlineSeconds</span><input class="x-input" name="progress" inputmode="numeric" value="600" /></label></div>` : ""}
+            ${K === "StatefulSet" ? `<div class="x-row2"><label><span>podManagementPolicy</span><select class="x-select" name="pmp">${opt(["OrderedReady", "Parallel"], "OrderedReady")}</select></label><label><span>updateStrategy</span><select class="x-select" name="upd">${opt(["RollingUpdate", "OnDelete"], "RollingUpdate")}</select></label></div>` : ""}
+            ${K === "DaemonSet" ? `<label><span>updateStrategy</span><select class="x-select" name="upd">${opt(["RollingUpdate", "OnDelete"], "RollingUpdate")}</select></label>` : ""}
+            ${job || cron ? `<div class="x-row2"><label><span>completions</span><input class="x-input" name="completions" inputmode="numeric" placeholder="1" /></label><label><span>parallelism</span><input class="x-input" name="parallelism" inputmode="numeric" placeholder="1" /></label></div>
+              <div class="x-row2"><label><span>backoffLimit</span><input class="x-input" name="backoff" inputmode="numeric" value="6" /></label><label><span>restartPolicy</span><select class="x-select" name="restart">${opt(["Never", "OnFailure"], "Never")}</select></label></div>
+              <label><span>activeDeadlineSeconds（选填）</span><input class="x-input" name="deadline" inputmode="numeric" /></label>` : ""}
+            ${cron ? `<div class="x-row2"><label><span class="x-req">schedule（cron）</span><input class="x-input x-mono" name="cron" placeholder="0 3 * * *" /></label><label><span>concurrencyPolicy</span><select class="x-select" name="conc">${opt(["Allow", "Forbid", "Replace"], "Allow")}</select></label></div>
+              <div class="x-row2"><label><span>successfulJobsHistoryLimit</span><input class="x-input" name="okh" inputmode="numeric" value="3" /></label><label><span>failedJobsHistoryLimit</span><input class="x-input" name="fkh" inputmode="numeric" value="1" /></label></div>
+              <label class="x-switch"><input type="checkbox" role="switch" name="suspend" /> 暂停调度（suspend）</label>` : ""}
+            ${K === "Pod" ? `<label><span>restartPolicy</span><select class="x-select" name="restart">${opt(["Always", "OnFailure", "Never"], "Always")}</select></label>` : ""}
+            <h3 class="x-h2">资源配额</h3>
+            <div class="x-row2"><label><span>CPU requests</span><input class="x-input x-mono" name="cpuR" placeholder="500m" /></label><label><span>CPU limits</span><input class="x-input x-mono" name="cpuL" placeholder="1" /></label></div>
+            <div class="x-row2"><label><span>内存 requests</span><input class="x-input x-mono" name="memR" placeholder="512Mi" /></label><label><span>内存 limits</span><input class="x-input x-mono" name="memL" placeholder="1Gi" /></label></div>
+            <span class="x-err" id="wlerr" role="alert" hidden></span>
+            <details class="x-adv"><summary>预览将提交的 YAML</summary><pre class="x-log" id="wlyaml"></pre></details>`;
+          const f = $("wlf"), err = $("wlerr");
+          const sync = () => { const v = wlFacts(f); if (v.img || v.n) $("wlyaml").textContent = wlYaml(v); };
+          f.oninput = (e) => { if (e.target.name !== "kind") sync(); };
+          f.onchange = (e) => { if (e.target.name === "kind") { st.k = e.target.value; draw(); } else sync(); };
+          sync();
+          const aiGo = () => {
+            const q = $("wlaiq").value.trim(); if (!q) return $("wlaiq").focus();
+            const r = wlAiParse(q);
+            st.ai = q;
+            if (r.vals.kind) st.k = r.vals.kind;
+            draw();
+            const nf = $("wlf");
+            Object.entries(r.vals).forEach(([k, v]) => {
+              if (k === "kind") { const rb = nf.querySelector(`[name=kind][value="${v}"]`); if (rb) rb.checked = true; return; }
+              const el = nf.elements[k]; if (el && el.type !== "radio" && el.type !== "checkbox") el.value = v;
+            });
+            const nv = wlFacts(nf);
+            if (nv.img || nv.n) $("wlyaml").textContent = wlYaml(nv);
+            toast(r.hit ? `AI 已按「${r.hit}」填入表单` : "AI 未识别到可填字段，请补充副本数、镜像或端口");
+          };
+          $("wlaiGo").onclick = aiGo;
+          $("wlaiq").onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); aiGo(); } };
+          $("wlf").onsubmit = (e) => {
+            e.preventDefault();
+            const v = wlFacts(f), bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+            if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(v.n)) return bad("名称需为小写字母、数字和 -，且以字母或数字开头结尾", f.elements.name);
+            if (!v.img) return bad("请填写容器镜像", f.elements.image);
+            if (v.port && !/^\d+$/.test(v.port)) return bad("容器端口需为数字", f.elements.port);
+            if (v.k === "StatefulSet" && !v.svc) return bad("StatefulSet 需要 serviceName", f.elements.svc);
+            if (v.k === "CronJob" && !/^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/.test(v.cron || "")) return bad("schedule 需为 5 段 cron，如 0 3 * * *", f.elements.cron);
+            if (K8.wl.some((w) => w.n === v.n && w.ns === v.ns)) return bad(`${v.ns} 中已存在同名工作负载`, f.elements.name);
+            const r = v.k === "DaemonSet" ? K8.nodes.length : v.k === "Deployment" || v.k === "StatefulSet" ? Math.max(0, +v.replicas || 1) : 1;
+            const w = wl(v.k, v.n, v.ns, [r, r], v.img, "刚刚", { cron: v.cron });
+            K8.wl.unshift(w);
+            if (v.k !== "Job" && v.k !== "CronJob" && v.k !== "Pod") k8Roll(w);
+            pbar["#/cluster/workloads"] = { q: "", f: "" };
+            closeAll(); toast(`已创建 ${v.k} ${v.ns}/${v.n}`);
+            if (location.hash === "#/cluster/workloads") render(); else location.hash = "#/cluster/workloads";
+          };
+          $("wlYaml").onclick = () => { closeAll(); k8Create("config"); };
+        };
+        draw();
+      }
+      // 把一句中文描述映射到表单字段（本地规则，不发起网络请求）
+      function wlAiParse(q) {
+        const vals = {};
+        const set = (k, v) => { if (v != null && v !== "") vals[k] = v; };
+        const hit = [];
+        let kind = "Deployment";
+        if (/(statefulset|有状态)/i.test(q)) kind = "StatefulSet";
+        else if (/(daemonset|守护|每台|每个节点)/i.test(q)) kind = "DaemonSet";
+        else if (/(cronjob|定时|每天|每小时|每周)/i.test(q)) kind = "CronJob";
+        else if (/(\bjob\b|一次性|批处理|跑一次)/i.test(q)) kind = "Job";
+        else if (/(^|\s)pod(\s|$)/i.test(q)) kind = "Pod";
+        if (kind !== "Deployment") { set("kind", kind); hit.push("类型 " + kind); }
+        const rep = q.match(/(\d+)\s*(个)?\s*(副本|实例|replica)/i);
+        if (rep) { set("replicas", rep[1]); hit.push("副本 " + rep[1]); }
+        const imgs = [...q.matchAll(/([a-z0-9][a-z0-9.\-]*(?:\/[a-z0-9][a-z0-9.\-]*)*):([a-z0-9][a-z0-9._\-]*)/gi)].filter((m) => /[a-z]/i.test(m[1]));
+        if (imgs.length) { const im = imgs[0]; set("image", im[1] + ":" + im[2]); hit.push("镜像 " + im[1] + ":" + im[2]); }
+        const nm = q.match(/(?:名为|叫做|名称是?)\s*([a-z0-9][a-z0-9-]{1,62})/i);
+        if (nm) { set("name", nm[1]); hit.push("名称 " + nm[1]); }
+        const port = q.match(/(?:端口|port)\s*[:：]?\s*(\d{1,5})/i);
+        if (port) { set("port", port[1]); hit.push("端口 " + port[1]); }
+        const cpu = q.match(/(\d+)\s*(m|毫核)/i);
+        const cores = q.match(/(\d+(?:\.\d+)?)\s*核/);
+        if (cpu) { set("cpuR", cpu[1] + "m"); set("cpuL", String(Math.max(1, Math.ceil(+cpu[1] / 1000)))); hit.push("CPU " + cpu[1] + "m"); }
+        else if (cores) { set("cpuR", cores[1]); hit.push("CPU " + cores[1] + " 核"); }
+        const mem = q.match(/(\d+)\s*(Mi|Gi)\b/) || q.match(/(\d+)\s*(MB|GB)\b/i) || q.match(/(\d+)\s*([MG])(?![A-Za-z])/);
+        if (mem) { set("memR", mem[1] + mem[2]); set("memL", mem[1] + mem[2]); hit.push("内存 " + mem[1] + mem[2]); }
+        if (kind === "CronJob") {
+          let cron = "";
+          if (/每天/.test(q)) { const t = q.match(/每天\s*(\d{1,2})[:：点](\d{1,2})?/); cron = (t ? (+t[2] || 0) : 0) + " " + (t ? t[1] : 3) + " * * *"; }
+          else if (/每小时/.test(q)) cron = "0 * * * *";
+          else if (/每周/.test(q)) cron = "0 3 * * 1";
+          if (cron) { set("cron", cron); hit.push("schedule " + cron); }
+        }
+        if (kind === "StatefulSet") { const sn = q.match(/([a-z0-9-]+-service)\b/i); if (sn) set("svc", sn[1]); }
+        return { vals, hit: hit.join("、") };
+      }
       function k8Create(page) {
+        if (page === "workloads") return k8NewWorkload();
         const k0 = page === "config" ? "ConfigMap" : "Deployment";
         dlg("YAML 创建", `<form class="x-form" id="kform" novalidate><label><span>资源类型（选择后载入模板）</span><select class="x-select" id="kkind">${opt([...K8_KINDS, "ConfigMap", "Secret"], k0)}</select></label>${yamlBox(k8Tpl(k0))}</form>`,
           '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="kform">创建</button>');
@@ -5868,7 +6057,7 @@
         if (KX_PAGE[k8Cur().k]) return kxRender(el);
         const p = k8Cur(), demoTag = demo && !linked() ? '<span class="x-tag x-orange x-pill">演示数据</span>' : "";
         const fo = { nodes: ops().clusters.map((c) => c[0]), workloads: K8_KINDS, config: [...new Set([...K8.cm, ...K8.sec].map((r) => r.ns))] }[p.k];
-        el.innerHTML = phead(p.t, p.sub, demoTag) + bar(p.h, { q: p.q, fl: p.fl, fo, fc: p.fc, act: "YAML 创建", id: "kNew" }) + K8_BODY[p.k]();
+        el.innerHTML = phead(p.t, p.sub, demoTag) + bar(p.h, { q: p.q, fl: p.fl, fo, fc: p.fc, act: p.k === "workloads" ? "+ 创建工作负载" : "YAML 创建", id: "kNew" }) + K8_BODY[p.k]();
         $("kNew").onclick = () => k8Create(p.k);
         K8_BIND[p.k](el);
         bindBar(el, p.h);
