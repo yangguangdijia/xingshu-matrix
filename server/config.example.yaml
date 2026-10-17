@@ -1,0 +1,41 @@
+# 星枢 Matrix 服务端配置示例。所有字段都可用 MATRIX_* 环境变量覆盖（见 docs/dev-guide.md）。
+server:
+  listen: ":8080"
+  mode: prod                 # prod | dev（dev 模式缺失密钥时自动生成临时值）
+  static_dir: /app/public    # 前端 SPA 目录，留空则不托管前端
+  cors_origins: []           # 前后端同域部署时留空
+  trusted_proxies: ["10.0.0.0/8"]
+  read_timeout: 60s
+  write_timeout: 0s          # 0 = 不限（SSE / WebSocket 长连接需要）
+  shutdown_timeout: 20s
+
+database:
+  dsn: postgres://matrix:matrix@postgres:5432/matrix?sslmode=disable   # MATRIX_DB_DSN
+  max_conns: 20
+  auto_migrate: true         # 启动时自动执行迁移；也可单独运行 `matrix-server migrate`
+
+redis:
+  addr: redis:6379           # 留空则禁用（单副本可不配）
+  password: ""
+  db: 0
+
+auth:
+  jwt_secret: ""             # 必填，≥32 字符：MATRIX_JWT_SECRET
+  issuer: xingshu-matrix
+  access_ttl: 15m
+  refresh_ttl: 168h
+  max_login_failures: 5
+  lockout_duration: 15m
+  login_rate_per_minute: 20
+  initial_admin_password: "" # 首次启动创建 admin 的初始密码，默认 Xingshu@2026，首次登录强制修改
+
+security:
+  encryption_key: ""         # 必填，32 字节 base64/hex：`openssl rand -base64 32`，MATRIX_ENCRYPTION_KEY
+
+log:
+  level: info
+  format: json
+
+ai:
+  request_timeout: 120s
+  max_tool_rounds: 6
