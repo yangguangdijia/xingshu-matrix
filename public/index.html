@@ -6801,8 +6801,8 @@
         }
         return L.join("\n");
       }
-      function k8NewWorkload() {
-        const st = { k: "Deployment", ai: "" };
+      function k8NewWorkload(k0 = "Deployment") {
+        const st = { k: WL_KINDS.includes(k0) ? k0 : "Deployment", ai: "" };
         dlg("创建工作负载", '<form class="x-form" id="wlf" novalidate><div id="wlbody"></div></form>',
           '<button class="x-btn" data-close>取消</button><button class="x-btn" type="button" id="wlYaml">高级：粘贴 YAML</button><button class="x-btn x-btn--pri" type="submit" form="wlf">创建</button>');
         $("modal").classList.add("x-modal--wlg");
@@ -6826,7 +6826,8 @@
             ${job || cron ? `<div class="x-row2"><label><span>completions</span><input class="x-input" name="completions" inputmode="numeric" placeholder="1" /></label><label><span>parallelism</span><input class="x-input" name="parallelism" inputmode="numeric" placeholder="1" /></label></div>
               <div class="x-row2"><label><span>backoffLimit</span><input class="x-input" name="backoff" inputmode="numeric" value="6" /></label><label><span>restartPolicy</span><select class="x-select" name="restart">${opt(["Never", "OnFailure"], "Never")}</select></label></div>
               <label><span>activeDeadlineSeconds（选填）</span><input class="x-input" name="deadline" inputmode="numeric" /></label>` : ""}
-            ${cron ? `<div class="x-row2"><label><span class="x-req">schedule（cron）</span><input class="x-input x-mono" name="cron" placeholder="0 3 * * *" /></label><label><span>concurrencyPolicy</span><select class="x-select" name="conc">${opt(["Allow", "Forbid", "Replace"], "Allow")}</select></label></div>
+            ${cron ? `<div class="x-row2"><label><span class="x-req">schedule（cron）</span><input class="x-input x-mono" name="cron" placeholder="0 3 * * *" aria-describedby="wlnext" /></label><label><span>concurrencyPolicy</span><select class="x-select" name="conc">${opt(["Allow", "Forbid", "Replace"], "Allow")}</select></label></div>
+              <p class="x-frac" id="wlnext" style="margin:-4px 0 10px">填写 schedule 后显示未来 5 次执行时间</p>
               <div class="x-row2"><label><span>successfulJobsHistoryLimit</span><input class="x-input" name="okh" inputmode="numeric" value="3" /></label><label><span>failedJobsHistoryLimit</span><input class="x-input" name="fkh" inputmode="numeric" value="1" /></label></div>
               <label class="x-switch"><input type="checkbox" role="switch" name="suspend" /> 暂停调度（suspend）</label>` : ""}
             ${K === "Pod" ? `<label><span>restartPolicy</span><select class="x-select" name="restart">${opt(["Always", "OnFailure", "Never"], "Always")}</select></label>` : ""}
@@ -6836,7 +6837,7 @@
             <span class="x-err" id="wlerr" role="alert" hidden></span>
             <details class="x-adv"><summary>预览将提交的 YAML</summary><pre class="x-log" id="wlyaml"></pre></details>`;
           const f = $("wlf"), err = $("wlerr");
-          const sync = () => { const v = wlFacts(f); if (v.img || v.n) $("wlyaml").textContent = wlYaml(v); };
+          const sync = () => { const v = wlFacts(f); if (v.img || v.n) $("wlyaml").textContent = wlYaml(v); if ($("wlnext") && f.elements.cron) $("wlnext").textContent = cronPreview(f.elements.cron.value); };
           f.oninput = (e) => { if (e.target.name !== "kind") sync(); };
           f.onchange = (e) => { if (e.target.name === "kind") { st.k = e.target.value; draw(); } else sync(); };
           sync();
@@ -6947,8 +6948,8 @@
         if (rows.length) hit.push("键值 " + rows.map((r) => r.k).join("/"));
         return { vals, rows, hit: hit.join("、") };
       }
-      function k8NewConfig() {
-        const st = { k: "ConfigMap", rows: [{ k: "", v: "" }], ai: "" };
+      function k8NewConfig(k0 = "ConfigMap") {
+        const st = { k: k0 === "Secret" ? "Secret" : "ConfigMap", rows: [{ k: "", v: "" }], ai: "" };
         dlg("创建配置与密钥", '<form class="x-form" id="cff" novalidate><div id="cfbody"></div></form>',
           '<button class="x-btn" data-close>取消</button><button class="x-btn" type="button" id="cfYaml">高级：粘贴 YAML</button><button class="x-btn x-btn--pri" type="submit" form="cff">创建</button>');
         const draw = () => {
@@ -7099,11 +7100,26 @@
         }
         return { text: "没有可分析的内容。", items: [] };
       }
+      // 创建入口：先选类型，工作负载/ConfigMap/Secret 走可视化表单，其余类型才用 YAML 高级编辑
       function k8Create(page) {
         if (page === "workloads") return k8NewWorkload();
         if (page === "config") return k8NewConfig();
+        dlg("创建资源", `<form class="x-form" id="krf" novalidate>
+          <label><span>资源类型</span><select class="x-select" name="kind">${opt([...WL_KINDS, "ConfigMap", "Secret"], "Deployment")}</select></label>
+          <p class="x-frac">工作负载、ConfigMap、Secret 使用可视化表单；其它类型走 YAML 高级编辑。</p>
+          <span class="x-err" id="kerr" role="alert" hidden></span></form>`,
+          '<button class="x-btn" data-close>取消</button><button class="x-btn" type="button" id="krRaw">YAML 高级编辑</button><button class="x-btn x-btn--pri" type="submit" form="krf">下一步</button>');
+        $("krRaw").onclick = () => { closeAll(); k8RawCreate(page); };
+        $("krf").onsubmit = (e) => {
+          e.preventDefault();
+          const k = e.target.elements.kind.value;
+          closeAll();
+          if (k === "ConfigMap" || k === "Secret") k8NewConfig(k); else k8NewWorkload(k);
+        };
+      }
+      function k8RawCreate(page) {
         const k0 = page === "config" ? "ConfigMap" : "Deployment";
-        dlg("YAML 创建", `<form class="x-form" id="kform" novalidate><label><span>资源类型（选择后载入模板）</span><select class="x-select" id="kkind">${opt([...K8_KINDS, "ConfigMap", "Secret"], k0)}</select></label>${yamlBox(k8Tpl(k0))}</form>`,
+        dlg("YAML 高级创建", `<form class="x-form" id="kform" novalidate><label><span>资源类型（选择后载入模板）</span><select class="x-select" id="kkind">${opt([...K8_KINDS, "ConfigMap", "Secret"], k0)}</select></label>${yamlBox(k8Tpl(k0))}</form>`,
           '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="kform">创建</button>');
         $("kkind").onchange = (e) => { $("kyaml").value = k8Tpl(e.target.value); $("kyerr").hidden = true; };
         $("kform").onsubmit = (e) => {
@@ -8539,6 +8555,151 @@
           `<span class="x-frac">${s.upd}</span>`, `<span class="x-kacts">${k8Act("sy", i, "编辑 YAML")}${k8Act("sd", i, "删除")}</span>`])))}</section>`,
       };
       const on = (el, a, fn) => el.querySelectorAll(`[data-${a}]`).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); fn(+b.dataset[a], b); }));
+      // 解析常见 5 段 cron 并给出未来 n 次执行时间（支持 * / 数字 / 列表 / 区间 / 步长）
+      function cronNext(expr, n = 5, from = new Date()) {
+        const f = String(expr || "").trim().split(/\s+/);
+        if (f.length !== 5) return null;
+        const lv = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 6]];
+        const set = (s, lo, hi) => {
+          const out = new Set();
+          for (const part of s.split(",")) {
+            const m = part.match(/^(\*|\d+|\d+-\d+)(?:\/(\d+))?$/);
+            if (!m) return null;
+            const step = m[2] ? Math.max(1, +m[2]) : 1;
+            let a = lo, b = hi;
+            if (m[1] !== "*") {
+              if (m[1].includes("-")) { const [x, y] = m[1].split("-").map(Number); a = x; b = y; } else { a = +m[1]; b = m[2] ? hi : +m[1]; }
+            }
+            if (a < lo || b > hi || a > b) return null;
+            for (let v = a; v <= b; v += step) out.add(v);
+          }
+          return out.size ? out : null;
+        };
+        const sets = f.map((s, i) => set(s, lv[i][0], lv[i][1]));
+        if (sets.some((x) => !x)) return null;
+        const [mi, ho, dom, mon, dow] = sets;
+        const out = [], t = new Date(from.getTime());
+        t.setSeconds(0, 0); t.setMinutes(t.getMinutes() + 1);
+        const limit = from.getTime() + 366 * 864e5;
+        while (out.length < n && t.getTime() < limit) {
+          if (mi.has(t.getMinutes()) && ho.has(t.getHours()) && mon.has(t.getMonth() + 1)) {
+            const domOk = dom.has(t.getDate()), dowOk = dow.has(t.getDay());
+            const dayOk = f[2] === "*" && f[4] === "*" ? true : f[2] === "*" ? dowOk : f[4] === "*" ? domOk : domOk || dowOk;
+            if (dayOk) out.push(new Date(t));
+          }
+          t.setMinutes(t.getMinutes() + 1);
+        }
+        return out;
+      }
+      const WD = ["日", "一", "二", "三", "四", "五", "六"];
+      function cronPreview(expr) {
+        const t = String(expr || "").trim();
+        if (!t) return "填写 schedule 后显示未来 5 次执行时间";
+        const list = cronNext(t, 5);
+        if (!list) return "表达式无法解析，需为 5 段：分 时 日 月 周，如 0 3 * * *";
+        if (!list.length) return "未来一年内没有可执行时间（可能日与月组合不可达）";
+        const p2 = (x) => String(x).padStart(2, "0");
+        return "未来 5 次：" + list.map((d) => `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}（周${WD[d.getDay()]}）`).join("、");
+      }
+      // 可视化编辑工作负载：镜像、副本数、更新策略与 CronJob 调度可直接修改，YAML 仅只读预览
+      function wlEdit(w) {
+        const scal = w.k === "Deployment" || w.k === "StatefulSet", cron = w.k === "CronJob";
+        const raw = () => k8EditYaml(w, w.k, (y) => {
+          const img = yv(y, "image"); if (!img) return "缺少容器镜像 image";
+          if (w.k === "CronJob") { if (!yv(y, "schedule")) return "CronJob 需要 schedule"; w.cron = yv(y, "schedule"); }
+          if (canScale(w)) { const r = +yv(y, "replicas"); if (!Number.isInteger(r) || r < 0) return "replicas 需为非负整数"; w.ready = [w.ready[0], r]; }
+          if (img !== w.img) { w.img = img; w.revs.push(img); }
+          if (w.k !== "Job" && w.k !== "CronJob") k8Roll(w);
+        });
+        dlg(`编辑 ${w.k} · ${esc(w.n)}`, `<form class="x-form" id="wef" novalidate>
+          <p class="x-frac">${esc(w.ns)} / ${esc(w.n)} · 类型、名称与命名空间不可修改</p>
+          <label><span class="x-req">容器镜像</span><input class="x-input x-mono" name="img" value="${esc(w.img)}" autocomplete="off" placeholder="registry.example.com/app:1.0.0" /></label>
+          ${scal ? `<div class="x-row2"><label><span class="x-req">副本数</span><input class="x-input" name="replicas" inputmode="numeric" value="${w.ready[1]}" /></label><label><span>更新策略</span><select class="x-select" name="strategy">${opt(["RollingUpdate", "Recreate"], w.strategy || "RollingUpdate")}</select></label></div>` : ""}
+          ${cron ? `<div class="x-row2"><label><span class="x-req">schedule（5 段 cron）</span><input class="x-input x-mono" name="cron" value="${esc(w.cron || "0 3 * * *")}" aria-describedby="wenext" /></label><label><span>concurrencyPolicy</span><select class="x-select" name="conc">${opt(["Allow", "Forbid", "Replace"], w.conc || "Allow")}</select></label></div>
+            <p class="x-frac" id="wenext" style="margin:-4px 0 10px">${cronPreview(w.cron || "0 3 * * *")}</p>
+            <label class="x-switch"><input type="checkbox" role="switch" name="suspend"${w.suspend ? " checked" : ""} /> 暂停调度（suspend）</label>` : ""}
+          <span class="x-err" id="weerr" role="alert" hidden></span>
+          <details class="x-adv"><summary>预览变更后的 YAML</summary><pre class="x-log" id="weyaml"></pre></details></form>`,
+          '<button class="x-btn" data-close>取消</button><button class="x-btn" type="button" id="weRaw">高级：编辑 YAML</button><button class="x-btn x-btn--pri" type="submit" form="wef">保存并应用</button>');
+        const f = $("wef"), err = $("weerr");
+        const sync = () => {
+          const img = f.elements.img.value.trim() || w.img;
+          const rep = scal ? Math.max(0, +f.elements.replicas.value || 0) : w.ready[1];
+          $("weyaml").textContent = k8Yaml({ ...w, img, cron: cron ? (f.elements.cron.value.trim() || w.cron) : w.cron, ready: [w.ready[0], rep] });
+          if ($("wenext") && cron) $("wenext").textContent = cronPreview(f.elements.cron.value);
+        };
+        f.oninput = sync; sync();
+        $("weRaw").onclick = () => { closeAll(); raw(); };
+        f.onsubmit = (e) => {
+          e.preventDefault();
+          const bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+          const img = f.elements.img.value.trim();
+          if (!img) return bad("请填写容器镜像", f.elements.img);
+          const r = scal ? +f.elements.replicas.value : w.ready[1];
+          if (scal && (!Number.isInteger(r) || r < 0 || r > 50)) return bad("副本数需为 0 到 50 的整数", f.elements.replicas);
+          const cr = cron ? f.elements.cron.value.trim() : w.cron;
+          if (cron && !/^\S+(\s+\S+){4}$/.test(cr)) return bad("schedule 需为 5 段 cron，如 0 3 * * *", f.elements.cron);
+          const changed = img !== w.img;
+          if (changed) { w.img = img; w.revs.push(img); }
+          if (cron) { w.cron = cr; w.conc = f.elements.conc.value; w.suspend = f.elements.suspend.checked; }
+          if (scal) w.ready = [Math.min(w.ready[0], r), r];
+          w.upd = "刚刚";
+          if (w.k !== "Job" && w.k !== "CronJob") k8Roll(w);
+          closeAll(); k8Draw(); toast(`${w.n} 已更新${changed ? "，镜像变更已触发滚动" : ""}`);
+        };
+      }
+      // 可视化编辑 ConfigMap / Secret：键值行可增删，Secret 可改类型，YAML 仅只读预览
+      function cfEditVisual(kind, i) {
+        const isSec = kind === "Secret", list = isSec ? K8.sec : K8.cm, x = list[i];
+        const st = { rows: Object.entries(x.data).map(([k, v]) => ({ k, v })) };
+        dlg(`编辑 ${kind} · ${esc(x.n)}`, '<form class="x-form" id="cef" novalidate><div id="cebody"></div></form>',
+          '<button class="x-btn" data-close>取消</button><button class="x-btn" type="button" id="ceRaw">高级：编辑 YAML</button><button class="x-btn x-btn--pri" type="submit" form="cef">保存</button>');
+        const draw = () => {
+          $("cebody").innerHTML = `
+            <p class="x-frac">${esc(x.ns)} / ${esc(x.n)} · 名称与命名空间不可修改</p>
+            ${isSec ? `<label><span>Secret 类型</span><select class="x-select" name="type">${opt(CFG_TYPES, x.type || "Opaque")}</select></label>` : ""}
+            <h3 class="x-h2">数据</h3>
+            <div id="cerows">${st.rows.map((r, j) => `<div class="x-kvrow"><label><span>键</span><input class="x-input x-mono" name="k${j}" value="${esc(r.k)}" autocomplete="off" /></label><label><span>值</span><input class="x-input x-mono" name="v${j}" value="${esc(r.v)}" autocomplete="off" /></label><button type="button" class="x-act" data-cerow="${j}">删除</button></div>`).join("")}</div>
+            <div class="x-testrow"><button type="button" class="x-btn" id="ceadd">+ 添加键值</button><span class="x-frac">${isSec ? "值会写入 stringData，保存后不再回显明文以外内容" : "值按字符串写入 data"}</span></div>
+            <span class="x-err" id="ceerr" role="alert" hidden></span>
+            <details class="x-adv"><summary>预览将保存的 YAML</summary><pre class="x-log" id="ceyaml"></pre></details>`;
+          const f = $("cef"), err = $("ceerr");
+          const stash = () => {
+            const rows = [];
+            for (let j = 0; j < st.rows.length; j++) {
+              const ke = f.elements["k" + j], ve = f.elements["v" + j];
+              rows.push({ k: ke ? ke.value : "", v: ve ? ve.value : "" });
+            }
+            st.rows = rows;
+            if (isSec && f.elements.type) st.type = f.elements.type.value;
+          };
+          const facts = () => {
+            const data = {};
+            for (let j = 0; j < st.rows.length; j++) {
+              const ke = f.elements["k" + j], ve = f.elements["v" + j];
+              const k = (ke ? ke.value : "").trim(), v = ve ? ve.value : "";
+              if (k) data[k] = v;
+            }
+            return { n: x.n, ns: x.ns, type: isSec ? (f.elements.type ? f.elements.type.value : x.type) : "Opaque", data };
+          };
+          const sync = () => { const v = facts(); $("ceyaml").textContent = k8Yaml({ k: kind, ...v }); };
+          f.oninput = sync; sync();
+          $("ceadd").onclick = () => { stash(); st.rows.push({ k: "", v: "" }); draw(); const last = $("cef").elements["k" + (st.rows.length - 1)]; last && last.focus(); };
+          $("cebody").querySelectorAll("[data-cerow]").forEach((b) => (b.onclick = () => { stash(); st.rows.splice(+b.dataset.cerow, 1); if (!st.rows.length) st.rows.push({ k: "", v: "" }); draw(); }));
+          $("ceRaw").onclick = () => { closeAll(); k8EditYaml(x, kind, (y) => { x.data = ydata(y, isSec); if (isSec) x.type = yv(y, "type") || x.type; x.upd = "刚刚"; }); };
+          f.onsubmit = (e) => {
+            e.preventDefault();
+            const bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+            const v = facts(), keys = Object.keys(v.data);
+            if (!keys.length) return bad("至少需要一个键值", f.elements.k0);
+            const bk = keys.find((k) => !/^[-._a-zA-Z0-9]+$/.test(k));
+            if (bk) return bad(`键名不合法：${bk}（可用字母、数字、-、_、.）`, f.elements.k0);
+            x.data = v.data; if (isSec) x.type = v.type; x.upd = "刚刚";
+            closeAll(); k8Draw(); toast(`已保存 ${kind} ${x.n}（${keys.length} 个键值）`);
+          };
+        };
+        draw();
+      }
       // Edits a resource's YAML; name, kind and namespace stay fixed
       function k8EditYaml(r, kind, apply) {
         dlg(`编辑 YAML · ${kind} ${esc(r.n)}`, `<form class="x-form" id="kform" novalidate>${yamlBox(k8Yaml({ ...r, k: kind }))}</form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="kform">保存并应用</button>');
@@ -8589,13 +8750,7 @@
             dlg(`回滚 · ${w.n}`, `<form class="x-form" id="kform"><fieldset class="x-radios"><legend>选择版本</legend>${w.revs.map((v, j) => `<label><input type="radio" name="rv" value="${j}"${j === cur ? " disabled" : j === cur - 1 || (cur === 0 && j === 1) ? " checked" : ""} /> 修订 ${j + 1} <span class="x-mono">${esc(v.replace(KREG, ""))}</span>${j === cur ? ' <span class="x-tag x-blue x-tag--s">当前</span>' : ""}</label>`).join("")}</fieldset></form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="kform">回滚</button>');
             $("kform").onsubmit = (e) => { e.preventDefault(); const j = +e.target.elements.rv.value; w.img = w.revs[j]; k8Roll(w); closeAll(); k8Draw(); toast(`${w.n} 已回滚到修订 ${j + 1}`); };
           });
-          on(el, "yaml", (i) => { const w = K8.wl[i]; k8EditYaml(w, w.k, (y) => {
-            const img = yv(y, "image"); if (!img) return "缺少容器镜像 image";
-            if (w.k === "CronJob") { if (!yv(y, "schedule")) return "CronJob 需要 schedule"; w.cron = yv(y, "schedule"); }
-            if (canScale(w)) { const r = +yv(y, "replicas"); if (!Number.isInteger(r) || r < 0) return "replicas 需为非负整数"; w.ready = [w.ready[0], r]; }
-            if (img !== w.img) { w.img = img; w.revs.push(img); }
-            if (w.k !== "Job" && w.k !== "CronJob") k8Roll(w);
-          }); });
+          on(el, "yaml", (i) => wlEdit(K8.wl[i]));
           on(el, "del", (i) => { const w = K8.wl[i]; k8Confirm(`删除 ${w.k}`, `确定删除 <b>${w.ns}/${esc(w.n)}</b>？其下的 Pod 会一并删除，此操作不可撤销。`, "删除", () => { K8.wl.splice(i, 1); k8Draw(); toast(`已删除 ${w.k} ${w.n}`); }); });
         },
         config: (el) => {
@@ -8604,8 +8759,8 @@
             v.textContent = show ? v.dataset.val : "••••••••"; b.textContent = show ? "隐藏" : "显示"; b.setAttribute("aria-pressed", show);
           }));
           on(el, "cmv", (i) => { const c = K8.cm[i]; dlg(`ConfigMap · ${esc(c.n)}`, `<div class="x-form"><dl class="x-sum">${Object.entries(c.data).map(([k, v]) => `<dt class="x-mono">${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></div>`, '<button class="x-btn" data-close>关闭</button>'); });
-          on(el, "cmy", (i) => { const c = K8.cm[i]; k8EditYaml(c, "ConfigMap", (y) => { c.data = ydata(y); }); });
-          on(el, "sy", (i) => { const s = K8.sec[i]; k8EditYaml(s, "Secret", (y) => { s.data = ydata(y, true); s.type = yv(y, "type") || s.type; }); });
+          on(el, "cmy", (i) => cfEditVisual("ConfigMap", i));
+          on(el, "sy", (i) => cfEditVisual("Secret", i));
           on(el, "cmd", (i) => { const c = K8.cm[i]; k8Confirm("删除 ConfigMap", `确定删除 <b>${c.ns}/${esc(c.n)}</b>？引用它的 Pod 重启后将无法启动。`, "删除", () => { K8.cm.splice(i, 1); k8Draw(); toast(`已删除 ConfigMap ${c.n}`); }); });
           on(el, "sd", (i) => { const s = K8.sec[i]; k8Confirm("删除 Secret", `确定删除 <b>${s.ns}/${esc(s.n)}</b>？引用它的 Pod 重启后将无法启动。`, "删除", () => { K8.sec.splice(i, 1); k8Draw(); toast(`已删除 Secret ${s.n}`); }); });
         },
