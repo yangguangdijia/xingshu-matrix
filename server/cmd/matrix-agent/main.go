@@ -333,9 +333,8 @@ func (a *agent) runExec(ctx context.Context, e proto.Exec, out func(string, any)
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	start := time.Now()
-	cmd := exec.CommandContext(cctx, "/bin/sh", "-c", e.Command)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // kill the whole process group on timeout
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd := shellCommand(cctx, e.Command)
+	configureProcessCommand(cmd)
 	cmd.WaitDelay = 5 * time.Second
 	var mu sync.Mutex
 	total := 0

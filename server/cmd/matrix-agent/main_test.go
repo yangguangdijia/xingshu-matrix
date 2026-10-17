@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -35,7 +36,11 @@ func collect() (func(string, any), func() ([]proto.ExecOutput, proto.ExecResult)
 func TestRunExec(t *testing.T) {
 	a := &agent{sem: make(chan struct{}, 2)}
 	out, get := collect()
-	a.runExec(context.Background(), proto.Exec{TaskID: 1, Command: "echo hello; echo err >&2; exit 3", TimeoutSec: 5}, out)
+	command, waitCommand := "echo hello; echo err >&2; exit 3", "sleep 10"
+	if runtime.GOOS == "windows" {
+		command, waitCommand = "echo hello & echo err 1>&2 & exit /b 3", "ping -n 11 127.0.0.1 >NUL"
+	}
+	a.runExec(context.Background(), proto.Exec{TaskID: 1, Command: command, TimeoutSec: 5}, out)
 	outs, res := get()
 	var all strings.Builder
 	for _, o := range outs {
@@ -45,7 +50,7 @@ func TestRunExec(t *testing.T) {
 		t.Fatalf("res=%+v out=%q", res, all.String())
 	}
 	out, get = collect()
-	a.runExec(context.Background(), proto.Exec{TaskID: 2, Command: "sleep 10", TimeoutSec: 1}, out)
+	a.runExec(context.Background(), proto.Exec{TaskID: 2, Command: waitCommand, TimeoutSec: 1}, out)
 	if _, res := get(); !res.TimedOut {
 		t.Fatalf("expected timeout: %+v", res)
 	}
@@ -58,7 +63,7 @@ func TestWriteFileAndFacts(t *testing.T) {
 		t.Fatal(n, err)
 	}
 	st, _ := os.Stat(p)
-	if st.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Fatal(st.Mode())
 	}
 	if _, err := writeFile(proto.FilePush{Path: "rel/x"}); err == nil {

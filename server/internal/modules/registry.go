@@ -8,9 +8,11 @@ package modules
 
 import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/app"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/automation"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/bastion"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/cicd"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/cluster"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/devcenter"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/hosts"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/middleware"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/observability"
@@ -28,7 +30,9 @@ func All() []app.Module {
 		observability.New(), // internal/observability: Prometheus query, Alertmanager webhook (use Deps.Public), logs (ES/Loki), traces
 
 		// ---- delivery ------------------------------------------------------
-		cicd.New(), // internal/cicd: pipelines (K8s Job / Tekton), releases gated by approval.Gate, Helm
+		cicd.New(),       // internal/cicd: pipelines (K8s Job / Tekton), releases gated by approval.Gate, Helm
+		automation.New(), // internal/automation: versioned, permissioned workflow definitions and runs
+		devcenter.New(),  // internal/devcenter: requirements, iterations, bugs and test cases
 
 		// ---- middleware ----------------------------------------------------
 		middleware.New(), // internal/middleware: Kafka / RabbitMQ / RocketMQ admin, DB/Redis instances

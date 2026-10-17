@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "xingshu-static",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-e", "const http=require('http'),fs=require('fs'),path=require('path');const root=path.resolve('public');const port=4173;http.createServer((req,res)=>{let u=decodeURIComponent(req.url.split('?')[0]);if(u==='/'||u==='')u='/index.html';let f=path.join(root,u);if(!f.startsWith(root))return res.writeHead(403).end();fs.readFile(f,(e,b)=>{if(e){if(path.extname(f)==='')return fs.readFile(path.join(root,'index.html'),(x,d)=>{res.writeHead(x?404:200,{'Content-Type':'text/html; charset=utf-8'});res.end(x?'Not found':d)});return res.writeHead(404).end('Not found')}const t={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.jpg':'image/jpeg','.png':'image/png','.svg':'image/svg+xml'}[path.extname(f)]||'application/octet-stream';res.writeHead(200,{'Content-Type':t});res.end(b)})}).listen(port,'localhost',()=>console.log('xingshu static preview http://localhost:'+port));"],
+      "port": 4173,
+      "url": "http://localhost:4173"
+    }
+  ]
+}

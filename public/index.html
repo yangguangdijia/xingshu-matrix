@@ -1588,6 +1588,67 @@
       .x-rlwarn { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: #fff7e6; color: #ad4e00; font-size: 13px; }
       .x-dbody .x-steps .x-btn { margin: 6px 6px 0 0; }
       @media (max-width: 600px) { .x-rlapps > div { grid-template-columns: 1fr; } }
+      /* 登录页 v2：浅暖灰、编辑部式信息层级；不使用星空、轨道或总览插画 */
+      .x-auth { --a-blue: #2f61e7; --a-blue-h: #2455d3; --a-ink: #17212b; --a-sub: #647180; --a-line: #dedbd5; position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 32px; box-sizing: border-box; background: #f7f6f3; color: var(--a-ink); font: 400 14px/1.6 var(--x-font); overflow: auto; -webkit-font-smoothing: antialiased; color-scheme: light; }
+      .x-auth[hidden] { display: none; }
+      .x-auth :is(button, input) { font-family: var(--x-font); }
+      .x-ashell { width: min(1120px, 100%); min-height: min(660px, calc(100vh - 64px)); display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: clamp(56px, 8vw, 112px); align-items: center; }
+      .x-art { position: relative; min-width: 0; min-height: 540px; display: flex; flex-direction: column; justify-content: center; overflow: visible; background: transparent; color: var(--a-ink); padding: 0; container-type: normal; }
+      .x-art > img { display: none; }
+      .x-art > :not(img) { position: relative; }
+      .x-blogo { position: static !important; display: flex; align-items: center; gap: 10px; margin: 0 0 52px; }
+      .x-blogo svg { display: none; }
+      .x-blogo::before { content: "枢"; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; background: #202b36; color: #fff; font-size: 15px; line-height: 1; font-weight: 700; box-shadow: 0 2px 5px rgba(25, 37, 48, .12); }
+      .x-brandmark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; background: #202b36; color: #fff; font-size: 17px; line-height: 1; font-weight: 700; letter-spacing: -.06em; box-shadow: 0 2px 5px rgba(25, 37, 48, .12); }
+      .x-bname { color: var(--a-ink); font-size: 18px; line-height: 1.3; font-weight: 700; letter-spacing: .01em; white-space: nowrap; }
+      .x-bhead { max-width: 620px; margin: 0; color: var(--a-ink); font-size: clamp(34px, 3.3vw, 46px); line-height: 1.18; font-weight: 700; letter-spacing: -.045em; }
+      .x-bpos { max-width: 560px; margin: 18px 0 0; color: var(--a-sub); font-size: 15px; line-height: 1.75; }
+      .x-feats { list-style: none; margin: 42px 0 0; padding: 0; display: grid; gap: 18px; max-width: 560px; }
+      .x-feats li { display: grid; grid-template-columns: 34px minmax(0, 1fr); column-gap: 12px; align-items: start; }
+      .x-feats svg { width: 34px; height: 34px; box-sizing: border-box; padding: 8px; margin: 0; fill: none; stroke: #31516e; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; background: #fff; border: 1px solid #e4e1db; border-radius: 9px; box-shadow: 0 2px 5px rgba(31, 43, 54, .035); }
+      .x-feats b { display: block; color: var(--a-ink); font-size: 14px; line-height: 1.5; font-weight: 700; }
+      .x-feats span { grid-column: 2; color: var(--a-sub); font-size: 13px; line-height: 1.55; }
+      .x-bcopy { position: static !important; margin: auto 0 0; padding-top: 46px; color: #8b949d; font-size: 12px; }
+      .x-formp { position: relative; min-width: 0; align-self: center; display: block; padding: 38px 40px 30px; box-sizing: border-box; background: #fff; border: 1px solid #e2dfda; border-radius: 14px; box-shadow: 0 18px 42px rgba(37, 43, 49, .08); }
+      .x-afoot { position: static; margin: 26px 0 0; padding-top: 22px; border-top: 1px solid #eeeae4; color: #8b949d; font-size: 12px; letter-spacing: .01em; text-align: center; }
+      .x-aform { width: 100%; max-width: none; color: var(--a-ink); }
+      .x-aform h1 { margin: 0 0 6px; color: var(--a-ink); font-size: 27px; line-height: 1.3; font-weight: 700; letter-spacing: -.025em; }
+      .x-aform > p { margin: 0 0 30px; color: var(--a-sub); font-size: 13px; }
+      .x-aform > p.x-ahint { margin: 24px 0 0; color: var(--a-sub); font-size: 12px; text-align: center; }
+      .x-aor { display: flex; align-items: center; gap: 12px; margin: 23px 0; color: #8b949d; font-size: 12px; }
+      .x-aor::before, .x-aor::after { content: ""; flex: 1; height: 1px; background: #eeeae4; }
+      .x-auth button.x-asso { width: 100%; height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--a-line); border-radius: 8px; background: #fff; color: var(--a-ink); font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color var(--x-t), border-color var(--x-t), transform var(--x-t); }
+      .x-auth button.x-asso:hover { background: #fafbfc; border-color: #bfc8d2; }
+      .x-asso svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+      .x-auth:not([hidden]) ~ .x-toast { z-index: 120; }
+      .x-auth:not([hidden]) ~ .x-toast::before { content: "i"; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--a-blue); color: #fff; font-size: 11px; vertical-align: -2px; }
+      .x-af { display: grid; gap: 18px; }
+      .x-af label > span { display: block; margin-bottom: 7px; color: var(--a-ink); font-size: 13px; font-weight: 600; }
+      .x-af .x-input { width: 100%; height: 46px; box-sizing: border-box; padding: 0 12px; background: #fff; border: 1px solid var(--a-line); border-radius: 8px; color: var(--a-ink); font-size: 14px; }
+      .x-af .x-input::placeholder { color: #9aa2aa; }
+      .x-af .x-input:hover { border-color: #bac5d0; }
+      .x-af .x-input:focus { border-color: var(--a-blue); box-shadow: 0 0 0 3px rgba(47, 97, 231, .16); outline: none; }
+      .x-auth button.x-btn.x-btn--pri { width: 100%; height: 44px; margin-top: 3px; border: 0; border-radius: 8px; color: #fff; background: var(--a-blue); box-shadow: 0 5px 12px rgba(47, 97, 231, .18); font-size: 14px; font-weight: 600; letter-spacing: .02em; transition: background-color var(--x-t), box-shadow var(--x-t), transform var(--x-t); }
+      .x-auth button.x-btn.x-btn--pri:hover { background: var(--a-blue-h); box-shadow: 0 7px 16px rgba(47, 97, 231, .23); }
+      .x-auth button.x-btn.x-btn--pri:active { transform: translateY(1px); }
+      .x-auth :is(button, a, input[type="checkbox"]):focus-visible { outline: 2px solid var(--a-blue); outline-offset: 2px; }
+      .x-arow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: -2px; color: var(--a-sub); font-size: 13px; }
+      .x-arow label { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; color: var(--a-ink); }
+      .x-arow input { width: 16px; height: 16px; margin: 0; accent-color: var(--a-blue); }
+      .x-auth .x-arow a { min-height: 32px; display: inline-flex; align-items: center; color: var(--a-blue) !important; text-decoration: none; }
+      .x-auth .x-arow a:hover { text-decoration: underline !important; }
+      .x-aerr { margin: 0; padding: 8px 12px; border-radius: 7px; background: #fef3f2; border: 1px solid #fecdca; color: #b42318; font-size: 13px; }
+      .x-aerr[hidden] { display: none; }
+      .x-auth .x-meter { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 8px; }
+      .x-auth .x-meter i { height: 4px; border-radius: 2px; background: var(--a-line); transition: background-color var(--x-t); }
+      .x-mlab { display: flex; justify-content: space-between; margin-top: 4px; color: var(--a-sub); font-size: 12px; }
+      .x-rules { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; color: var(--a-sub); font-size: 12px; }
+      .x-rules li::before { content: "○"; margin-right: 6px; }
+      .x-rules li.ok { color: #237804; }
+      .x-rules li.ok::before { content: "✓"; }
+      @media (max-width: 900px) { .x-auth { padding: 24px; } .x-ashell { min-height: auto; grid-template-columns: minmax(0, 1fr) 380px; gap: 36px; } .x-bhead { font-size: 34px; } .x-blogo { margin-bottom: 36px; } }
+      @media (max-width: 760px) { .x-auth { display: block; padding: 24px 16px; } .x-ashell { width: 100%; min-height: 100%; display: block; } .x-art { min-height: auto; padding: 24px 8px 30px; } .x-blogo { margin-bottom: 28px; } .x-bhead { font-size: 31px; } .x-bpos { margin-top: 14px; font-size: 14px; } .x-feats { margin-top: 28px; gap: 14px; } .x-feats span { display: none; } .x-bcopy { padding-top: 28px; } .x-formp { padding: 30px 24px 24px; } .x-afoot { margin-top: 22px; padding-top: 18px; } }
+      @media (prefers-reduced-motion: reduce) { .x-auth *, .x-auth *::before, .x-auth *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
     </style>
   </head>
   <body>
@@ -1883,15 +1944,31 @@
         bastion: { label: "堡垒机运维", icon: "shield", render: renderSec },
         workbench: { label: "工作台", icon: "home", render: renderWorkbench },
         requirements: { label: "需求管理", icon: "list", render: renderReqs },
-        coding: { label: "Coding", icon: "code", soon: "代码托管、合并请求与代码评审，与需求双向关联。" },
-        project: { label: "项目管理", icon: "list", soon: "按迭代规划需求与缺陷，用看板跟踪每张卡片的进展。" },
+        coding: { label: "Coding", icon: "code", render: (el) => renderDevCenter(el, "coding") },
+        project: { label: "项目管理", icon: "list", render: (el) => renderDevCenter(el, "project") },
         team: { label: "团队协作", icon: "users", soon: "成员、知识库与周报，团队信息集中在一处。" },
-        bugs: { label: "缺陷总览", icon: "shield", soon: "汇总各项目的缺陷趋势、严重程度分布与修复时长。" },
+        bugs: { label: "缺陷总览", icon: "shield", render: (el) => renderDevCenter(el, "bugs") },
         testing: { label: "测试管理", icon: "flask", render: renderTests },
         ai: { label: "智能助手", icon: "spark", render: renderAI },
         iam: { label: "用户与权限", icon: "users", render: (el) => renderIam(el) },
         settings: { label: "设置", icon: "gear", render: renderSettings },
       };
+      async function apiRequest(path, options = {}) {
+        const base = window.XINGSHU_API_BASE || "/api/v1";
+        const res = await fetch(base + path, { credentials: "include", headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body.code) throw new Error(body.message || `请求失败（${res.status}）`);
+        return body.data;
+      }
+      function renderDevCenter(el, kind) {
+        const labels = { coding: ["研发中心", "需求、缺陷与测试数据已接入统一 API"], project: ["迭代与项目", "按迭代规划研发工作"], bugs: ["缺陷总览", "集中跟踪缺陷状态与优先级"] };
+        const meta = labels[kind] || labels.bugs;
+        el.innerHTML = phead(meta[0], meta[1]) + `<div class="x-panel"><div class="x-tbar"><input class="x-input x-search" id="dcq" placeholder="搜索标题" aria-label="搜索标题" /><button class="x-btn x-btn--pri" id="dcnew">+ 新建</button></div><div id="dcbody"><p class="x-frac">正在加载真实数据…</p></div></div>`;
+        const type = kind === "bugs" ? "bugs" : kind === "project" ? "iterations" : "requirements";
+        const draw = (data) => { const items = data.items || []; $("dcbody").innerHTML = items.length ? `<table class="x-table"><thead><tr><th>标题</th><th>状态</th><th>优先级</th><th>更新时间</th></tr></thead><tbody>${items.map(x => `<tr><td>${esc(x.title)}</td><td>${esc(x.status)}</td><td>${esc(x.priority)}</td><td>${esc(String(x.updated_at || "—"))}</td></tr>`).join("")}</tbody></table>` : `<div class="x-empty"><strong>暂无数据</strong><p>请点击“新建”创建第一条记录。</p></div>`; };
+        apiRequest(`/devcenter/${type}`).then(draw).catch(e => { $("dcbody").innerHTML = `<p class="x-aerr" role="alert">${esc(e.message)}。当前页面需要已登录的后端服务。</p>`; });
+        $("dcnew").onclick = () => { const title = prompt("请输入标题"); if (!title) return; apiRequest(`/devcenter/${type}`, { method: "POST", body: JSON.stringify({ title }) }).then(() => renderDevCenter(el, kind)).catch(e => toast(e.message)); };
+      }
       const current = () => { const k = location.hash.slice(2).split("/")[0]; return routes[k] && !routes[k].href ? k : "sre"; };
 
       // 登录 · 首次改密：会话只在内存中；内置账号 admin，初始密码首次登录后必须修改
