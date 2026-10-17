@@ -1100,54 +1100,60 @@
       .x-schl .x-schd { padding-left: 0; }
       @media (max-width: 760px) { .x-sch summary, .x-sch .x-schl { min-height: 44px; } }
       /* 登录 · 首次改密 */
-      /* 登录：深海军蓝纯色底 + 稀疏静止星点 + 右上角北斗七星指向北极星（细线、低透明度）；左侧品牌、右侧白色卡片；唯一强调色 #2F6BFF */
-      .x-auth { --a-pri: #2C66F5; --a-pri-h: #2459D9; --a-ink: #1F2937; --a-sub: #6B7280; --a-line: #E5E8EF; --a-hi: #FFFFFF; --a-lo: #9FB3D1; --a-dim: #7D8FAE; position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; background: #0B1A33; font: 400 14px/1.6 var(--x-font); color: var(--a-ink); overflow: auto; -webkit-font-smoothing: antialiased; color-scheme: light; }
+      /* 登录：左 46% 插画（login-art2.jpg），右 54% 纯白表单；主按钮暖炭 #2B2622 + 米白字；金色 #B08D57 用于焦点环，链接用同色系加深以满足对比度；无渐变、无光晕 */
+      .x-auth { --a-gold: #B08D57; --a-link: #8A6A3B; --a-pri: #2B2622; --a-pri-h: #3A332E; --a-ink: #2B2622; --a-sub: #6E6A64; --a-line: #DCDAD5; position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; background: #fff; font: 400 14px/1.6 var(--x-font); color: var(--a-ink); overflow: auto; -webkit-font-smoothing: antialiased; color-scheme: light; }
       .x-auth[hidden] { display: none; }
       .x-auth :is(button, input) { font-family: var(--x-font); }
-      .x-sky { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
-      .x-sky canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-      .x-dipper { position: absolute; top: 32px; right: 40px; width: 220px; height: auto; overflow: visible; }
-      @media (min-width: 1024px) and (max-width: 1279.98px) { .x-dipper { top: 12px; right: 20px; width: 140px; } }
-      .x-dipper path { fill: none; stroke: #C9D6EA; stroke-width: 1; stroke-opacity: .28; stroke-linejoin: round; stroke-linecap: round; }
-      .x-dipper .x-ptr { stroke-dasharray: 2 5; stroke-opacity: .22; }
-      .x-dipper circle { fill: #E6EDF8; fill-opacity: .6; }
-      .x-dipper path { vector-effect: non-scaling-stroke; }
-      /* 文字随 viewBox 缩放：字号 = 12px ÷ 缩放比（宽 220 → 0.733） */
-      .x-dipper text { font: 400 16.4px/1 var(--x-font); fill: #9FB3D1; fill-opacity: .6; letter-spacing: .08em; }
-      @media (min-width: 1024px) and (max-width: 1279.98px) { .x-dipper text { font-size: 25.7px; } }
-      @media (min-width: 768px) and (max-width: 1023.98px) { .x-dipper text { font-size: 20px; } }
-      @media (max-width: 767.98px) { .x-dipper text { font-size: 30px; } }
-      .x-ashell { position: relative; z-index: 1; flex: 1 0 auto; width: 100%; max-width: 1240px; margin: 0 auto; box-sizing: border-box; padding: 64px; display: grid; grid-template-columns: minmax(0, 1fr) 400px; column-gap: clamp(120px, 12vw, 160px); align-items: center; }
-      .x-brandp { color: var(--a-hi); min-width: 0; }
-      .x-blogo { display: flex; align-items: center; gap: 12px; }
+      .x-ashell { flex: 1 0 auto; width: 100%; min-height: 100%; display: grid; grid-template-columns: minmax(0, 46fr) minmax(0, 54fr); }
+      /* 左半：login-art2.jpg 底部对齐铺满（上半为空的深色区放文字）；插画高度受文字区约束，永不与文字重叠 */
+      .x-art { --t: 520px; position: relative; min-width: 0; overflow: hidden; background: #26221E; color: #F3EBDD; padding: 120px 48px 72px; box-sizing: border-box; container-type: size; }
+      .x-art > img { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); width: auto; max-width: none; height: min(max(179.2cqw, 100cqh), calc((100cqh - var(--t)) / .524)); -webkit-mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent); mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent); pointer-events: none; }
+      .x-art > :not(img) { position: relative; }
+      .x-blogo { position: absolute !important; top: 48px; left: 48px; display: flex; align-items: center; gap: 10px; }
       .x-blogo svg { flex: none; }
-      .x-bname { font-size: 28px; line-height: 1.25; font-weight: 600; color: var(--a-hi); letter-spacing: .02em; white-space: nowrap; }
-      .x-bpos { margin: 16px 0 0; font-size: 16px; line-height: 1.6; color: var(--a-lo); }
-      .x-hl { list-style: none; margin: 40px 0 0; padding: 0; display: grid; gap: 20px; }
-      .x-hl li { display: flex; align-items: center; gap: 12px; font-size: 14px; line-height: 1.5; color: #D5DFEE; }
-      .x-hl svg { width: 18px; height: 18px; flex: none; fill: none; stroke: var(--a-lo); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-      .x-formp { min-width: 0; }
-      .x-afoot { position: relative; z-index: 1; width: 100%; max-width: 1240px; margin: 0 auto; box-sizing: border-box; padding: 0 64px 32px; font-size: 12px; color: var(--a-dim); letter-spacing: .02em; }
-      .x-auth .x-acard { width: 100%; box-sizing: border-box; display: block; color: var(--a-ink); background: #fff; border: 0; border-radius: 12px; box-shadow: 0 8px 24px rgba(3, 10, 25, .18), 0 1px 3px rgba(3, 10, 25, .12); padding: 40px; }
-      .x-auth .x-acard h1 { margin: 0 0 6px; font-size: 22px; line-height: 1.3; font-weight: 600; color: var(--a-ink); }
-      .x-auth .x-acard > p { margin: 0 0 28px; font-size: 14px; color: var(--a-sub); }
-      .x-auth .x-acard > p.x-ahint { margin: 24px 0 0; padding-top: 20px; border-top: 1px solid #EEF0F4; font-size: 13px; color: #667085; text-align: center; }
+      .x-bname { font-size: 18px; line-height: 1.3; font-weight: 600; color: #F3EBDD; letter-spacing: .02em; white-space: nowrap; }
+      .x-bhead { margin: 0; font-size: 34px; line-height: 1.3; font-weight: 600; letter-spacing: .02em; color: #F3EBDD; }
+      .x-bpos { margin: 12px 0 0; font-size: 15px; line-height: 1.6; color: #BFB5A3; }
+      .x-feats { list-style: none; margin: 40px 0 0; padding: 0; display: grid; gap: 20px; max-width: 460px; }
+      .x-feats li { display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: 12px; }
+      .x-feats svg { width: 18px; height: 18px; margin-top: 2px; fill: none; stroke: #C9A86A; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+      .x-feats b { display: block; font-size: 15px; line-height: 1.5; font-weight: 600; color: #F3EBDD; }
+      .x-feats span { grid-column: 2; font-size: 13px; line-height: 1.6; color: #BFB5A3; }
+      .x-bcopy { position: absolute !important; left: 48px; bottom: 24px; margin: 0; font-size: 12px; color: #BFB5A3; }
+      @media (max-height: 860px) { .x-art { --t: 450px; padding-top: 104px; } .x-blogo { top: 36px; } .x-feats { margin-top: 28px; gap: 12px; } }
+      @media (max-height: 760px) { .x-art { --t: 370px; } .x-feats span { display: none; } }
+      /* 1024–1199 宽：标题可能折成两行，为插画让出一行高度 */
+      @media (min-width: 1024px) and (max-width: 1199.98px) { .x-art { --t: 570px; } }
+      @media (min-width: 1024px) and (max-width: 1199.98px) and (max-height: 860px) { .x-art { --t: 500px; } }
+      @media (min-width: 1024px) and (max-width: 1199.98px) and (max-height: 760px) { .x-art { --t: 420px; } }
+      /* 右半：纯白，表单 360 居中，无卡片 */
+      .x-formp { position: relative; min-width: 0; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 64px 24px 72px; box-sizing: border-box; }
+      .x-afoot { position: absolute; left: 0; right: 0; bottom: 24px; margin: 0; font-size: 12px; color: var(--a-sub); letter-spacing: .02em; text-align: center; }
+      .x-aform { width: 100%; max-width: 360px; color: var(--a-ink); }
+      .x-aform h1 { margin: 0 0 8px; font-size: 28px; line-height: 1.3; font-weight: 600; color: var(--a-ink); }
+      .x-aform > p { margin: 0 0 32px; font-size: 14px; color: var(--a-sub); }
+      .x-aform > p.x-ahint { margin: 24px 0 0; font-size: 12px; color: var(--a-sub); text-align: center; }
+      .x-aor { display: flex; align-items: center; gap: 12px; margin: 24px 0; font-size: 12px; color: var(--a-sub); }
+      .x-aor::before, .x-aor::after { content: ""; flex: 1; height: 1px; background: #ECEAE6; }
+      .x-auth button.x-asso { width: 100%; height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid #DCDAD5; border-radius: 8px; background: #fff; color: var(--a-ink); font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color var(--x-t), border-color var(--x-t); }
+      .x-auth button.x-asso:hover { background: #FAF8F5; border-color: #C9C5BD; }
+      .x-asso svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
       .x-auth:not([hidden]) ~ .x-toast { z-index: 120; }
-      .x-auth:not([hidden]) ~ .x-toast::before { content: "i"; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: #2F6BFF; color: #fff; font-size: 11px; vertical-align: -2px; }
+      .x-auth:not([hidden]) ~ .x-toast::before { content: "i"; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: #B08D57; color: #fff; font-size: 11px; vertical-align: -2px; }
       .x-af { display: grid; gap: 20px; }
       .x-af label > span { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 500; color: var(--a-ink); }
-      .x-af .x-input { width: 100%; height: 44px; box-sizing: border-box; padding: 0 12px; background: #fff; border: 1px solid #D0D5DD; border-radius: 8px; color: var(--a-ink); font-size: 14px; }
-      .x-af .x-input::placeholder { color: #9CA3AF; }
-      .x-af .x-input:hover { border-color: #98A2B3; }
-      .x-af .x-input:focus { border-color: var(--a-pri); box-shadow: 0 0 0 3px rgba(47, 107, 255, .14); outline: none; }
-      .x-auth button.x-btn.x-btn--pri { width: 100%; height: 44px; margin-top: 4px; border: 0; border-radius: 8px; font-size: 15px; font-weight: 500; letter-spacing: .04em; color: #fff; background: var(--a-pri); box-shadow: none; transition: background-color var(--x-t); }
+      .x-af .x-input { width: 100%; height: 44px; box-sizing: border-box; padding: 0 12px; background: #fff; border: 1px solid var(--a-line); border-radius: 8px; color: var(--a-ink); font-size: 14px; }
+      .x-af .x-input::placeholder { color: #9A9690; }
+      .x-af .x-input:hover { border-color: #C2BEB6; }
+      .x-af .x-input:focus { border-color: var(--a-gold); box-shadow: 0 0 0 3px rgba(176, 141, 87, .22); outline: none; }
+      .x-auth button.x-btn.x-btn--pri { width: 100%; height: 44px; margin-top: 4px; border: 0; border-radius: 8px; font-size: 15px; font-weight: 500; letter-spacing: .04em; color: #F3EBDD; background: var(--a-pri); box-shadow: none; transition: background-color var(--x-t); }
       .x-auth button.x-btn.x-btn--pri:hover { background: var(--a-pri-h); }
-      .x-auth button.x-btn.x-btn--pri:active { background: #1E4EC2; }
-      .x-auth :is(button, a, input[type="checkbox"]):focus-visible { outline: 2px solid var(--a-pri); outline-offset: 2px; }
+      .x-auth button.x-btn.x-btn--pri:active { background: #1E1A17; }
+      .x-auth :is(button, a, input[type="checkbox"]):focus-visible { outline: 2px solid var(--a-gold); outline-offset: 2px; }
       .x-arow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: -4px; font-size: 13px; color: var(--a-sub); }
       .x-arow label { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; color: var(--a-ink); }
       .x-arow input { width: 16px; height: 16px; margin: 0; accent-color: var(--a-pri); }
-      .x-auth .x-arow a { color: var(--a-pri) !important; min-height: 32px; display: inline-flex; align-items: center; text-decoration: none; }
+      .x-auth .x-arow a { color: var(--a-link) !important; min-height: 32px; display: inline-flex; align-items: center; text-decoration: none; }
       .x-auth .x-arow a:hover { text-decoration: underline !important; }
       .x-aerr { margin: 0; padding: 8px 12px; border-radius: 6px; background: #FEF3F2; border: 1px solid #FECDCA; color: #B42318; font-size: 13px; }
       .x-aerr[hidden] { display: none; }
@@ -1162,23 +1168,16 @@
       .x-who b { font-size: 13px; font-weight: 500; color: var(--x-text); }
       .x-who small { font-size: 12px; color: var(--x-sub); }
       .x-avbtn.x-avwho { width: auto; gap: 8px; padding: 0 8px 0 4px; border-radius: 18px; display: flex; }
-      /* 登录 · 768–1023：单列居中，品牌在卡片上方，间距 48 */
+      /* 登录 · <1024：插画变为顶部 160px 横幅，表单在下 */
       @media (max-width: 1023.98px) {
-        .x-ashell { grid-template-columns: minmax(0, 400px); justify-content: center; align-content: center; row-gap: 48px; padding: 64px 32px; }
-        .x-hl { margin-top: 32px; }
-        .x-afoot { padding: 0 32px 32px; text-align: center; }
-        .x-dipper { top: 24px; right: 24px; width: 180px; }
+        .x-ashell { grid-template-columns: minmax(0, 1fr); grid-template-rows: 160px 1fr; }
+        .x-art { padding: 24px; display: flex; align-items: center; }
+        .x-art > img { left: 0; transform: none; width: 100%; height: 100%; object-fit: cover; object-position: 50% 70%; opacity: .45; -webkit-mask-image: none; mask-image: none; }
+        .x-bhead { font-size: 22px; }
+        .x-blogo, .x-bpos, .x-feats, .x-bcopy { display: none !important; }
+        .x-formp { justify-content: flex-start; padding: 48px 20px 72px; }
       }
-      /* 登录 · <768：卡片通栏（左右 20），品牌紧凑置顶 */
       @media (max-width: 767.98px) {
-        .x-ashell { grid-template-columns: minmax(0, 1fr); align-content: start; row-gap: 28px; padding: 40px 20px 32px; }
-        .x-blogo svg { width: 32px; height: 32px; }
-        .x-bname { font-size: 22px; }
-        .x-bpos { margin-top: 10px; font-size: 14px; }
-        .x-hl { display: none; }
-        .x-auth .x-acard { padding: 32px 24px; }
-        .x-afoot { padding: 0 20px 24px; }
-        .x-dipper { top: 14px; right: 12px; width: 120px; }
         .x-arow label, .x-auth .x-arow a { min-height: 44px; }
         .x-auth .x-arow a { min-width: 44px; justify-content: flex-end; padding-left: 8px; box-sizing: border-box; }
       }
@@ -1625,33 +1624,25 @@
     <aside class="x-drawer" id="drawer" aria-label="需求详情"></aside>
     <div class="x-modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="mtitle" hidden></div>
     <div class="x-auth" id="auth" hidden>
-      <div class="x-sky" aria-hidden="true">
-        <canvas id="skystars"></canvas>
-        <svg class="x-dipper" viewBox="0 0 300 200" focusable="false">
-          <path class="x-ptr" d="M229 111L261 41" />
-          <path d="M145 132L225 120L200 175L140 180ZM145 132L100 128L62 134L20 160" />
-          <circle cx="265" cy="32" r="2.6" />
-          <circle cx="225" cy="120" r="2.4" /><circle cx="200" cy="175" r="2" /><circle cx="140" cy="180" r="1.8" /><circle cx="145" cy="132" r="1.5" />
-          <circle cx="100" cy="128" r="2" /><circle cx="62" cy="134" r="2" /><circle cx="20" cy="160" r="1.9" />
-          <text x="234" y="126">天枢</text>
-        </svg>
-      </div>
       <div class="x-ashell">
-        <section class="x-brandp" aria-label="产品介绍">
-          <div class="x-blogo"><svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#2F6BFF" /><circle cx="16" cy="16" r="10.25" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width=".9" /><circle cx="23.25" cy="8.75" r="1.7" fill="#fff" /><circle cx="8.75" cy="23.25" r="1.25" fill="#fff" fill-opacity=".85" /><path d="M16 7.5Q17.1 14.9 24.5 16Q17.1 17.1 16 24.5Q14.9 17.1 7.5 16Q14.9 14.9 16 7.5Z" fill="#fff" /></svg><span class="x-bname">星枢 Matrix</span></div>
-          <p class="x-bpos">统一的云原生运维与研发效能平台</p>
-          <ul class="x-hl">
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5" /></svg>多集群 Kubernetes 管理</li>
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z" /><path d="m9 10 2.5 2L9 14M13 14.5h2.5" /></svg>堡垒机与审计</li>
-            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4" /></svg>可观测与 AI 运维</li>
+        <section class="x-art" aria-label="星枢 Matrix">
+          <img src="login-art2.jpg" alt="" />
+          <div class="x-blogo"><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect x=".5" y=".5" width="31" height="31" rx="7" fill="none" stroke="#F3EBDD" stroke-opacity=".6" /><circle cx="16" cy="16" r="10.25" fill="none" stroke="#F3EBDD" stroke-opacity=".5" stroke-width=".9" /><circle cx="23.25" cy="8.75" r="1.7" fill="#F3EBDD" /><circle cx="8.75" cy="23.25" r="1.25" fill="#F3EBDD" fill-opacity=".85" /><path d="M16 7.5Q17.1 14.9 24.5 16Q17.1 17.1 16 24.5Q14.9 17.1 7.5 16Q14.9 14.9 16 7.5Z" fill="#F3EBDD" /></svg><span class="x-bname">星枢 Matrix</span></div>
+          <h2 class="x-bhead">一个平台，管好从代码到生产</h2>
+          <p class="x-bpos">面向企业私有化部署的研发效能与云原生运维平台</p>
+          <ul class="x-feats">
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l8.5 4.9v9.2L12 21.5l-8.5-4.9V7.4z" /><circle cx="12" cy="12" r="3" /><path d="M12 2.5V9M20.5 7.4L14.6 10.5M3.5 7.4l5.9 3.1" /></svg><b>多集群 Kubernetes 纳管</b><span>集群、节点、工作负载统一管理，生产变更自动审批</span></li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="6" r="2.5" /><circle cx="5" cy="18" r="2.5" /><circle cx="19" cy="12" r="2.5" /><path d="M5 8.5v7M7.5 6h3a4 4 0 014 4v0M14.5 12h2" /></svg><b>CI/CD 流水线</b><span>构建、制品、灰度发布与一键回滚</span></li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 9l3 3-3 3M12.5 15H17" /></svg><b>堡垒机与审计</b><span>SSH 会话录像、高危命令拦截、全量操作留痕</span></li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M4 16l4.5-5 4 3L20 6" /><path d="M16 6h4v4" /></svg><b>可观测 + AI 运维</b><span>日志、指标、链路、告警，自然语言查询与诊断</span></li>
           </ul>
+          <p class="x-bcopy">© 星枢 Matrix · 私有化部署版</p>
         </section>
-        <div class="x-formp"><div class="x-acard" id="acard"></div></div>
+        <div class="x-formp"><div class="x-aform" id="acard"></div><p class="x-afoot">私有化部署版 v1.0</p></div>
       </div>
-      <p class="x-afoot">© 星枢 Matrix · 私有化部署版 v1.0</p>
     </div>
     <script>
-      // 登录星空：约 250 颗细小静止星点画在 canvas（直径 0.8–2px，不透明度 .25–.6）；固定种子，每次画面一致；无动画、无鼠标互动
+      // 登录页为暖白纯色底，不再绘制星空 canvas（保留空壳，元素不存在时直接返回）
       (function () {
         var cv = document.getElementById("skystars");
         if (!cv) return;
@@ -1926,17 +1917,19 @@
         const card = $("acard");
         if (view === "login") {
           let mem = ""; try { mem = localStorage.getItem("xs-remember") || ""; } catch {}
-          card.innerHTML = `<h1>登录</h1><p>使用平台账号登录</p>
+          card.innerHTML = `<h1>登录</h1><p>欢迎回来，请使用企业账号登录</p>
             <form class="x-af" id="lf" novalidate>
               <p class="x-aerr" id="lerr" role="alert" hidden></p>
-              <label><span>用户名</span><input class="x-input" name="u" autocomplete="username" placeholder="请输入用户名" value="${esc(mem)}" /></label>
+              <label><span>账号</span><input class="x-input" name="u" autocomplete="username" placeholder="请输入账号" value="${esc(mem)}" /></label>
               <label><span>密码</span><input class="x-input" name="p" type="password" autocomplete="current-password" placeholder="请输入密码" /></label>
               <div class="x-arow"><label><input type="checkbox" name="r"${mem ? " checked" : ""} />记住我</label><a href="#/login" id="lforgot">忘记密码</a></div>
               <button class="x-btn x-btn--pri" type="submit">登录</button>
             </form>
-            <p class="x-ahint">首次部署默认账号 admin · 初始密码见部署日志</p>`;
+            <div class="x-aor">或</div>
+            <button class="x-asso" type="button" id="lsso"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V5l8-2v18M12 7h8v14M7 8h2M7 12h2M7 16h2M15 11h2M15 15h2M2 21h20" /></svg>企业 SSO 登录</button>`;
           const f = $("lf"), el = f.elements, err = $("lerr");
           $("lforgot").onclick = (e) => { e.preventDefault(); toast("请联系平台管理员重置密码"); };
+          $("lsso").onclick = () => toast("企业 SSO 尚未配置，请联系平台管理员");
           (mem ? el.p : el.u).focus();
           f.addEventListener("submit", (e) => {
             e.preventDefault();
@@ -1963,7 +1956,7 @@
                 <ul class="x-rules" id="pwrules">${PW_RULES.map((r) => `<li>${r[0]}</li>`).join("")}<li>不能与初始密码相同</li></ul></label>
               <label><span>确认新密码</span><input class="x-input" name="cp" type="password" autocomplete="new-password" /></label>
               <button class="x-btn x-btn--pri" type="submit">确认修改</button>
-              <div class="x-arow"><span>当前账号：admin · ${ROLE}</span><a href="#/login" id="cback" style="color:var(--x-blue);text-decoration:none">返回登录</a></div>
+              <div class="x-arow"><span>当前账号：admin · ${ROLE}</span><a href="#/login" id="cback">返回登录</a></div>
             </form>`;
           const f = $("cf"), el = f.elements, err = $("cerr"), bars = f.querySelectorAll(".x-meter i"), lis = f.querySelectorAll(".x-rules li");
           el.cur.focus();
