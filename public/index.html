@@ -4460,7 +4460,7 @@
       ];
       const isSeed = (h) => HOST_DEMO.some((d) => d.ip === h.ip && d.n === h.n && d.spec === h.spec);
       const HOSTS = clLoad("xingshu-hosts", []).filter((h) => !isSeed(h)).map((h) => (h.ag === "安装中" ? { ...h, ag: "未安装" } : h));
-      const hs = { g: "全部" };
+      const hs = { g: "全部", sel: new Set() };
       const hostsKeep = () => clKeep("xingshu-hosts", HOSTS.filter((h) => !h.demo).map(({ p, ...h }) => h));
       function hostSync() {
         if (!demo) { for (let i = HOSTS.length - 1; i >= 0; i--) if (HOSTS[i].demo) HOSTS.splice(i, 1); return; }
@@ -4700,7 +4700,8 @@
         const agent = (h) => h.ag === "安装中" ? `<span class="x-hprog"><span class="x-bigprog"><i style="width:${h.p || 0}%"></i></span><small class="x-frac">安装中 ${h.p || 0}%</small></span>` : pillTag(h.ag, AG[h.ag] || "x-grey");
         el.innerHTML = phead(p.t, p.sub, '<button class="x-btn x-btn--pri" id="hImp">+ 导入主机</button>') + envNote(vis.length, HOSTS.length, "主机") +
           `<div class="x-hlay"><nav class="x-tree" aria-label="主机分组"><h2>分组</h2><ul>${tn("全部", "全部主机", vis.length)}<ul>${groups.map((g) => tn(g, g, vis.filter((h) => h.g === g).length) + "</li>").join("")}</ul></li></ul></nav>
-          <section class="x-panel">${bar(p.h, { q: "搜索主机名 / IP" })}${rows.length ? k8Table(["主机", "分组", "系统", "规格", "环境", "Agent", "操作"], rows.map((h) => { const i = HOSTS.indexOf(h); return k8Row("", [
+          <section class="x-panel">${bar(p.h, { q: "搜索主机名 / IP" })}<div class="x-batch"><span class="x-frac" id="hsn"></span><button class="x-btn" id="hBEnv">批量环境</button><button class="x-btn" id="hBBas">批量加入堡垒机</button><button class="x-btn" id="hBAg">批量安装 Agent</button><button class="x-btn" id="hBDel">批量移除</button></div>${rows.length ? k8Table(['<input type="checkbox" class="x-sel" id="hAllSel" aria-label="全选主机" />', "主机", "分组", "系统", "规格", "环境", "Agent", "操作"], rows.map((h) => { const i = HOSTS.indexOf(h); return k8Row("", [
+            `<input type="checkbox" class="x-sel" data-hsel="${i}" aria-label="选择 ${esc(h.n)}"${hs.sel.has(h.n) ? " checked" : ""} />`,
             `<span class="x-name">${esc(h.n)}</span><br /><span class="x-mono">${h.user ? esc(h.user) + "@" : ""}${esc(h.ip)}${h.port && h.port !== 22 ? ":" + h.port : ""}</span>`, esc(h.g), esc(h.os), esc(h.spec), envTag(h.env), agent(h),
             `<span class="x-kacts">${k8Act("hag", i, h.ag === "在线" ? "重装 Agent" : "安装 Agent", h.ag !== "安装中", "正在安装")}${k8Act("henv", i, "环境标签")}${k8Act("hmv", i, "移动分组")}${k8Act("hbas", i, inBastion(h) ? "已在堡垒机" : "加入堡垒机", !inBastion(h), "已是堡垒机资产")}${k8Act("hdel", i, "移除")}</span>`]); }))
             : `<p class="x-frac" style="margin:8px 0">${HOSTS.length ? "当前环境与分组下暂无主机。" : "还没有纳管主机，点「导入主机」开始。"}</p>`}</section></div>`;
@@ -4732,6 +4733,63 @@
         });
         on(el, "hdel", (i) => { const h = HOSTS[i]; k8Confirm(`移除主机 ${esc(h.n)}`, `移除后平台不再管理 <b>${esc(h.n)}（${esc(h.ip)}）</b>，已安装的 Agent 会在下次心跳时自行停止。`, "移除", () => { if (h.demo) HOST_GONE.add(h.ip); HOSTS.splice(HOSTS.indexOf(h), 1); hostsKeep(); clDraw(); toast(`已移除主机 ${h.n}`); }); });
         bindBar(el, p.h);
+        hostBatch(el, rows, groups);
+      }
+      // 主机批量操作：勾选后统一改环境、加入堡垒机、安装 Agent、移除
+      function hostBatch(el, rows, groups) {
+        const boxes = [...el.querySelectorAll("[data-hsel]")], all = $("hAllSel");
+        if (!all) return;
+        const picked = () => [...el.querySelectorAll("[data-hsel]:checked")].map((b) => HOSTS[+b.dataset.hsel]).filter(Boolean);
+        const sync = () => {
+          const n = picked().length, vis = boxes.filter((b) => !b.closest("tr").hidden);
+          $("hsn").textContent = n ? `已选 ${n} 台主机` : "勾选主机后可批量操作";
+          ["hBEnv", "hBBas", "hBAg", "hBDel"].forEach((id) => ($(id).disabled = !n));
+          all.checked = vis.length > 0 && vis.every((b) => b.checked);
+          all.indeterminate = !all.checked && vis.some((b) => b.checked);
+        };
+        boxes.forEach((b) => (b.onchange = () => { const h = HOSTS[+b.dataset.hsel]; if (h) { b.checked ? hs.sel.add(h.n) : hs.sel.delete(h.n); } sync(); }));
+        all.onchange = () => {
+          boxes.forEach((b) => { if (!b.closest("tr").hidden) b.checked = all.checked; });
+          hs.sel = new Set(boxes.filter((b) => b.checked).map((b) => HOSTS[+b.dataset.hsel]).filter(Boolean).map((h) => h.n));
+          sync();
+        };
+        $("hBEnv").onclick = () => {
+          const sel = picked(); if (!sel.length) return;
+          dlg(`批量修改环境 · ${sel.length} 台`, `<form class="x-form" id="hbeF" novalidate><p class="x-frac" style="margin:0">${sel.map((h) => esc(h.n)).join("、")}</p>${envField("生产")}<span class="x-err" id="hbeErr" role="alert" hidden></span></form>`,
+            '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="hbeF">应用</button>');
+          const f = $("hbeF"); envBind(f);
+          f.onsubmit = (e) => {
+            e.preventDefault();
+            const v = envRead(f, formBad("hbeErr")); if (!v) return;
+            sel.forEach((h) => (h.env = v)); hostsKeep(); closeAll(); hs.sel.clear(); clDraw();
+            toast(`已把 ${sel.length} 台主机改为「${v}」`);
+          };
+        };
+        $("hBBas").onclick = () => {
+          const sel = picked().filter((h) => !inBastion(h));
+          if (!sel.length) return toast("所选主机都已在堡垒机中");
+          sel.forEach((h) => {
+            const win = /windows/i.test(h.os);
+            adm("资产").rows.push([h.n, h.ip, win ? "Windows" : "Linux", win ? "RDP" : "SSH", h.ag === "在线" ? "在线" : "离线"]);
+          });
+          hs.sel.clear(); clDraw(); toast(`已把 ${sel.length} 台主机加入堡垒机资产`);
+        };
+        $("hBAg").onclick = () => {
+          const sel = picked().filter((h) => h.ag !== "在线" && h.ag !== "安装中");
+          if (!sel.length) return toast("所选主机都已在线或正在安装");
+          sel.forEach((h) => hostAgent(h));
+          toast(`已开始为 ${sel.length} 台主机安装 Agent`);
+        };
+        $("hBDel").onclick = () => {
+          const sel = picked(); if (!sel.length) return;
+          k8Confirm(`移除 ${sel.length} 台主机`, `将从平台移除 <b>${sel.map((h) => esc(h.n)).join("、")}</b>，已安装的 Agent 会在下次心跳时停止。`, "移除", () => {
+            sel.forEach((h) => { if (h.demo) HOST_GONE.add(h.ip); const i = HOSTS.indexOf(h); if (i >= 0) HOSTS.splice(i, 1); });
+            hostsKeep(); hs.sel.clear(); clDraw(); toast(`已移除 ${sel.length} 台主机`);
+          });
+        };
+        bindBar(el, K8_PAGES.find((x) => x.k === "hosts").h);
+        el.querySelector("[data-bq]")?.addEventListener("input", sync);
+        sync();
       }
       function hostAgent(h) {
         h.ag = "安装中"; h.p = 0; clDraw();
