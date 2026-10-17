@@ -4542,6 +4542,12 @@
       const ENV_TAGS = clLoad("xingshu-env-tags", [["生产", "#f5222d"], ["预发", "#fa8c16"], ["测试", "#1677ff"], ["开发", "#52c41a"]]);
       const ENV_SW = ["#f5222d", "#fa8c16", "#fadb14", "#52c41a", "#13c2c2", "#1677ff", "#722ed1", "#eb2f96", "#8c8c8c"];
       const envNorm = (e) => (e === "dev" ? "开发" : e);
+      // 资源本身没有环境字段时，用命名空间推断：prod/pre/test/default 等
+      const NS_ENV = { prod: "生产", production: "生产", monitoring: "生产", "kube-system": "生产", "istio-system": "生产", pre: "预发", staging: "预发", test: "测试", qa: "测试", dev: "开发", default: "开发" };
+      const nsEnv = (ns) => NS_ENV[String(ns || "").toLowerCase()] || (/prod|prd/i.test(ns) ? "生产" : /test|qa/i.test(ns) ? "测试" : /pre|stage/i.test(ns) ? "预发" : "开发");
+      const ENV_NAME = ["生产", "预发", "测试", "开发"];
+      const asEnv = (v) => (ENV_NAME.includes(v) ? v : nsEnv(v));
+      const envRows = (rows, f) => (nav.env === "全部" ? rows : rows.filter((r) => envOk(asEnv(f(r)))));
       const envColor = (e) => (ENV_TAGS.find((t) => t[0] === envNorm(e)) || [0, "#8c8c8c"])[1];
       const envTag = (e) => `<span class="x-tag x-env" style="--e:${envColor(e)}">${esc(envNorm(e) || "未标记")}</span>`;
       const USER_CL = clLoad("xingshu-clusters", []).map((c) => ({ ...c, st: "运行中" }));
@@ -5282,9 +5288,9 @@
       const SEC = [
         { k: "audit", t: "运维审计", sub: "堡垒机会话中执行的每条命令，可按用户、资产与结果追溯", q: "搜索用户 / 资产 / 命令", fc: "结果", act: "导出记录",
           d: T("操作审计", "时间 用户 资产 命令 结果", ["10-14 10:21|李明|web-01|systemctl restart nginx|成功", "10-14 09:47|王芳|db-01|mysqldump orders|告警", "10-13 22:10|张伟|web-01|rm -rf /tmp/cache|成功"]) },
-        { k: "assets", t: "资产", i: "console", sub: "纳管的主机与登录协议，在线状态实时更新", q: "搜索主机名 / IP", fc: "状态", act: "+ 添加资产", d: adm("资产") },
-        { k: "accounts", t: "账号", i: "user", sub: "资产上的登录账号，区分特权账号与普通账号", q: "搜索账号 / 资产", fc: "类型", act: "+ 新建账号", d: adm("账号") },
-        { k: "policy", t: "授权策略", i: "lock", sub: "按用户组授权可登录的资产与账号，并设定有效期", q: "搜索策略 / 用户组", fc: "资产", act: "+ 新建策略", d: adm("授权策略") },
+        { k: "assets", t: "资产", i: "console", view: renderBasAssets },
+        { k: "accounts", t: "账号", i: "user", view: renderBasAccounts },
+        { k: "policy", t: "授权策略", i: "lock", view: renderBasPolicy },
         { k: "cmd", t: "命令过滤", i: "shield", sub: "会话中命中规则的命令将被拒绝或告警", q: "搜索命令", fc: "动作", act: "+ 新建规则", d: adm("命令过滤") },
         { k: "mask", t: "数据脱敏", i: "eye", sub: "查询结果中的敏感字段按规则脱敏后展示", q: "搜索字段", fc: "类型", act: "+ 新建规则", d: adm("数据脱敏规则") },
         { k: "db", t: "数据库审查", i: "check", sub: "SQL 变更以工单提交，审核通过后执行，高危语句驳回", q: "搜索工单 / SQL", fc: "状态", act: "+ 提交工单",
@@ -5986,7 +5992,18 @@
         if (!out.name && ip) { out.name = "host-" + ip[1].replace(/\./g, "-"); hit.push("名称 host-" + ip[1].replace(/\./g, "-")); }
         return { ...out, hit: hit.join("、") };
       }
+      // 连接器状态：SSH 需要后端 WebSocket，RDP/VNC 需要 guacd；前端没有对应通道时为 false
+      const BAS_CONN = () => ({ ssh: false, sftp: false, rdp: false, vnc: false, mysql: false, postgresql: false, redis: false });
+      function basNoConnector(host, proto) {
+        const need = { RDP: "guacd 协议代理（远程桌面）", VNC: "guacd 协议代理（VNC）", SFTP: "后端 bastion 模块 + WebSocket 通道", SSH: "后端 bastion 模块 + WebSocket 通道" }[proto] || "对应协议代理";
+        dlg(`无法连接 ${esc(host)} · ${esc(proto)}`, `<div class="x-form">
+          <p class="x-aerr" role="alert">连接器未配置：${esc(need)} 未部署，本次没有建立会话，也没有写入审计。</p>
+          <dl class="x-sum"><dt>需要组件</dt><dd>${esc(need)}</dd><dt>后端路径</dt><dd class="x-mono">/api/v1/bastion/connect</dd><dt>当前状态</dt><dd>未连接</dd></dl>
+          <p class="x-frac" style="margin:0">打开「演示数据」后会以演示会话运行，并明确标注为演示内容。</p></div>`,
+          '<button class="x-btn" data-close>知道了</button>');
+      }
       function basConnect(r, proto) {
+        if (!demo && !BAS_CONN()[proto.toLowerCase()]) return basNoConnector(r[0], proto);
         if (r[4] !== "在线") return toast(`${r[0]} 离线，无法连接`);
         const accs = basAccts(r), go = (u) => govGate(r, u, () => { closeAll(); proto === "SFTP" ? basSftp(r[0], u) : basOpen(r, u, proto); });
         if (accs.length < 2) return go(accs[0][0]);
@@ -5995,7 +6012,7 @@
         $("bacf").onsubmit = (e) => { e.preventDefault(); go($("bacf").elements.acct.value); };
       }
       function basOpen(r, acct, proto, quiet) {
-        const m = basMeta(r), s = { id: ++BAS.seq, host: r[0], ip: r[1], os: m.os, win: r[2] === "Windows", proto, acct, lines: [], hist: [], hi: 0, inp: "", res: "1600×900", open: true, wins: proto === "SSH" ? [] : ["main"], cad: false, clip: "", t0: Date.now(), start: basNow(), user: gMe(), rec: [], wait: null };
+        const m = basMeta(r), s = { demo: !!demo, id: ++BAS.seq, host: r[0], ip: r[1], os: m.os, win: r[2] === "Windows", proto, acct, lines: [], hist: [], hi: 0, inp: "", res: "1600×900", open: true, wins: proto === "SSH" ? [] : ["main"], cad: false, clip: "", t0: Date.now(), start: basNow(), user: gMe(), rec: [], wait: null };
         if (proto === "SSH") s.lines.push(`<span class="d">已通过堡垒机连接 ${esc(acct)}@${esc(r[0])}（${esc(r[1])}），会话全程录像并受「命令过滤」约束</span>`, `Last login: ${new Date().toDateString()} from 10.0.0.5`);
         BAS.tabs.push(s); if (!quiet) BAS.cur = BAS.tabs.length - 1;
         basAudit(r[0], `会话开始 · ${proto}（${acct}）`);
@@ -6075,9 +6092,9 @@
         const T = BAS.tabs;
         BAS.tick ||= setInterval(() => document.querySelectorAll("[data-bdur]").forEach((b) => (b.textContent = basDur(Date.now() - +b.dataset.bdur))), 1000);
         if (BAS.cur >= T.length) BAS.cur = Math.max(0, T.length - 1);
-        const s = T[BAS.cur], head = phead("Web 终端", "经堡垒机打开的 SSH 与远程桌面会话，命令按「命令过滤」实时拦截，每个会话记入运维审计", '<a class="x-btn x-bfile" href="#/bastion/assets">从资产连接</a>');
+        const s = T[BAS.cur], head = phead("Web 终端", "经堡垒机打开的 SSH 与远程桌面会话，命令按「命令过滤」实时拦截，每个会话记入运维审计", (T[BAS.cur] && T[BAS.cur].demo ? '<span class="x-tag x-orange x-tag--s">演示会话</span>' : "") + '<a class="x-btn x-bfile" href="#/bastion/assets">从资产连接</a>');
         if (!s) {
-          const on = adm("资产").rows.filter((r) => r[4] === "在线" && r[3] !== "SFTP");
+          const on = BAS_A.filter((x) => x.st === "在线" && x.proto.some((q) => ["SSH", "RDP", "VNC"].includes(q))).map((x) => [x.n, x.ip, x.os, x.proto.find((q) => ["SSH", "RDP", "VNC"].includes(q)), x.st]);
           el.innerHTML = head + `<section class="x-panel"><p class="x-frac" style="margin:0 0 12px">还没有会话。在「资产」中点「连接」，或直接打开：</p><div class="x-btool">${on.map((r) => `<button class="x-btn" data-qc="${esc(r[1])}">${esc(r[0])} · ${esc(r[3])}</button>`).join("")}</div></section>`;
           el.querySelectorAll("[data-qc]").forEach((b) => (b.onclick = () => { const r = on.find((x) => x[1] === b.dataset.qc); basConnect(r, r[3]); }));
           return;
@@ -6343,13 +6360,134 @@
 
       // 会话管理: 在线 (实时监控 / 强制断开) and 历史 (录像回放)
       function govStop() { const p = GOV.play; if (p && p.timer) { clearInterval(p.timer); p.timer = 0; } if (p) p.on = false; }
+      // 堡垒机资产模型：来源（手动/K8s/云/Agent）、协议、环境、资产组、标签与最近连通性探测
+      const BAS_A = [
+        { n: "web-01", ip: "10.0.1.11", os: "Linux · Rocky 9", env: "生产", grp: "Web 集群", proto: ["SSH", "SFTP"], port: 22, src: "K8s 同步", tags: ["nginx", "边缘"], st: "在线", chk: "2 分钟前" },
+        { n: "db-01", ip: "10.0.1.21", os: "Linux · Rocky 9", env: "生产", grp: "数据库", proto: ["SSH", "MySQL"], port: 22, src: "手动", tags: ["mysql", "主库"], st: "在线", chk: "1 分钟前" },
+        { n: "mq-01", ip: "10.0.1.61", os: "Linux · Ubuntu 22.04", env: "生产", grp: "中间件", proto: ["SSH"], port: 22, src: "Agent", tags: ["kafka"], st: "在线", chk: "5 分钟前" },
+        { n: "win-01", ip: "10.0.1.31", os: "Windows Server 2022", env: "生产", grp: "办公", proto: ["RDP"], port: 3389, src: "云同步", tags: ["财务"], st: "离线", chk: "失败 · 12 分钟前" },
+        { n: "win-02", ip: "10.0.1.32", os: "Windows Server 2022", env: "测试", grp: "办公", proto: ["RDP"], port: 3389, src: "云同步", tags: [], st: "在线", chk: "3 分钟前" },
+        { n: "desk-01", ip: "10.0.1.41", os: "Linux · Debian 12", env: "测试", grp: "研发桌面", proto: ["VNC"], port: 5900, src: "手动", tags: ["灰度"], st: "在线", chk: "6 分钟前" },
+        { n: "files-01", ip: "10.0.1.51", os: "Linux · Debian 12", env: "预发", grp: "文件服务", proto: ["SFTP"], port: 22, src: "手动", tags: ["备份"], st: "在线", chk: "4 分钟前" },
+        { n: "k8s-master", ip: "10.0.1.11", os: "Linux · Talos", env: "开发", grp: "集群节点", proto: ["SSH"], port: 22, src: "K8s 同步", tags: ["control-plane"], st: "在线", chk: "7 分钟前" },
+      ];
+      // 凭据只记录托管方式与轮换状态，页面不保存也不回显明文
+      const BAS_AC = [
+        { a: "root", host: "web-01", type: "特权", cred: "托管", rot: "30 天", last: "3 天前", by: "系统" },
+        { a: "deploy", host: "web-01", type: "普通", cred: "托管", rot: "90 天", last: "12 天前", by: "系统" },
+        { a: "dba", host: "db-01", type: "普通", cred: "托管", rot: "30 天", last: "1 天前", by: "系统" },
+        { a: "root", host: "db-01", type: "特权", cred: "一次性", rot: "会话结束", last: "—", by: "审批发放" },
+        { a: "Administrator", host: "win-02", type: "特权", cred: "共享", rot: "不轮换", last: "—", by: "管理员" },
+        { a: "ops", host: "mq-01", type: "普通", cred: "托管", rot: "90 天", last: "20 天前", by: "系统" },
+        { a: "sftpuser", host: "files-01", type: "普通", cred: "共享", rot: "不轮换", last: "—", by: "管理员" },
+      ];
+      // 授权：主体 × 资产 × 账号 × 动作 × 生效时间窗
+      const BAS_POL = [
+        { n: "研发只读", who: "研发一部", gran: "用户组", ast: "Web 集群", acct: "deploy", acts: ["连接", "下载"], win: "工作日 09:00-20:00", exp: "2026-12-31", st: "生效" },
+        { n: "DBA 运维", who: "DBA 组", gran: "用户组", ast: "数据库", acct: "dba", acts: ["连接", "上传", "下载"], win: "7×24", exp: "长期", st: "生效" },
+        { n: "值班临时授权", who: "李明", gran: "用户", ast: "web-01, db-01", acct: "root", acts: ["连接"], win: "今日 20:00-24:00", exp: "2026-10-17", st: "已到期" },
+      ];
+      const BAS_PROTOS = ["SSH", "SFTP", "RDP", "VNC", "MySQL", "PostgreSQL", "Redis"];
+      const basAEnv = () => envRows(BAS_A.map((x, i) => ({ x, i })), (v) => v.x.env);
+      function basAssetTest(i, el) {
+        const x = BAS_A[i];
+        // 没有真实连接器时如实报告，不伪造成功
+        dlg(`连通性测试 · ${esc(x.n)}`, `<div class="x-form"><dl class="x-sum"><dt>资产</dt><dd>${esc(x.ip)}:${x.port}</dd><dt>协议</dt><dd>${x.proto.join(" / ")}</dd><dt>来源</dt><dd>${esc(x.src)}</dd></dl><p class="x-aerr" role="status">连接器未配置：当前环境没有可用的 SSH / RDP / VNC 代理，无法真实探测该资产。资产状态沿用最近一次上报结果（${esc(x.chk)}）。</p></div>`, '<button class="x-btn" data-close>关闭</button>');
+      }
+      function basAssetForm(i, done) {
+        const isNew = i < 0, x = isNew ? { n: "", ip: "", os: "Linux", env: nav.env === "全部" ? "生产" : nav.env, grp: "未分组", proto: ["SSH"], port: 22, src: "手动", tags: [], st: "待探测", chk: "—" } : BAS_A[i];
+        dlg(isNew ? "添加资产" : `编辑资产 · ${esc(x.n)}`, `<form class="x-form" id="baf" novalidate>
+          <div class="x-row2"><label><span class="x-req">资产名称</span><input class="x-input" name="n" value="${esc(x.n)}" autocomplete="off" placeholder="web-01" /></label>
+            <label><span class="x-req">IP / 域名</span><input class="x-input x-mono" name="ip" value="${esc(x.ip)}" autocomplete="off" placeholder="10.0.1.11" /></label></div>
+          <div class="x-row2"><label><span>来源</span><select class="x-select" name="src">${opt(["手动", "K8s 同步", "云同步", "Agent"], x.src)}</select></label>
+            <label><span>环境</span><select class="x-select" name="env">${opt(["生产", "预发", "测试", "开发"], x.env)}</select></label></div>
+          <div class="x-row2"><label><span>资产组</span><input class="x-input" name="grp" value="${esc(x.grp)}" autocomplete="off" placeholder="Web 集群" /></label>
+            <label><span>标签（逗号分隔）</span><input class="x-input" name="tags" value="${esc((x.tags || []).join(", "))}" autocomplete="off" placeholder="nginx, 边缘" /></label></div>
+          <fieldset class="x-radios"><legend>协议（可多选）</legend>${BAS_PROTOS.map((q) => `<label><input type="checkbox" name="proto" value="${q}"${x.proto.includes(q) ? " checked" : ""} />${q}</label>`).join("")}</fieldset>
+          <div class="x-row2"><label><span class="x-req">默认端口</span><input class="x-input" name="port" inputmode="numeric" value="${x.port}" /></label>
+            <label><span>操作系统</span><input class="x-input" name="os" value="${esc(x.os)}" autocomplete="off" /></label></div>
+          <p class="x-frac" style="margin:0">凭据不在此填写：账号与密码、私钥、kubeconfig 一律由后端加密托管，页面只选择账号。</p>
+          <span class="x-err" id="baerr" role="alert" hidden></span></form>`,
+          '<button class="x-btn" data-close>取消</button><button class="x-btn" type="button" id="batest">连通性测试</button><button class="x-btn x-btn--pri" type="submit" form="baf">' + (isNew ? "保存" : "保存") + '</button>');
+        const f = $("baf"), err = $("baerr");
+        $("batest").onclick = () => { const host = f.elements.ip.value.trim(); dlg(`连通性测试 · ${esc(host || "未填写")}`, `<div class="x-form"><p class="x-aerr" role="status">连接器未配置：当前环境没有 SSH / RDP / VNC 代理，测试无法执行。部署连接器后可探测端口与登录可用性。</p></div>`, '<button class="x-btn" data-close>关闭</button>'); };
+        f.onsubmit = (e) => {
+          e.preventDefault();
+          const bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+          const n = f.elements.n.value.trim(), ip = f.elements.ip.value.trim();
+          const protos = [...f.querySelectorAll("[name=proto]:checked")].map((b) => b.value);
+          const port = +f.elements.port.value;
+          if (!/^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(n)) return bad("名称可用小写字母、数字、-、_、.", f.elements.n);
+          if (!/^([a-z0-9-]+\.)+[a-z]{2,}$|^(\d{1,3}\.){3}\d{1,3}$/i.test(ip)) return bad("请填写合法 IP 或域名", f.elements.ip);
+          if (!protos.length) return bad("至少选择一个协议", f.elements.n);
+          if (!Number.isInteger(port) || port < 1 || port > 65535) return bad("端口需为 1–65535", f.elements.port);
+          if (BAS_A.some((o, j) => j !== i && o.ip === ip)) return bad("该 IP 已被其它资产占用", f.elements.ip);
+          const row = { n, ip, os: f.elements.os.value.trim() || "Linux", env: f.elements.env.value, grp: f.elements.grp.value.trim() || "未分组",
+            proto: protos, port, src: f.elements.src.value, tags: f.elements.tags.value.split(",").map((v) => v.trim()).filter(Boolean), st: isNew ? "待探测" : x.st, chk: isNew ? "—" : x.chk };
+          if (isNew) BAS_A.unshift(row); else Object.assign(x, row);
+          closeAll(); done && done(); toast(isNew ? `已添加资产 ${n}` : `已保存资产 ${n}`);
+        };
+      }
+      function renderBasAssets(el) {
+        const all = BAS_A, list = basAEnv();
+        const rows = list.map(({ x, i }) => {
+          const canConn = ["SSH", "SFTP", "RDP", "VNC"].some((q) => x.proto.includes(q));
+          return [
+            `<span class="x-name">${esc(x.n)}</span><div class="x-frac x-mono" style="margin-top:2px">${esc(x.ip)}:${x.port}</div>`,
+            envTag(x.env),
+            esc(x.grp),
+            `<span class="x-tags">${x.proto.map((q) => `<span class="x-tag x-grey x-tag--s">${esc(q)}</span>`).join("")}</span>`,
+            esc(x.src),
+            pillTag(x.st, x.st === "在线" ? "x-green" : x.st === "离线" ? "x-red" : "x-orange"),
+            `<span class="x-kacts">${canConn ? `<button class="x-btn x-btn--pri" data-conn="${i}" data-proto="${esc(x.proto.find((q) => ["SSH", "SFTP", "RDP", "VNC"].includes(q)))}"${x.st === "在线" ? "" : ' disabled title="资产离线，无法连接"'}>连接</button>` : ""}<button class="x-act" data-batest="${i}">测试</button><button class="x-act" data-baedit="${i}">编辑</button><button class="x-act" data-badel="${i}">删除</button></span>`,
+          ];
+        });
+        el.innerHTML = phead("资产", "按环境、资产组与协议纳管主机；凭据由后端托管，页面不保存明文") +
+          `<div class="x-panel">${bar("#/bastion/assets", { q: "搜索名称 / IP / 标签", fl: "环境", fo: ["生产", "预发", "测试", "开发"], act: "+ 添加资产", id: "basNewA" })}
+          ${!list.length ? `<p class="x-empty">「${esc(nav.env)}」环境下暂无资产，切换顶栏环境或添加资产。</p>` : tbl(["资产", "环境", "资产组", "协议", "来源", "状态", "操作"], rows)}
+          ${envNote(list.length, all.length, "资产")}
+          <p class="x-frac" style="margin:8px 0 0">SSH 使用后端 WebSocket 通道；RDP / VNC 需要 guacd 代理。</p>
+          <p class="x-frac" style="margin:4px 0 0">连接器状态：${demo ? "演示模式（会话为演示，标注「演示」）" : "SSH 未配置 · RDP/VNC 未配置（guacd）"}</p></div>`;
+        $("basNewA").onclick = () => basAssetForm(-1, () => renderBasAssets(el));
+        const pick = (a, fn) => el.querySelectorAll(`[data-ba${a}]`).forEach((b) => (b.onclick = () => fn(+b.dataset[`ba${a}`])));
+        pick("test", (i) => basAssetTest(i, el));
+        pick("edit", (i) => basAssetForm(i, () => renderBasAssets(el)));
+        pick("del", (i) => {
+          const x = BAS_A[i];
+          k8Confirm("删除资产", `确定删除 <b>${esc(x.n)}</b>（${esc(x.ip)}）？关联账号与授权会一并解除。`, "删除", () => { BAS_A.splice(i, 1); renderBasAssets(el); toast(`已删除资产 ${x.n}`); });
+        });
+        el.querySelectorAll("[data-conn]").forEach((b) => (b.onclick = () => {
+          const x = BAS_A[+b.dataset.conn], proto = b.dataset.proto;
+          if (x.st !== "在线") return toast(`${x.n} 当前离线，无法连接`);
+          basConnect([x.n, x.ip, x.os, proto, x.st], proto);
+        }));
+        bindBar(el, "#/bastion/assets");
+      }
+      function renderBasAccounts(el) {
+        const list = envRows(BAS_AC.map((a, i) => ({ a, i })), (v) => (BAS_A.find((x) => x.n === v.a.host) || {}).env);
+        el.innerHTML = phead("账号", "资产上的登录账号与凭据托管方式；密码与私钥只保存在后端") +
+          `<div class="x-panel">${tbl(["账号", "资产", "类型", "凭据", "轮换", "最近轮换", "操作"], list.map(({ a, i }) => [`<span class="x-name x-mono">${esc(a.a)}</span>`, `<b>${esc(a.host)}</b>`, pillTag(a.type, a.type === "特权" ? "x-red" : "x-grey"), esc(a.cred), esc(a.rot), esc(a.last),
+            `<span class="x-kacts"><button class="x-act" data-accrot="${i}">轮换</button><button class="x-act" data-accdel="${i}">删除</button></span>`]))}
+          ${envNote(list.length, BAS_AC.length, "账号")}
+          <p class="x-frac" style="margin:8px 0 0">托管账号由系统按周期自动轮换；一次性账号在会话结束后立即失效；共享账号不轮换，建议逐步迁移。</p></div>`;
+        el.querySelectorAll("[data-accrot]").forEach((b) => (b.onclick = () => { const a = BAS_AC[+b.dataset.accrot]; if (a.cred === "共享") return toast(`${a.a}@${a.host} 是共享账号，需先改为托管`); a.last = "刚刚"; renderBasAccounts(el); toast(`已提交 ${a.a}@${a.host} 的凭据轮换`); }));
+        el.querySelectorAll("[data-accdel]").forEach((b) => (b.onclick = () => { const a = BAS_AC[+b.dataset.accdel]; k8Confirm("删除账号", `确定删除 <b>${esc(a.a)}@${esc(a.host)}</b>？使用该账号的授权会失效。`, "删除", () => { BAS_AC.splice(+b.dataset.accdel, 1); renderBasAccounts(el); toast("已删除账号"); }); }));
+      }
+      function renderBasPolicy(el) {
+        const list = envRows(BAS_POL.map((p, i) => ({ p, i })), (v) => (/生产|prod/.test(v.p.ast) || v.p.ast.includes("web-01") || v.p.ast.includes("db-01") ? "生产" : "测试"));
+        el.innerHTML = phead("授权策略", "主体 × 资产 × 账号 × 动作 × 时间窗；到期自动失效") +
+          `<div class="x-panel">${tbl(["策略", "主体", "资产", "账号", "动作", "时间窗", "到期", "状态"], list.map(({ p, i }) => [`<span class="x-name">${esc(p.n)}</span>`, `${esc(p.who)}<div class="x-frac">${esc(p.gran)}</div>`, esc(p.ast), `<span class="x-mono">${esc(p.acct)}</span>`,
+            `<span class="x-tags">${p.acts.map((x) => `<span class="x-tag x-grey x-tag--s">${x}</span>`).join("")}</span>`, esc(p.win), esc(p.exp), pillTag(p.st, p.st === "生效" ? "x-green" : "x-grey")]))}
+          ${envNote(list.length, BAS_POL.length, "策略")}
+          <p class="x-frac" style="margin:8px 0 0">授权只决定能否连接，不代替审批：需审批的动作会进入「审批工单」。</p></div>`;
+      }
       function renderSess(el) {
         const live = BAS.tabs.filter((s) => s.open), H = GOV.hist, kill = (s) => govKill(s, `已被管理员 ${gMe()} 强制断开`);
         if (!GOV.play || !document.body.contains($("rp"))) govStop();
         el.innerHTML = phead("会话管理", "在线会话可实时监控与强制断开；历史会话全程录像，可按命令时间线回放") +
           `<section class="x-panel"><div class="x-btool">${["在线", "历史"].map((t) => `<button class="x-seg" data-gtab="${t}" aria-pressed="${GOV.tab === t}">${t} · ${t === "在线" ? live.length : H.length}</button>`).join("")}</div>
           ${GOV.tab === "在线"
-            ? live.length ? tbl(["用户", "资产", "账号", "协议", "开始", "时长", "命令", "操作"], live.map((s) => { const i = BAS.tabs.indexOf(s); return [esc(s.user), `<b>${esc(s.host)}</b> <span class="x-frac">${esc(s.ip)}</span>`, esc(s.acct), s.proto, s.start, `<span class="x-mono" data-up="${s.t0}">${gMmss((Date.now() - s.t0) / 1000)}</span>`, s.wait ? pillTag("待审批", "x-orange") : s.rec.length, `<span class="x-kacts">${k8Act("gmon", i, "实时监控")}${k8Act("gkill", i, "强制断开")}</span>`]; }))
+            ? live.length ? tbl(["用户", "资产", "账号", "协议", "开始", "时长", "命令", "操作"], live.map((s) => { const i = BAS.tabs.indexOf(s); return [esc(s.user) + (s.demo ? ' <span class="x-tag x-orange x-tag--s">演示</span>' : ""), `<b>${esc(s.host)}</b> <span class="x-frac">${esc(s.ip)}</span>`, esc(s.acct), s.proto, s.start, `<span class="x-mono" data-up="${s.t0}">${gMmss((Date.now() - s.t0) / 1000)}</span>`, s.wait ? pillTag("待审批", "x-orange") : s.rec.length, `<span class="x-kacts">${k8Act("gmon", i, "实时监控")}${k8Act("gkill", i, "强制断开")}</span>`]; }))
               : '<p class="x-frac">当前没有在线会话。在「资产」中点「连接」即可产生会话。</p>'
             : tbl(["用户", "资产", "账号", "协议", "开始", "时长", "命令", "高危", "结束原因", "操作"], H.map((h, i) => { const n = h.rec.filter((e) => gRisk(e.risk)).length; return [esc(h.u), `<b>${esc(h.host)}</b>`, esc(h.acct), h.proto, h.start, gMmss(h.dur), h.rec.length, n ? pillTag(n + " 条", "x-red") : "—", `<span class="x-frac">${esc(h.why)}</span>`, k8Act("gplay", i, "回放")]; }))}</section>
           ${GOV.play ? govPlayer() : ""}`;
@@ -7571,7 +7709,7 @@
         crC(["test.xingshu.com", "api-test.xingshu.com"], "test", "test-xingshu-com-tls", "Let's Encrypt", "letsencrypt-staging", "user-center-test", 45, true),
         crC(["harbor.xingshu.com"], "default", "harbor-tls", "内部 CA", "internal-ca", "harbor", 330, false),
       ];
-      const crL = () => CRS.filter((c) => demo || !c.demo);
+      const crL = () => envRows(CRS.filter((c) => demo || !c.demo), (c) => c.ns);
       const crLeft = (c) => Math.ceil((c.exp - Date.now()) / CR_DAY);
       const crTag = (c) => { if (c.st === "签发中") return pillTag("签发中", "x-blue"); const n = crLeft(c);
         return n < 0 ? pillTag(`已过期 ${-n} 天`, "x-red") : pillTag(`剩 ${n} 天`, n < 30 ? "x-orange" : "x-green"); };
@@ -8552,17 +8690,17 @@
         nodes: () => `<section class="x-panel">${ndTable(K8.nodes.filter((x) => envOk(clEnvOf(x.c))))}
           ${nav.env !== "全部" ? `<p class="x-frac" style="margin:8px 0 0">已按顶栏环境「${esc(nav.env)}」筛选集群节点。</p>` : ""}
           <p class="x-frac" style="margin:8px 0 0">封锁后节点不再接收新 Pod；驱逐会先封锁节点，再迁出 DaemonSet 之外的 Pod。</p></section>`,
-        workloads: () => `<section class="x-panel">${k8Table(["名称", "类型", "命名空间", "就绪", "镜像", "状态", "更新", "操作"], K8.wl.map((w, i) => { const [s, c] = wlSt(w); return k8Row(` data-w="${i}" tabindex="0" aria-label="查看 ${w.k} ${w.n} 详情"`, [
+        workloads: () => { const WL = envRows(K8.wl.map((w, i) => ({ w, i })), (x) => x.w.ns); return `<section class="x-panel">${!WL.length ? `<p class="x-empty">「${esc(nav.env)}」环境下暂无工作负载，切换顶栏环境可查看其它环境。</p>` : k8Table(["名称", "类型", "命名空间", "就绪", "镜像", "状态", "更新", "操作"], WL.map(({ w, i }) => { const [s, c] = wlSt(w); return k8Row(` data-w="${i}" tabindex="0" aria-label="查看 ${w.k} ${w.n} 详情"`, [
           `<span class="x-name">${esc(w.n)}</span>`, w.k, w.ns, w.k === "CronJob" ? `<span class="x-mono">${esc(w.cron)}</span>` : `${w.ready[0]}/${w.ready[1]}`,
           `<span class="x-mono">${esc(w.img.replace(KREG, ""))}</span>`, pillTag(s, c), `<span class="x-frac">${w.upd}</span>`,
-          `<span class="x-kacts">${k8Act("scale", i, "扩缩容", canScale(w), `${w.k} 不支持扩缩容`)}${k8Act("restart", i, "重启", !["Job", "CronJob"].includes(w.k), `${w.k} 无需重启`)}${k8Act("undo", i, "回滚", canRoll(w) && w.revs.length > 1, canRoll(w) ? "暂无历史版本" : `${w.k} 不支持回滚`)}${k8Act("yaml", i, "编辑 YAML")}${k8Act("shell", i, "Shell", !["Job", "CronJob"].includes(w.k), `${w.k} 没有运行中的容器`)}${k8Act("del", i, "删除")}</span>`]); }), false)}</section>`,
-        config: () => `<section class="x-panel x-setform">${tfHead("ConfigMap", `<span class="x-frac">${K8.cm.length} 个</span>`)}${k8Table(["名称", "命名空间", "数据项", "更新", "操作"], K8.cm.map((c, i) => k8Row("", [
+          `<span class="x-kacts">${k8Act("scale", i, "扩缩容", canScale(w), `${w.k} 不支持扩缩容`)}${k8Act("restart", i, "重启", !["Job", "CronJob"].includes(w.k), `${w.k} 无需重启`)}${k8Act("undo", i, "回滚", canRoll(w) && w.revs.length > 1, canRoll(w) ? "暂无历史版本" : `${w.k} 不支持回滚`)}${k8Act("yaml", i, "编辑 YAML")}${k8Act("shell", i, "Shell", !["Job", "CronJob"].includes(w.k), `${w.k} 没有运行中的容器`)}${k8Act("del", i, "删除")}</span>`]); }), false)}${envNote(WL.length, K8.wl.length, "工作负载")}</section>`; },
+        config: () => { const CM = envRows(K8.cm.map((c, i) => ({ c, i })), (x) => x.c.ns), SECR = envRows(K8.sec.map((c, i) => ({ c, i })), (x) => x.c.ns); return `<section class="x-panel x-setform">${tfHead("ConfigMap", `<span class="x-frac">${CM.length} 个</span>`)}${!CM.length ? `<p class="x-empty">「${esc(nav.env)}」环境下暂无 ConfigMap，切换顶栏环境可查看其它环境。</p>` : k8Table(["名称", "命名空间", "数据项", "更新", "操作"], CM.map(({ c, i }) => k8Row("", [
           `<span class="x-name">${esc(c.n)}</span>`, c.ns, `<span class="x-tags">${Object.keys(c.data).map((k) => `<span class="x-tag x-grey x-tag--s">${esc(k)}</span>`).join(" ")}</span>`, `<span class="x-frac">${c.upd}</span>`,
-          `<span class="x-kacts">${k8Act("cmv", i, "查看")}${k8Act("cmy", i, "编辑 YAML")}${k8Act("cmd", i, "删除")}</span>`])))}</section>
-          <section class="x-panel">${tfHead("Secret", '<span class="x-frac">值默认隐藏，点「显示」查看</span>')}${k8Table(["名称", "命名空间", "类型", "数据", "更新", "操作"], K8.sec.map((s, i) => k8Row("", [
+          `<span class="x-kacts">${k8Act("cmv", i, "查看")}${k8Act("cmy", i, "编辑")}${k8Act("cmd", i, "删除")}</span>`])))}${envNote(CM.length, K8.cm.length, "ConfigMap")}</section>
+          <section class="x-panel">${tfHead("Secret", '<span class="x-frac">值默认隐藏，点「显示」查看</span>')}${!SECR.length ? `<p class="x-empty">「${esc(nav.env)}」环境下暂无 Secret，切换顶栏环境可查看其它环境。</p>` : k8Table(["名称", "命名空间", "类型", "数据", "更新", "操作"], SECR.map(({ c: s, i }) => k8Row("", [
           `<span class="x-name">${esc(s.n)}</span>`, s.ns, `<span class="x-mono">${esc(s.type)}</span>`,
           Object.entries(s.data).map(([k, v]) => `<div class="x-kv"><code>${esc(k)}</code><code data-val="${esc(v.length > 48 ? v.slice(0, 48) + "…" : v)}">••••••••</code><button class="x-act" data-reveal aria-pressed="false" aria-label="显示 ${esc(s.n)} 的 ${esc(k)}">显示</button></div>`).join(""),
-          `<span class="x-frac">${s.upd}</span>`, `<span class="x-kacts">${k8Act("sy", i, "编辑 YAML")}${k8Act("sd", i, "删除")}</span>`])))}</section>`,
+          `<span class="x-frac">${s.upd}</span>`, `<span class="x-kacts">${k8Act("sy", i, "编辑")}${k8Act("sd", i, "删除")}</span>`])))}${envNote(SECR.length, K8.sec.length, "Secret")}</section>`; },
       };
       const on = (el, a, fn) => el.querySelectorAll(`[data-${a}]`).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); fn(+b.dataset[a], b); }));
       // 解析常见 5 段 cron 并给出未来 n 次执行时间（支持 * / 数字 / 列表 / 区间 / 步长）
@@ -9076,16 +9214,17 @@
               `<span style="white-space:nowrap"><button class="x-act" data-edit="${i}">编辑</button><button class="x-act" data-yaml="${i}">查看 YAML</button></span>`]))}</section>`;
         },
         Ingress: () => {
-          const flat = tf.ing.flatMap((x) => x.rules.map((r) => ({ x, r })));
-          const noTls = tf.ing.filter((x) => !x.tls).length;
-          const hosts = tf.ing.reduce((n, x) => n + x.rules.length, 0);
-          return `<section class="x-panel x-setform">${tfHead(`Ingress 入口 ${tfTag(`${tf.ing.length} 个对象 · ${hosts} 个域名`, "x-green")}`, `<span class="x-frac">${noTls ? `${noTls} 个未配置 TLS` : "全部已配置 TLS"}</span>`)}
-            ${tf.ing.length ? tbl(["名称 / 命名空间", "域名", "路径 → 后端", "TLS", "操作"], tf.ing.map((x, i) => [
+          const LIST = envRows(tf.ing.map((x, i) => ({ x, i })), (v) => v.x.ns);
+          const noTls = LIST.filter((v) => !v.x.tls).length;
+          const hosts = LIST.reduce((n, v) => n + v.x.rules.length, 0);
+          return `<section class="x-panel x-setform">${tfHead(`Ingress 入口 ${tfTag(`${LIST.length} 个对象 · ${hosts} 个域名`, "x-green")}`, `<span class="x-frac">${noTls ? `${noTls} 个未配置 TLS` : "全部已配置 TLS"}</span>`)}
+            ${!LIST.length ? `<p class="x-empty">「${esc(nav.env)}」环境下暂无 Ingress，切换顶栏环境或新建。</p>` : tbl(["名称 / 命名空间", "域名", "路径 → 后端", "TLS", "操作"], LIST.map(({ x, i }) => [
               `<span class="x-name">${esc(x.n)}</span><div class="x-frac" style="margin-top:2px">${esc(x.ns)} · <span class="x-mono">${esc(x.cls)}</span></div>`,
               x.rules.map((r) => `<div class="x-mono">${esc(r.host)}</div>`).join(""),
-              x.rules.map((r) => r.paths.map((p) => `<div class="x-mono"><b>${esc(p.p)}</b> → ${esc(p.svc)}:${p.port}</div>`).join("")).join(""),
+              x.rules.map((r) => r.paths.map((q) => `<div class="x-mono"><b>${esc(q.p)}</b> → ${esc(q.svc)}:${q.port}</div>`).join("")).join(""),
               x.tls ? `<span class="x-tag x-green x-tag--s">${esc(x.tls)}</span>` : tfTag("未启用", "x-grey"),
-              `<span style="white-space:nowrap"><button class="x-act" data-igedit="${i}">编辑</button><button class="x-act" data-igyaml="${i}">YAML</button><button class="x-act" data-igdel="${i}">删除</button></span>`])) : '<p class="x-empty">还没有 Ingress，点击右上角「+ 新建 Ingress」按域名与路径把流量接进来。</p>'}
+              `<span style="white-space:nowrap"><button class="x-act" data-igedit="${i}">编辑</button><button class="x-act" data-igyaml="${i}">YAML</button><button class="x-act" data-igdel="${i}">删除</button></span>`]))}
+            ${envNote(LIST.length, tf.ing.length, " Ingress")}
             <p class="x-frac" style="margin:8px 0 0">同一域名可挂多条路径到不同后端；TLS 证书在「证书」页签发后，把 Secret 名称填进 Ingress 即可启用 HTTPS。</p></section>`;
         },
         "API 网关": () => `<section class="x-panel x-setform">${tfHead(`${esc(tfRole(1, "APISIX 3.10"))} ${tfTag(`${tf.routes.filter((r) => r.on).length} 条路由运行中`, "x-green")}`, `<span class="x-frac">共 ${tf.routes.length} 条路由</span>`)}
