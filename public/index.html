@@ -152,6 +152,11 @@
       .x-kvrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px; align-items: end; margin: 0 0 10px; }
       .x-kvrow > label { min-width: 0; }
       .x-kvrow .x-act { margin-bottom: 8px; }
+      /* Ingress 规则行：域名/路径/匹配/后端/端口/操作 一行排开，窄屏自动换行 */
+      .x-ingrow { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,.9fr) minmax(0,.8fr) minmax(0,1.1fr) minmax(0,.55fr) auto; gap: 8px; align-items: end; margin: 0 0 10px; }
+      .x-ingrow > label { min-width: 0; }
+      .x-ingrow .x-act { margin-bottom: 8px; }
+      @media (max-width: 760px) { .x-ingrow { grid-template-columns: repeat(2, minmax(0,1fr)); } .x-ingrow .x-act { grid-column: 2; justify-self: end; margin: 0 0 8px; } }
       .x-wbody { flex: 1; overflow: auto; }
       .x-stepper { list-style: none; margin: 0; padding: 12px 20px; display: flex; gap: 8px; overflow-x: auto; border-bottom: 1px solid var(--x-line); }
       .x-stepper li { display: flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--x-sub); font-size: 12px; }
@@ -1938,8 +1943,12 @@
       async function apiRequest(path, options = {}) {
         const base = window.XINGSHU_API_BASE || "/api/v1";
         const res = await fetch(base + path, { credentials: "include", headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || body.code) throw new Error(body.message || `请求失败（${res.status}）`);
+        const ct = res.headers.get("content-type") || "";
+        const body = ct.includes("json") ? await res.json().catch(() => null) : null;
+        if (!res.ok) throw new Error((body && body.message) || `请求失败（HTTP ${res.status}）`);
+        if (!body) throw new Error(`接口未返回 JSON（HTTP ${res.status}），后端可能尚未部署`);
+        if (body.code) throw new Error(body.message || `接口返回错误码 ${body.code}`);
+        if (!("data" in body)) throw new Error("接口返回缺少 data 字段");
         return body.data;
       }
       function renderDevCenter(el, kind) {
@@ -1947,8 +1956,8 @@
         const meta = labels[kind] || labels.bugs;
         el.innerHTML = phead(meta[0], meta[1]) + `<div class="x-panel"><div class="x-tbar"><input class="x-input x-search" id="dcq" placeholder="搜索标题" aria-label="搜索标题" /><button class="x-btn x-btn--pri" id="dcnew">+ 新建</button></div><div id="dcbody"><p class="x-frac">正在加载真实数据…</p></div></div>`;
         const type = kind === "bugs" ? "bugs" : kind === "project" ? "iterations" : "requirements";
-        const draw = (data) => { const items = data.items || []; $("dcbody").innerHTML = items.length ? `<table class="x-table"><thead><tr><th>标题</th><th>状态</th><th>优先级</th><th>更新时间</th></tr></thead><tbody>${items.map(x => `<tr><td>${esc(x.title)}</td><td>${esc(x.status)}</td><td>${esc(x.priority)}</td><td>${esc(String(x.updated_at || "—"))}</td></tr>`).join("")}</tbody></table>` : `<div class="x-empty"><strong>暂无数据</strong><p>请点击“新建”创建第一条记录。</p></div>`; };
-        apiRequest(`/devcenter/${type}`).then(draw).catch(e => { $("dcbody").innerHTML = `<p class="x-aerr" role="alert">${esc(e.message)}。当前页面需要已登录的后端服务。</p>`; });
+        const draw = (data) => { const items = (data && data.items) || []; $("dcbody").innerHTML = items.length ? `<table class="x-table"><thead><tr><th>标题</th><th>状态</th><th>优先级</th><th>更新时间</th></tr></thead><tbody>${items.map(x => `<tr><td>${esc(x.title)}</td><td>${esc(x.status)}</td><td>${esc(x.priority)}</td><td>${esc(String(x.updated_at || "—"))}</td></tr>`).join("")}</tbody></table>` : `<div class="x-empty"><strong>暂无数据</strong><p>请点击“新建”创建第一条记录。</p></div>`; };
+        apiRequest(`/devcenter/${type}`).then(draw).catch(e => { $("dcbody").innerHTML = `<p class="x-aerr" role="alert">${esc(e.message)}。该页面依赖后端 /devcenter 接口，当前环境未连接。</p>`; });
         $("dcnew").onclick = () => { const title = prompt("请输入标题"); if (!title) return; apiRequest(`/devcenter/${type}`, { method: "POST", body: JSON.stringify({ title }) }).then(() => renderDevCenter(el, kind)).catch(e => toast(e.message)); };
       }
       const current = () => { const k = location.hash.slice(2).split("/")[0]; return routes[k] && !routes[k].href ? k : "sre"; };
@@ -5079,8 +5088,9 @@
       function xChart(cv, cfg) {
         if (!cv) return null;
         const o = (cfg.options ||= {}), p = (o.plugins ||= {}), lg = (p.legend ||= {});
-        lg.labels = { ...lg.labels, filter: (it, d) => !d.datasets[it.datasetIndex].xThr };
-        p.tooltip = { ...p.tooltip, filter: (it) => !it.dataset.xThr };
+        // 数据集切换或重绘时 datasetIndex 可能越界，取不到就按普通数据集处理
+        lg.labels = { ...lg.labels, filter: (it, d) => { const ds = d && d.datasets ? d.datasets[it.datasetIndex] : null; return !(ds && ds.xThr); } };
+        p.tooltip = { ...p.tooltip, filter: (it) => !(it && it.dataset && it.dataset.xThr) };
         if (!o.interaction && cfg.type === "line") o.interaction = { mode: "index", intersect: false };
         cfg.plugins = [...(cfg.plugins || []), THR];
         const c = new Chart(cv, cfg); charts.push(c); return c;
@@ -9009,6 +9019,8 @@
           bar: { q: "搜索命名空间 / 服务", act: "已注入的全部切为 STRICT", id: "tfStrict" } },
         { k: "gateway", t: "API 网关", body: "API 网关", sub: "网关路由、插件与金丝雀权重，拖动滑块即时下发",
           bar: { q: "搜索域名 / 路径", fl: "上游服务", fo: APPS.map((a) => a.name), fc: 2, act: "+ 新建路由", id: "tfRoute" } },
+        { k: "ingress", t: "Ingress", body: "Ingress", sub: "域名与路径到后端服务的映射，TLS 复用证书页签发的 Secret",
+          bar: { q: "搜索域名 / 后端", act: "+ 新建 Ingress", id: "tfIngNew" } },
         { k: "expose", t: "对外服务", body: "对外服务", sub: "服务对外暴露的申请、审批与证书签发",
           bar: { q: "搜索服务 / 域名", act: "+ 申请对外暴露", id: "tfExpose" } },
         { k: "topo", t: "服务拓扑", body: "拓扑", sub: "生产环境服务间的调用关系、QPS 与错误率",
@@ -9030,6 +9042,14 @@
           { host: "open.xingshu.com", path: "/api/v1/orders/*", up: "order-service", plugins: ["jwt-auth", "limit-count", "cors"], on: true, canary: 20 },
           { host: "sso.xingshu.com", path: "/*", up: "user-center", plugins: ["cors", "limit-count"], on: true, canary: 0 },
           { host: "test.xingshu.com", path: "/api/*", up: "api-gateway", plugins: ["cors"], on: false, canary: 0 },
+        ],
+        ing: [
+          { ns: "prod", n: "api-gateway", cls: "nginx", tls: "api-xingshu-com-tls", ann: { "nginx.ingress.kubernetes.io/proxy-body-size": "8m" },
+            rules: [{ host: "api.xingshu.com", paths: [{ p: "/", t: "Prefix", svc: "api-gateway", port: 8080 }, { p: "/v1/orders", t: "Prefix", svc: "order-service", port: 8080 }] }] },
+          { ns: "prod", n: "sso", cls: "apisix", tls: "sso-xingshu-com-tls", ann: {},
+            rules: [{ host: "sso.xingshu.com", paths: [{ p: "/", t: "Prefix", svc: "user-center", port: 8080 }] }] },
+          { ns: "test", n: "web-test", cls: "nginx", tls: "", ann: { "nginx.ingress.kubernetes.io/ssl-redirect": "false" },
+            rules: [{ host: "test.xingshu.com", paths: [{ p: "/", t: "Prefix", svc: "api-gateway", port: 8080 }] }] },
         ],
         exp: [
           { svc: "api-gateway", host: "api.xingshu.com", port: 443, ap: "已通过", c: { st: "已签发", exp: "2027-01-12" } },
@@ -9053,13 +9073,27 @@
               `<select class="x-select" data-mtls="${i}" aria-label="${x.n} mTLS 模式"${x.on ? "" : " disabled"}>${opt(["STRICT", "PERMISSIVE"], x.m)}</select>`]))}</section>
             <section class="x-panel x-setform">${tfHead("流量策略", '<span class="x-frac">熔断：连续 5xx 达到次数后摘除实例 30s</span>')}
             ${tbl(["服务", "超时", "重试次数", "熔断（连续 5xx）", "限流 QPS", "操作"], tf.pol.map((p, i) => [`<span class="x-name">${p.svc}</span>`, p.to + "s", p.retry + " 次", p.cb + " 次", p.qps.toLocaleString(),
-              `<span style="white-space:nowrap"><button class="x-act" data-edit="${i}">编辑</button><button class="x-act" data-yaml="${i}">生成 YAML</button></span>`]))}</section>`;
+              `<span style="white-space:nowrap"><button class="x-act" data-edit="${i}">编辑</button><button class="x-act" data-yaml="${i}">查看 YAML</button></span>`]))}</section>`;
+        },
+        Ingress: () => {
+          const flat = tf.ing.flatMap((x) => x.rules.map((r) => ({ x, r })));
+          const noTls = tf.ing.filter((x) => !x.tls).length;
+          const hosts = tf.ing.reduce((n, x) => n + x.rules.length, 0);
+          return `<section class="x-panel x-setform">${tfHead(`Ingress 入口 ${tfTag(`${tf.ing.length} 个对象 · ${hosts} 个域名`, "x-green")}`, `<span class="x-frac">${noTls ? `${noTls} 个未配置 TLS` : "全部已配置 TLS"}</span>`)}
+            ${tf.ing.length ? tbl(["名称 / 命名空间", "域名", "路径 → 后端", "TLS", "操作"], tf.ing.map((x, i) => [
+              `<span class="x-name">${esc(x.n)}</span><div class="x-frac" style="margin-top:2px">${esc(x.ns)} · <span class="x-mono">${esc(x.cls)}</span></div>`,
+              x.rules.map((r) => `<div class="x-mono">${esc(r.host)}</div>`).join(""),
+              x.rules.map((r) => r.paths.map((p) => `<div class="x-mono"><b>${esc(p.p)}</b> → ${esc(p.svc)}:${p.port}</div>`).join("")).join(""),
+              x.tls ? `<span class="x-tag x-green x-tag--s">${esc(x.tls)}</span>` : tfTag("未启用", "x-grey"),
+              `<span style="white-space:nowrap"><button class="x-act" data-igedit="${i}">编辑</button><button class="x-act" data-igyaml="${i}">YAML</button><button class="x-act" data-igdel="${i}">删除</button></span>`])) : '<p class="x-empty">还没有 Ingress，点击右上角「+ 新建 Ingress」按域名与路径把流量接进来。</p>'}
+            <p class="x-frac" style="margin:8px 0 0">同一域名可挂多条路径到不同后端；TLS 证书在「证书」页签发后，把 Secret 名称填进 Ingress 即可启用 HTTPS。</p></section>`;
         },
         "API 网关": () => `<section class="x-panel x-setform">${tfHead(`${esc(tfRole(1, "APISIX 3.10"))} ${tfTag(`${tf.routes.filter((r) => r.on).length} 条路由运行中`, "x-green")}`, `<span class="x-frac">共 ${tf.routes.length} 条路由</span>`)}
-          ${tbl(["域名", "路径", "上游服务", "插件", "金丝雀", "状态"], tf.routes.map((r, i) => [`<span class="x-name">${esc(r.host)}</span>`, `<span class="x-mono">${esc(r.path)}</span>`, r.up,
+          ${tbl(["域名", "路径", "上游服务", "插件", "金丝雀", "状态", "操作"], tf.routes.map((r, i) => [`<span class="x-name">${esc(r.host)}</span>`, `<span class="x-mono">${esc(r.path)}</span>`, r.up,
             `<span class="x-tags">${r.plugins.map((p) => `<span class="x-tag x-grey x-tag--s">${p}</span>`).join("")}</span>`,
             `<label class="x-canary"><input type="range" min="0" max="100" step="5" value="${r.canary}" data-can="${i}" aria-label="${esc(r.host + r.path)} 金丝雀权重"${r.on ? "" : " disabled"} /><output id="cv${i}">${r.canary}%</output></label>`,
-            tfTag(r.on ? "运行中" : "已停用", r.on ? "x-green" : "x-grey")]))}
+            tfTag(r.on ? "运行中" : "已停用", r.on ? "x-green" : "x-grey"),
+            `<span class="x-kacts"><button class="x-act" data-rtedit="${i}">编辑</button><button class="x-act" data-rtt="${i}">${r.on ? "停用" : "启用"}</button><button class="x-act" data-rtdel="${i}">删除</button></span>`]))}
           <p class="x-frac" style="margin:8px 0 0">拖动滑块即时下发，金丝雀权重之外的流量走稳定版本。</p></section>`,
         对外服务: () => `<section class="x-panel x-setform">${tfHead("外网访问申请", `<span class="x-frac">${tf.exp.filter((e) => e.ap === "待审批").length} 条待审批</span>`)}
           ${tbl(["服务", "域名", "端口", "证书", "审批状态"], tf.exp.map((e) => [`<span class="x-name">${e.svc}</span>`, esc(e.host), e.port,
@@ -9100,6 +9134,13 @@
           if (d.edit) tfEdit(tf.pol[d.edit]);
           else if (d.yaml) tfYaml(tf.pol[d.yaml]);
           else if (b.id === "tfRoute") tfRouteNew();
+          else if (b.id === "tfIngNew") ingForm(-1);
+          else if (d.igedit) ingForm(+d.igedit);
+          else if (d.igyaml) { const x = tf.ing[+d.igyaml]; rbShow(`Ingress · ${x.ns}/${x.n}`, ingYaml(x)); }
+          else if (d.igdel) { const k = +d.igdel, x = tf.ing[k]; k8Confirm("删除 Ingress", `确定删除 <b>${esc(x.ns)}/${esc(x.n)}</b>？其域名将立即无法访问。`, "删除", () => { tf.ing.splice(k, 1); tfDraw(); toast(`已删除 Ingress ${x.n}`); }); }
+          else if (d.rtedit) tfRouteEdit(+d.rtedit);
+          else if (d.rtt) { const r = tf.routes[+d.rtt]; r.on = !r.on; tfDraw(); toast(`${r.host}${r.path} 已${r.on ? "启用" : "停用"}`); }
+          else if (d.rtdel) { const k = +d.rtdel, r = tf.routes[k]; k8Confirm("删除路由", `确定删除 <b>${esc(r.host + r.path)}</b>？该入口立即失效。`, "删除", () => { tf.routes.splice(k, 1); tfDraw(); toast(`已删除路由 ${r.host}${r.path}`); }); }
           else if (b.id === "tfExpose") tfExpose();
           else if (b.id === "tfStrict") {
             const on = tf.ns.filter((x) => x.on);
@@ -9143,6 +9184,123 @@
         $("tfcopy").onclick = () => navigator.clipboard ? navigator.clipboard.writeText(y).then(() => toast("YAML 已复制"), () => toast("复制失败，请手动选择")) : toast("复制失败，请手动选择");
       }
 
+      // Ingress：域名/路径/后端与 TLS 全部可视化编辑，YAML 只读预览
+      function ingYaml(x) {
+        const L = ["apiVersion: networking.k8s.io/v1", "kind: Ingress", "metadata:", "  name: " + x.n, "  namespace: " + x.ns];
+        const ann = Object.entries(x.ann || {});
+        if (ann.length) { L.push("  annotations:"); ann.forEach(([k, v]) => L.push(`    ${k}: ${JSON.stringify(v)}`)); }
+        L.push("spec:", "  ingressClassName: " + x.cls);
+        if (x.tls) L.push("  tls:", "  - hosts:", ...x.rules.map((r) => `    - ${r.host}`), `    secretName: ${x.tls}`);
+        L.push("  rules:");
+        x.rules.forEach((r) => {
+          L.push(`  - host: ${r.host}`, "    http:", "      paths:");
+          r.paths.forEach((p) => { L.push(`      - path: ${p.p}`, `        pathType: ${p.t}`, "        backend:", "          service:", `            name: ${p.svc}`, "            port:", `              number: ${p.port}`); });
+        });
+        return L.join("\n");
+      }
+      const ING_CLS = ["nginx", "apisix", "traefik", "alb"];
+      const ING_ANN = ["nginx.ingress.kubernetes.io/rewrite-target", "nginx.ingress.kubernetes.io/proxy-body-size", "nginx.ingress.kubernetes.io/ssl-redirect", "apisix.apache.org/plugin-config-name"];
+      const ingFlat = (x) => x.rules.flatMap((r) => r.paths.map((p) => ({ host: r.host, p: p.p, t: p.t, svc: p.svc, port: p.port })));
+      function ingForm(i) {
+        const isNew = i < 0, x = isNew ? { ns: "prod", n: "", cls: "nginx", tls: "", ann: {}, rules: [] } : tf.ing[i];
+        const st = {
+          rows: isNew ? [{ host: "", p: "/", t: "Prefix", svc: APPS[0].name, port: 8080 }] : ingFlat(x),
+          ann: Object.entries(x.ann || {}).map(([k, v]) => ({ k, v })),
+        };
+        dlg(isNew ? "新建 Ingress" : `编辑 Ingress · ${esc(x.n)}`, '<form class="x-form" id="igf" novalidate><div id="igbody"></div></form>',
+          `<button class="x-btn" data-close>取消</button>${isNew ? "" : '<button class="x-btn" type="button" id="igYaml">查看 YAML</button>'}<button class="x-btn x-btn--pri" type="submit" form="igf">${isNew ? "创建" : "保存"}</button>`);
+        const draw = () => {
+          $("igbody").innerHTML = `
+            <div class="x-row2"><label><span class="x-req">名称</span><input class="x-input" name="n" value="${esc(x.n)}" maxlength="63" autocomplete="off" placeholder="api-gateway"${isNew ? "" : " readonly"} /></label>
+              <label><span class="x-req">命名空间</span><input class="x-input" name="ns" value="${esc(x.ns)}" autocomplete="off" list="igns"${isNew ? "" : " readonly"} /><datalist id="igns">${WL_NS().map((v) => `<option value="${esc(v)}"></option>`).join("")}</datalist></label></div>
+            <div class="x-row2"><label><span>IngressClass</span><select class="x-select" name="cls">${opt(ING_CLS, x.cls)}</select></label>
+              <label><span>TLS Secret（选填）</span><input class="x-input x-mono" name="tls" value="${esc(x.tls || "")}" autocomplete="off" placeholder="api-xingshu-com-tls" /></label></div>
+            <h3 class="x-h2">路由规则</h3>
+            <div id="igrows">${st.rows.map((r, j) => `<div class="x-ingrow" data-row="${j}">
+              <label><span>域名</span><input class="x-input" name="h${j}" value="${esc(r.host)}" autocomplete="off" placeholder="api.xingshu.com" aria-label="第 ${j + 1} 条规则的域名" /></label>
+              <label><span>路径</span><input class="x-input x-mono" name="p${j}" value="${esc(r.p)}" autocomplete="off" aria-label="第 ${j + 1} 条规则的路径" /></label>
+              <label><span>匹配</span><select class="x-select" name="t${j}" aria-label="第 ${j + 1} 条规则的匹配方式">${opt(["Prefix", "Exact", "ImplementationSpecific"], r.t)}</select></label>
+              <label><span>后端服务</span><input class="x-input" name="s${j}" value="${esc(r.svc)}" autocomplete="off" list="igsvc" aria-label="第 ${j + 1} 条规则的后端服务" /><datalist id="igsvc">${APPS.map((a) => `<option value="${esc(a.name)}"></option>`).join("")}</datalist></label>
+              <label><span>端口</span><input class="x-input" name="o${j}" value="${r.port}" inputmode="numeric" aria-label="第 ${j + 1} 条规则的后端端口" /></label>
+              <button type="button" class="x-act" data-delrow="${j}">删除</button></div>`).join("")}</div>
+            <div class="x-testrow"><button type="button" class="x-btn" id="igadd">+ 添加路径</button><span class="x-frac">同一域名可在多行里指向不同后端服务</span></div>
+            <h3 class="x-h2">注解</h3>
+            <div id="iganns">${st.ann.map((a, j) => `<div class="x-kvrow"><label><span>键</span><input class="x-input x-mono" name="ak${j}" value="${esc(a.k)}" list="igak" autocomplete="off" aria-label="第 ${j + 1} 个注解的键" /></label><label><span>值</span><input class="x-input x-mono" name="av${j}" value="${esc(a.v)}" autocomplete="off" aria-label="第 ${j + 1} 个注解的值" /></label><button type="button" class="x-act" data-delann="${j}">删除</button></div>`).join("")}</div>
+            <datalist id="igak">${ING_ANN.map((k) => `<option value="${esc(k)}"></option>`).join("")}</datalist>
+            <div class="x-testrow"><button type="button" class="x-btn" id="igaddann">+ 添加注解</button><span class="x-frac">如 rewrite-target、proxy-body-size</span></div>
+            <span class="x-err" id="igerr" role="alert" hidden></span>
+            <details class="x-adv"><summary>预览将提交的 Ingress YAML</summary><pre class="x-log" id="igyaml"></pre></details>`;
+          const f = $("igf"), err = $("igerr");
+          const stash = () => {
+            st.rows = st.rows.map((_, j) => ({ host: (f.elements["h" + j] || {}).value || "", p: (f.elements["p" + j] || {}).value || "/", t: (f.elements["t" + j] || {}).value || "Prefix", svc: (f.elements["s" + j] || {}).value || "", port: (f.elements["o" + j] || {}).value || "" }));
+            st.ann = st.ann.map((_, j) => ({ k: (f.elements["ak" + j] || {}).value || "", v: (f.elements["av" + j] || {}).value || "" }));
+          };
+          const build = () => {
+            stash();
+            const name = f.elements.n.value.trim(), ns = f.elements.ns.value.trim() || "default";
+            const rules = [];
+            st.rows.filter((r) => r.host || r.svc).forEach((r) => {
+              const host = r.host.trim().toLowerCase();
+              let g = rules.find((v) => v.host === host);
+              if (!g) { g = { host, paths: [] }; rules.push(g); }
+              g.paths.push({ p: r.p.trim() || "/", t: r.t, svc: r.svc.trim(), port: +r.port || 80 });
+            });
+            return { n: name, ns, cls: f.elements.cls.value, tls: f.elements.tls.value.trim(), ann: Object.fromEntries(st.ann.filter((a) => a.k.trim()).map((a) => [a.k.trim(), a.v])), rules };
+          };
+          const sync = () => { const v = build(); if (v.n && v.rules.length) $("igyaml").textContent = ingYaml(v); };
+          f.oninput = sync; sync();
+          $("igadd").onclick = () => { stash(); st.rows.push({ host: st.rows.length ? st.rows[0].host : "", p: "/", t: "Prefix", svc: APPS[0].name, port: 8080 }); draw(); };
+          $("igaddann").onclick = () => { stash(); st.ann.push({ k: "", v: "" }); draw(); };
+          $("igbody").querySelectorAll("[data-delrow]").forEach((b) => (b.onclick = () => { stash(); st.rows.splice(+b.dataset.delrow, 1); if (!st.rows.length) st.rows.push({ host: "", p: "/", t: "Prefix", svc: APPS[0].name, port: 8080 }); draw(); }));
+          $("igbody").querySelectorAll("[data-delann]").forEach((b) => (b.onclick = () => { stash(); st.ann.splice(+b.dataset.delann, 1); draw(); }));
+          if ($("igYaml")) $("igYaml").onclick = () => rbShow(`Ingress · ${x.ns}/${x.n}`, ingYaml(x));
+          f.onsubmit = (e) => {
+            e.preventDefault();
+            const bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+            const v = build();
+            if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(v.n)) return bad("名称需为小写字母、数字和 -，且以字母或数字开头结尾", f.elements.n);
+            if (!v.rules.length) return bad("至少需要一条路由规则", f.elements.h0);
+            const badHost = v.rules.find((r) => !tfHost(r.host));
+            if (badHost) return bad(`域名不合法：${badHost.host || "（空）"}`, f.elements.h0);
+            const all = v.rules.flatMap((r) => r.paths);
+            if (all.find((p) => !p.p.startsWith("/"))) return bad("路径需以 / 开头", f.elements.p0);
+            if (all.find((p) => !p.svc)) return bad("每条规则都需要后端服务", f.elements.s0);
+            if (all.find((p) => !Number.isInteger(p.port) || p.port < 1 || p.port > 65535)) return bad("端口需为 1–65535 的整数", f.elements.o0);
+            const dup = v.rules.flatMap((r) => r.paths.map((p) => r.host + p.p)).filter((k, j, a) => a.indexOf(k) !== j);
+            if (dup.length) return bad(`同一域名下路径重复：${dup[0]}`, f.elements.p0);
+            const clash = tf.ing.filter((o) => o !== x && o.ns === v.ns).flatMap((o) => o.rules.flatMap((r) => r.paths.map((p) => ({ n: o.n, key: r.host + p.p })))).find((c) => v.rules.some((r) => r.paths.some((p) => c.key === r.host + p.p)));
+            if (clash) return bad(`同命名空间内 Ingress ${clash.n} 已占用 ${clash.key}，请改用其它域名或路径`, f.elements.p0);
+            if (isNew) {
+              if (tf.ing.some((o) => o.n === v.n && o.ns === v.ns)) return bad(`${v.ns} 中已存在 Ingress ${v.n}`, f.elements.n);
+              tf.ing.unshift(v);
+            } else Object.assign(x, v);
+            closeAll(); tfDraw(); toast(isNew ? `已创建 Ingress ${v.ns}/${v.n}` : `已保存 Ingress ${v.n}`);
+          };
+        };
+        draw();
+      }
+      function tfRouteEdit(i) {
+        const r = tf.routes[i];
+        dlg(`编辑路由 · ${esc(r.host + r.path)}`, `<form class="x-form" id="tfe" novalidate>
+            <div class="x-row2"><label><span class="x-req">域名</span><input class="x-input" name="host" value="${esc(r.host)}" autocomplete="off" /></label>
+            <label><span class="x-req">路径</span><input class="x-input" name="path" value="${esc(r.path)}" autocomplete="off" /></label></div>
+            <label><span>上游服务</span><select class="x-select" name="up">${opt(APPS.map((a) => a.name), r.up)}</select></label>
+            <fieldset class="x-radios"><legend>插件</legend>${TF_PLUG.map((p) => `<label><input type="checkbox" name="pl" value="${p}"${r.plugins.includes(p) ? " checked" : ""} />${p}</label>`).join("")}</fieldset>
+            <div class="x-row2"><label><span>金丝雀权重 %</span><input class="x-input" type="number" name="canary" min="0" max="100" step="5" value="${r.canary}" /></label>
+            <label class="x-switch"><input type="checkbox" role="switch" name="on"${r.on ? " checked" : ""} /> 路由启用</label></div>
+            <span class="x-err" id="tfeerr" hidden></span></form>`, tfFoot("tfe", "保存"));
+        const f = $("tfe"), el = f.elements;
+        f.onsubmit = (e) => {
+          e.preventDefault();
+          const host = el.host.value.trim().toLowerCase(), path = el.path.value.trim(), canary = +el.canary.value;
+          if (!tfHost(host)) return tfErr("tfeerr", "请输入有效域名，如 api.xingshu.com", el.host);
+          if (!path.startsWith("/")) return tfErr("tfeerr", "路径需以 / 开头", el.path);
+          if (!Number.isInteger(canary) || canary < 0 || canary > 100) return tfErr("tfeerr", "金丝雀权重需为 0–100 的整数", el.canary);
+          if (tf.routes.some((o, j) => j !== i && o.host === host && o.path === path)) return tfErr("tfeerr", "该域名与路径的路由已存在", el.path);
+          Object.assign(r, { host, path, up: el.up.value, plugins: [...f.querySelectorAll("[name=pl]:checked")].map((x) => x.value), canary, on: el.on.checked });
+          closeAll(); tfDraw(); toast(`路由 ${host}${path} 已更新`);
+        };
+      }
       function tfRouteNew() {
         dlg("新建路由", `<form class="x-form" id="tfr" novalidate>
             <div class="x-row2"><label><span class="x-req">域名</span><input class="x-input" name="host" placeholder="api.xingshu.com" autocomplete="off" /></label>
