@@ -9817,6 +9817,9 @@
       }
       function trDetailHTML(t) {
         const total = t.dur, sp = t.spans[tr.span] || t.spans[0], i = t.spans.indexOf(sp), errs = t.spans.filter((x) => x.err).length;
+        // 有些链路的错误只在标签里（otel.status_code=ERROR），用它兜底定位，避免按钮消失
+        const errList = t.spans.map((x, j) => (x.err ? j : -1)).filter((j) => j >= 0);
+        const errIdx = errList.length ? errList[errList.length - 1] : t.spans.findIndex((x) => x.tags && x.tags["otel.status_code"] === "ERROR");
         const ax = [0, 0.25, 0.5, 0.75, 1].map((q) => `<span>${trMs(total * q)}</span>`).join("");
         const rows = t.spans.map((s, j) => { const l = (s.start / total) * 100, w = Math.max(0.4, (s.dur / total) * 100);
           return `<button class="x-wfrow${s.err ? " err" : ""}" data-tsp="${j}" aria-pressed="${j === i}" style="--c:${TR_C[s.svc]}" aria-label="${esc(s.svc)} ${esc(s.op)}，耗时 ${trMs(s.dur)}${s.err ? "，错误" : ""}">
@@ -9824,12 +9827,12 @@
             <span class="x-wftrack"><i class="${s.err ? "err" : ""}" style="left:${l}%;width:${w}%"></i><em style="${l + w > 80 ? `right:${100 - l + 1}%` : `left:calc(${l + w}% + 6px)`}">${trMs(s.dur)}</em></span></button>`; }).join("");
         const panel = `<section class="x-panel x-setform x-spanp" aria-label="Span 详情"><h3>${esc(sp.op)}</h3>
             <p style="margin:0 0 12px"><span class="x-sv" style="--c:${TR_C[sp.svc]}">${esc(sp.svc)}</span>${trSt(sp.err)}</p>
-            <dl><dt>耗时</dt><dd>${trMs(sp.dur)}</dd><dt>开始于</dt><dd>+${trMs(sp.start)}</dd></dl>
+            <dl><dt>耗时</dt><dd>${trMs(sp.dur)}</dd><dt>占整条链路</dt><dd>${total ? ((sp.dur / total) * 100).toFixed(1) + "%" : "—"}</dd><dt>开始于</dt><dd>+${trMs(sp.start)}</dd></dl>
             <h4>标签</h4><dl>${Object.entries(sp.tags).map(([k, v]) => `<dt>${esc(k)}</dt><dd${k === "otel.status_code" && v === "ERROR" ? ' style="color:#cf1322"' : ""}>${esc(v)}</dd>`).join("")}</dl>
             <h4>日志</h4>${sp.logs.length ? `<ul class="x-slogs">${sp.logs.map((g) => `<li class="${g.err ? "err" : ""}"><code>+${trMs(g.t)} ${esc(g.ev)}</code>${esc(g.msg)}</li>`).join("")}</ul>` : '<p class="x-frac" style="margin:0">该 span 没有日志事件</p>'}</section>`;
         return `<p style="margin:0 0 12px"><a class="x-act" href="#/trace" style="padding:0">← 返回链路列表</a></p>
           <section class="x-panel x-setform"><div class="x-sethead" style="margin-bottom:8px"><h2 class="x-h2">${esc(t.op)} ${trSt(t.err)}</h2></div>
-            <p class="x-trmeta"><span>TraceID <b class="x-mono">${t.id}</b></span><span>开始 <b>${obTs(t.ts)}</b></span><span>总耗时 <b>${trMs(total)}</b></span><span>Span <b>${t.spans.length}</b></span><span>服务 <b>${t.svcs.length}</b></span>${errs ? `<span>错误 <b style="color:#cf1322">${errs}</b></span>` : ""}</p>
+            <p class="x-trmeta"><span>TraceID <b class="x-mono">${t.id}</b> <button class="x-act" data-trcopy="${t.id}" aria-label="复制 TraceID">复制</button></span><span>开始 <b>${obTs(t.ts)}</b></span><span>总耗时 <b>${trMs(total)}</b></span><span>Span <b>${t.spans.length}</b></span><span>服务 <b>${t.svcs.length}</b></span>${errs || errIdx >= 0 ? `<span>错误 <b style="color:#cf1322">${errs || 1}</b>${errIdx >= 0 ? ` <button class="x-act" data-tsp="${errIdx}" aria-label="跳到第一个错误 Span">跳到错误</button>` : ""}</span>` : ""}</p>
             <p style="margin:0">${trSvcs(t.svcs)}</p></section>
           <div class="x-tbar" role="group" aria-label="视图">${["瀑布图", "服务依赖"].map((s) => `<button class="x-seg" data-ttab="${s}" aria-pressed="${s === tr.tab}">${s}</button>`).join("")}</div>
           ${tr.tab === "服务依赖" ? `<section class="x-panel x-setform">${trDepsHTML(t)}</section>`
@@ -9852,6 +9855,7 @@
           else if (b.dataset.trop) { tr.f = { ...tr.f, op: b.dataset.trop }; redraw('#trf [name="op"]'); toast(`已筛选接口 ${b.dataset.trop} 的链路`); }
           else if (b.dataset.tsp) { tr.span = +b.dataset.tsp; redraw(`[data-tsp="${b.dataset.tsp}"]`); }
           else if (b.dataset.ttab) { tr.tab = b.dataset.ttab; redraw(`[data-ttab="${b.dataset.ttab}"]`); }
+          else if (b.dataset.trcopy) { const id = b.dataset.trcopy; if (navigator.clipboard) navigator.clipboard.writeText(id).then(() => toast(`已复制 TraceID ${id}`), () => toast("复制失败，请手动选择")); else toast(id); }
         };
         const f = $("trf");
         if (f) {
