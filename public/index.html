@@ -7289,19 +7289,58 @@
       }
       function npScaleDlg(i) {
         const x = NPS[i];
-        dlg(`扩缩容 · ${esc(x.n)}`, `<form class="x-form" id="nsf" novalidate><p class="x-desc" style="margin:0">当前 ${x.cur} 个节点，范围 ${x.mn}–${x.mx}${x.auto ? "；已开启自动伸缩，期望值需在范围内" : "；超出范围时会同步调整最小/最大值"}</p>
-          <label><span class="x-req">期望节点数</span><input class="x-input" name="d" type="number" min="0" max="100" step="1" value="${x.cur}" /></label><span class="x-err" id="nserr" role="alert" hidden></span></form>`,
-          '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="nsf">确定</button>');
-        const f = $("nsf"); f.elements.d.focus();
-        f.onsubmit = (e) => {
-          e.preventDefault();
-          const d = Number(f.elements.d.value), err = $("nserr"), bad = (m) => { err.textContent = m; err.hidden = false; };
-          if (!Number.isInteger(d) || d < 0 || d > 100) return bad("期望节点数需为 0–100 的整数");
-          if (x.auto && (d < x.mn || d > x.mx)) return bad(`已开启自动伸缩，期望节点数需在 ${x.mn}–${x.mx} 之间`);
-          if (d === x.cur) return bad("与当前节点数相同");
-          if (!x.auto) { x.mn = Math.min(x.mn, d); x.mx = Math.max(x.mx, d); }
-          toast(`${x.n} 开始${d > x.cur ? "扩容" : "缩容"}到 ${d} 个节点`); npScale(x, d); closeAll(); k8Draw();
+        const poolNodes = K8.nodes.filter((n) => {
+          if (n.c !== x.c) return false;
+          let pi = "";
+          try { pi = ndInfo(n).pool || ""; } catch (e) { pi = ""; }
+          return pi === x.n || (pi === "general" && /general/i.test(x.n)) || (pi === "control-plane" && /master|control/i.test(x.n));
+        });
+        const scopeNodes = poolNodes.length ? poolNodes : K8.nodes.filter((n) => n.c === x.c);
+        const avg = scopeNodes.length ? Math.round(scopeNodes.reduce((s, n) => s + (n.pods || 0), 0) / scopeNodes.length) : 0;
+        const avgNote = poolNodes.length ? `按该池平均 ${avg} Pod/节点估算` : scopeNodes.length ? `按集群平均 ${avg} Pod/节点估算（节点池归属未知）` : "当前无节点数据，无法精确估算";
+        dlg(`扩缩容 · ${esc(x.n)}`, `<form class="x-form" id="nsf" novalidate><div id="nsbody"></div></form>`,
+          '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="nsf">执行</button>');
+        const draw = () => {
+          $("nsbody").innerHTML = `
+            <p class="x-desc" style="margin:0">当前 ${x.cur} 个节点，范围 ${x.mn}–${x.mx}${x.auto ? "；已开启自动伸缩，期望值需在范围内" : "；超出范围时会同步调整最小/最大值"}</p>
+            <label><span class="x-req">期望节点数</span><input class="x-input" name="d" type="number" min="0" max="100" step="1" value="${x.cur}" /></label>
+            <input class="x-range" name="dr" type="range" min="0" max="100" step="1" value="${x.cur}" aria-label="期望节点数滑块" style="width:100%" />
+            <div class="x-row2"><label><span>每次驱逐/新增节点数</span><select class="x-select" name="batch">${opt([1, 2, 3], 1, (v) => v + " 个/批")}</select></label>
+              <label><span>批次间隔（分钟）</span><select class="x-select" name="gap">${opt([2, 5, 10], 2, (v) => v + " 分钟")}</select></label></div>
+            <div class="x-warn" id="nsEst" role="status" style="display:block"></div>
+            <label class="x-switch"><input type="checkbox" role="switch" name="drain" checked /> 缩容时先安全驱逐 Pod（遵守 PodDisruptionBudget）</label>
+            <span class="x-err" id="nserr" role="alert" hidden></span>`;
+          const f = $("nsf");
+          const sync = () => {
+            const d = Math.max(0, Math.min(100, Number(f.elements.d.value) || 0));
+            const delta = d - x.cur, per = +f.elements.batch.value, gap = +f.elements.gap.value;
+            const evict = delta < 0 ? Math.abs(delta) * avg : 0;
+            const rounds = Math.ceil(Math.abs(delta) / per) || 0;
+            const mins = rounds * gap;
+            $("nsEst").innerHTML = delta === 0
+              ? `<b>影响</b>：节点数不变，不会触发任何变动。`
+              : `<b>影响</b>：${delta > 0 ? "新增" : "移除"} ${Math.abs(delta)} 个节点（${x.cur} → ${d}），按每批 ${per} 个、间隔 ${gap} 分钟执行，约 ${rounds} 批、预计 ${mins} 分钟完成。`
+                + (delta < 0 ? `<br />预计驱逐约 <b>${evict}</b> 个 Pod（${avgNote}），Pods 会由控制器在其他节点重建。` : "")
+                + (!f.elements.drain.checked && delta < 0 ? `<br /><span class="x-tag x-red x-tag--s">未开启安全驱逐</span> 直接移除节点可能中断其上 Pod。` : "");
+            f.elements.dr.value = d;
+          };
+          f.oninput = (e) => { if (e.target.name === "dr") f.elements.d.value = e.target.value; sync(); };
+          f.onchange = sync; sync();
+          f.onsubmit = (e) => {
+            e.preventDefault();
+            const err = $("nserr"), bad = (m) => { err.textContent = m; err.hidden = false; };
+            const d = Number(f.elements.d.value);
+            if (!Number.isInteger(d) || d < 0 || d > 100) return bad("期望节点数需为 0–100 的整数");
+            if (x.auto && (d < x.mn || d > x.mx)) return bad(`已开启自动伸缩，期望节点数需在 ${x.mn}–${x.mx} 之间`);
+            if (d === x.cur) return bad("与当前节点数相同");
+            if (d < x.cur && !f.elements.drain.checked) return bad("缩容需要开启安全驱逐，避免 Pod 被直接中断");
+            if (!x.auto) { x.mn = Math.min(x.mn, d); x.mx = Math.max(x.mx, d); }
+            x.batch = +f.elements.batch.value;
+            toast(`${x.n} 开始${d > x.cur ? "扩容" : "缩容"}到 ${d} 个节点`);
+            npScale(x, d); closeAll(); k8Draw();
+          };
         };
+        draw();
       }
       const npRow = (t, a = "", b = "", e = "NoSchedule") => { const w = t === "t" ? "污点" : "标签";
         return `<div class="x-nprow${t === "t" ? " x-nprow--t" : ""}" data-npr="${t}"><input class="x-input" placeholder="键" aria-label="${w}键" value="${esc(a)}" /><input class="x-input" placeholder="值" aria-label="${w}值" value="${esc(b)}" />${t === "t" ? `<select class="x-select" aria-label="污点效果">${opt(NP_EFF, e)}</select>` : ""}<button type="button" class="x-act" data-npx>删除</button></div>`; };
