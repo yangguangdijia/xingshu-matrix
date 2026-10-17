@@ -684,6 +684,12 @@
       .x-lmsg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .x-logs .x-log { height: auto; max-height: 320px; margin: 0 0 8px 3px; border-radius: 0 0 8px 8px; }
       /* 日志中心 (#/logs) */
+      .x-lgb { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; padding: 12px; margin: 0 0 12px; background: #fbfcfd; border: 1px solid var(--x-line); border-radius: 10px; }
+      .x-lgb > label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--x-sub); }
+      .x-lgb > label .x-input, .x-lgb > label .x-select { min-width: 160px; }
+      .x-lgb-lv { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--x-sub); flex-wrap: wrap; }
+      .x-lgb-lv .x-rlchk { display: inline-flex; align-items: center; gap: 4px; }
+      .x-lgb-act { display: flex; gap: 8px; margin-left: auto; }
       .x-lgq { position: relative; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
       .x-lgq .x-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
       .x-lgq .x-btn svg, .x-lgres .x-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -9275,6 +9281,7 @@
         const tests = [];
         for (let p of parts.map((s) => s.trim())) {
           if (!p) return { err: "and 两侧需要条件" };
+          for (let guard = 0; guard < 3 && /^\(.*\)$/.test(p) && !/\sand\s/i.test(p); guard++) p = p.slice(1, -1).trim();
           let neg = false;
           if (/^not\s+/i.test(p)) { neg = true; p = p.replace(/^not\s+/i, ""); }
           const m = p.match(/^([\w@.]+)\s*:\s*(.*)$/);
@@ -9473,6 +9480,41 @@
         $("lgpop")?.remove(); $("lgaib")?.setAttribute("aria-expanded", "false");
       });
 
+      // 日志检索的可视化条件构造器：服务 / 级别 / 关键字 → 生成 KQL
+      const LGB = { app: "", lv: new Set(), kw: "", not: "" };
+      function lgApps() { return [...new Set(ob.logs.map((l) => l.app))].sort(); }
+      function lgBuilderHTML() {
+        const apps = lgApps();
+        return `<div class="x-lgb" role="group" aria-label="可视化查询条件">
+          <label><span>服务</span><select class="x-select" id="lgbApp"><option value="">全部服务</option>${apps.map((a) => `<option value="${esc(a)}"${LGB.app === a ? " selected" : ""}>${esc(a)}</option>`).join("")}</select></label>
+          <div class="x-lgb-lv"><span>级别</span>${Object.keys(OB_LV).map((lv) => `<label class="x-rlchk"><input type="checkbox" data-lgblv="${lv}"${LGB.lv.has(lv) ? " checked" : ""} />${lv}</label>`).join("")}</div>
+          <label class="x-grow"><span>关键字</span><input class="x-input" id="lgbKw" value="${esc(LGB.kw)}" placeholder="如 timeout / 5xx" autocomplete="off" /></label>
+          <label><span>排除</span><input class="x-input" id="lgbNot" value="${esc(LGB.not)}" placeholder="如 healthz" autocomplete="off" /></label>
+          <div class="x-lgb-act"><button class="x-btn" type="button" id="lgbClear">清空</button><button class="x-btn x-btn--pri" type="button" id="lgbApply">生成查询</button></div>
+        </div>`;
+      }
+      function lgBuildKql() {
+        const parts = [];
+        if (LGB.app) parts.push(`app:"${LGB.app}"`);
+        if (LGB.lv.size) parts.push(`level:(${[...LGB.lv].join(" or ")})`);
+        if (LGB.kw.trim()) parts.push(`"${LGB.kw.trim()}"`);
+        if (LGB.not.trim()) parts.push(`not "${LGB.not.trim()}"`);
+        return parts.join(" and ");
+      }
+      function lgBindBuilder(w) {
+        const app = $("lgbApp"), kw = $("lgbKw"), not = $("lgbNot");
+        if (!app) return;
+        app.onchange = () => (LGB.app = app.value);
+        kw.oninput = () => (LGB.kw = kw.value);
+        not.oninput = () => (LGB.not = not.value);
+        w.querySelectorAll("[data-lgblv]").forEach((c) => (c.onchange = () => { c.checked ? LGB.lv.add(c.dataset.lgblv) : LGB.lv.delete(c.dataset.lgblv); }));
+        $("lgbClear").onclick = () => { LGB.app = ""; LGB.lv.clear(); LGB.kw = ""; LGB.not = ""; LG.q = ""; LG.qi = null; renderLogs($("view")); };
+        $("lgbApply").onclick = () => {
+          LG.q = lgBuildKql(); LG.qi = null; LG.err = ""; LG.open.clear();
+          renderLogs($("view"));
+          toast(LG.q ? `已按条件生成查询：${LG.q}` : "条件为空，显示全部日志");
+        };
+      }
       function renderLogs(el) {
         killCharts(); obInit();
         if (LG.ai.busy) { LG.ai.busy = false; LG.ai.wait = false; lgT.pop++; }
@@ -9490,6 +9532,7 @@
         }).join("");
         const qv = LG.qi ?? LG.q;
         el.innerHTML = `<div id="lgw">${phead("日志检索", "用 KQL 检索容器日志，或让 AI 把一句话需求翻译成查询语句", demo && !linked() ? '<span class="x-tag x-orange x-pill">演示数据</span>' : "")}
+          ${lgBuilderHTML()}
           <div class="x-lgq" role="search">
             <div class="x-lgcode${LG.err ? " bad" : ""}"><pre aria-hidden="true">${lgHl(qv)}</pre><input id="lgin" type="text" value="${esc(qv)}" placeholder='KQL，如 app:"order-service" and level:ERROR' aria-label="KQL 查询语句" spellcheck="false" autocomplete="off" /></div>
             <select class="x-select" id="lgwin" aria-label="时间范围">${win}</select>
@@ -9507,6 +9550,7 @@
             </section>
           </div></div>`;
         const w = $("lgw"), inp = $("lgin"), sync = () => (inp.previousElementSibling.scrollLeft = inp.scrollLeft);
+        lgBindBuilder(w);
         inp.onscroll = sync;
         w.oninput = (e) => {
           if (e.target === inp) { LG.qi = inp.value; inp.previousElementSibling.innerHTML = lgHl(inp.value); sync(); }
