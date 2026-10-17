@@ -1621,8 +1621,8 @@
       .x-rules li.ok::before { content: "✓"; }
       /* 页脚版权：跨两列、水平居中、贴页面底部（页面级页脚） */
       .x-bcopy { grid-column: 1 / -1; justify-self: center; align-self: end; margin: 18px 0 0; color: #7c8da3; font-size: 12px; line-height: 1.6; text-align: center; }
-      /* 右侧竖排标语：15px / 字色加深（对比度是重点），装饰件同比缩回 */
-      .x-aside { display: block; position: fixed; right: 10px; top: 50%; transform: translateY(-50%); z-index: 2; width: 26px; margin: 0; color: #46628a; font-size: 15px; font-weight: 500; letter-spacing: .2em; line-height: 26px; text-align: center; writing-mode: vertical-rl; }
+      /* 右侧竖排标语：与 eyebrow / slogan 同一套小字参数（15px / 400 / .18em / #6b7c93），只差竖排方向 */
+      .x-aside { display: block; position: fixed; right: 10px; top: 50%; transform: translateY(-50%); z-index: 2; width: 26px; margin: 0; color: #6b7c93; font-size: 15px; font-weight: 400; letter-spacing: .18em; line-height: 26px; text-align: center; writing-mode: vertical-rl; }
       .x-aside svg { position: absolute; top: -32px; left: 50%; width: 18px; height: 18px; margin-left: -9px; fill: #2f5fe0; }
       .x-aside::before, .x-aside::after { content: ""; position: absolute; left: 50%; width: 1px; height: 42px; background: linear-gradient(180deg, transparent, #c3d3e6); }
       .x-aside::before { top: -84px; }
