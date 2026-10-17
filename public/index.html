@@ -7167,6 +7167,57 @@
       const mwSpark = (a, c, label) => { const mn = Math.min(...a), d = Math.max(...a) - mn || 1; return `<svg class="x-mwsp" viewBox="0 0 80 24" preserveAspectRatio="none" style="--c:${c}" role="img" aria-label="${label}"><polyline points="${a.map((v, i) => `${((i * 80) / (a.length - 1)).toFixed(1)},${(22 - ((v - mn) / d) * 20).toFixed(1)}`).join(" ")}" /></svg>`; };
       const mwSrc = '<p class="x-frac" style="margin:12px 0 0">数据来源 Kafka Admin API / RabbitMQ Management API / RocketMQ Admin（接入后）</p>';
       const mwTag = () => (demo && !linked() ? '<span class="x-tag x-orange x-pill">演示数据</span>' : "");
+      // 中间件页内嵌 AI：基于当前中间件实例的节点、Topic、消费组数据回答
+      function mwAiPanel(el, k) {
+        const host = el.querySelector(".x-panel"); if (!host) return;
+        host.insertAdjacentHTML("beforebegin",
+          `<section class="x-panel x-aip" aria-label="中间件 AI 分析" style="margin-bottom:12px">
+            <div class="x-xai" style="margin:0"><div class="x-xai-f"><span class="x-xai-k" aria-hidden="true">✦ AI</span>
+              <input class="x-xai-in" id="mwaiq" placeholder="如：哪个消费组堆积最多 / 哪些实例有节点异常" aria-label="用自然语言分析中间件" autocomplete="off" />
+              <button type="button" id="mwaigo">分析</button></div>
+              <div class="x-aip-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${["哪个消费组堆积最多", "哪些实例有节点异常", "Topic 最多的实例"].map((q) => `<button type="button" class="x-tag x-tag--s" data-mwq="${esc(q)}" style="cursor:pointer">${esc(q)}</button>`).join("")}</div>
+            </div>
+            <div id="mwaio" aria-live="polite"></div>
+          </section>`);
+        const out = $("mwaio"), inp = $("mwaiq");
+        const run = (q) => {
+          q = (q || "").trim(); if (!q) return inp.focus();
+          const r = mwAiRun(q, k);
+          out.innerHTML = `<div class="x-aip-r"><p class="x-aip-t">${esc(r.text)}</p>${r.items.length ? `<ul class="x-aip-l">${r.items.map((it, i) => `<li><span class="x-name">${esc(it.n)}</span><span class="x-frac">${esc(it.meta || "")}</span>${it.hash ? `<button type="button" class="x-act" data-mwopen="${i}">打开</button>` : ""}</li>`).join("")}</ul>` : ""}${r.hint ? `<p class="x-frac" style="margin:6px 0 0">${esc(r.hint)}</p>` : ""}</div>`;
+          out.querySelectorAll("[data-mwopen]").forEach((b) => (b.onclick = () => { location.hash = r.items[+b.dataset.mwopen].hash; }));
+          inp.select();
+        };
+        $("mwaigo").onclick = () => run(inp.value);
+        inp.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); run(inp.value); } };
+        host.parentElement.querySelectorAll("[data-mwq]").forEach((b) => (b.onclick = () => { inp.value = b.dataset.mwq; run(b.dataset.mwq); }));
+      }
+      function mwAiRun(q, k) {
+        const T = MW_T[k], L = mwList(k);
+        if (!L.length) return { text: `当前没有 ${T.t} 实例，接入集群或加载演示数据后可用。`, items: [] };
+        const lagOf = (x) => x.groups.reduce((s, g) => Math.max(s, g.lag), 0);
+        if (/堆积|lag|延迟/.test(q)) {
+          const rows = L.map((x) => ({ x, lag: lagOf(x) })).sort((a, b) => b.lag - a.lag).filter((r) => r.lag > 0);
+          const worst = rows[0];
+          return {
+            text: rows.length ? `最大堆积出现在 ${worst.x.id}，单个消费组最高积压 ${worst.lag.toLocaleString()} 条。` : `${T.t} 当前没有消费堆积。`,
+            items: rows.slice(0, 4).map((r) => ({ n: r.x.id, meta: `最大堆积 ${r.lag.toLocaleString()} · ${r.x.groups.length} 个消费组`, hash: mwHash(k, r.x) })),
+            hint: rows.length ? "堆积持续增长时先看消费者副本数与分区数是否匹配，再看是否有慢消费逻辑。" : "",
+          };
+        }
+        if (/节点|宕机|异常|down/.test(q)) {
+          const bad = L.filter((x) => mwUp(x) < x.nodes.length);
+          return {
+            text: bad.length ? `${bad.length} 个实例存在离线节点，写入可能降级。` : `${T.t} 所有实例节点均在线。`,
+            items: bad.map((x) => ({ n: x.id, meta: `${mwUp(x)} / ${x.nodes.length} 在线 · ${x.cl}`, hash: mwHash(k, x) })),
+            hint: bad.length ? "先确认节点进程与存储，再决定是否摘除故障节点。" : "",
+          };
+        }
+        const rows = [...L].sort((a, b) => b.topics.length - a.topics.length).slice(0, 3);
+        return {
+          text: `按 ${T.topic} 数量排序的前 ${rows.length} 个实例：`,
+          items: rows.map((x) => ({ n: x.id, meta: `${x.topics.length} 个 ${T.topic} · ${x.groups.length} 个${T.grp}`, hash: mwHash(k, x) })),
+        };
+      }
       function renderMW(el) {
         const [, , k, id] = location.hash.split("/"), x = MW_T[k] ? mwList(k).find((i) => i.id === decodeURIComponent(id || "")) : null;
         if (MW_T[k]) MW.tab = k;
@@ -7184,6 +7235,7 @@
             ${mwSrc}</section>`;
         el.querySelectorAll("[data-mwt]").forEach((b) => (b.onclick = () => { MW.tab = b.dataset.mwt; mwIndex(el); el.querySelector(`[data-mwt="${MW.tab}"]`).focus(); }));
         el.querySelectorAll("[data-mwh]").forEach((r) => { r.onclick = (e) => { if (!e.target.closest("a")) location.hash = r.dataset.mwh; }; r.onkeydown = (e) => { if (e.key === "Enter" && e.target === r) location.hash = r.dataset.mwh; }; });
+        mwAiPanel(el, k);
       }
       function mwDetail(el, k, x) {
         const T = MW_T[k], h = mwHash(k, x), st = mwSt(x), up = mwUp(x), al = MW_ALERTS.filter((a) => a.mw === h), top = Math.max(0, ...x.groups.map((g) => g.lag));
