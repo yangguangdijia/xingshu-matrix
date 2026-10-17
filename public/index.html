@@ -5066,7 +5066,7 @@
           `<div class="x-panel">${tbl([...d.columns, "操作"], d.rows.map((r, j) => [...cells(d.columns, r), `<span class="x-bops">${conn(r, j)}<button class="x-btn" data-del="${j}">删除</button></span>`]))}</div>`;
         el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => { d.rows.splice(+b.dataset.del, 1); secBody(el, s); toast("已删除"); }));
         el.querySelectorAll("[data-conn]").forEach((b) => (b.onclick = () => basConnect(d.rows[+b.dataset.conn], b.dataset.proto)));
-        $("secAct").onclick = s.k === "audit" ? () => toast(`已导出 ${d.rows.length} 条审计记录（CSV）`) : () => newRow(d, s.t, () => secBody(el, s));
+        $("secAct").onclick = s.k === "audit" ? () => toast(`已导出 ${d.rows.length} 条审计记录（CSV）`) : s.k === "assets" ? () => basNewAsset(() => secBody(el, s)) : () => newRow(d, s.t, () => secBody(el, s));
         bindBar(el, key);
       }
 
@@ -5168,6 +5168,127 @@
         if (c === "clear") return (s.lines = []);
         if (c === "exit" || c === "logout") { s.lines.push("logout", `Connection to ${esc(s.host)} closed.`); s.open = false; return; }
         s.lines.push(basSh(s, c)[1]);
+      }
+      // 协议感知的资产录入：不同协议展示不同字段；凭据只提交后端，不写入浏览器存储
+      const BAS_META = {};
+      const BAS_PROTO = {
+        SSH: { port: 22, os: "Linux", extra: "ssh" },
+        RDP: { port: 3389, os: "Windows", extra: "rdp" },
+        VNC: { port: 5900, os: "Linux", extra: "vnc" },
+        MySQL: { port: 3306, os: "Linux", extra: "mysql" },
+        PostgreSQL: { port: 5432, os: "Linux", extra: "postgres" },
+      };
+      function basNewAsset(done) {
+        const st = { proto: "SSH", ai: "" };
+        dlg("登记资产", '<form class="x-form" id="baf" novalidate><div id="babody"></div></form>',
+          '<button class="x-btn" data-close>取消</button><button class="x-btn" type="button" id="baTest">连接测试</button><button class="x-btn x-btn--pri" type="submit" form="baf">登记资产</button>');
+        const draw = () => {
+          const P = BAS_PROTO[st.proto];
+          $("babody").innerHTML = `
+            <div class="x-xai" style="margin:0 0 4px"><div class="x-xai-f" id="baai"><span class="x-xai-k" aria-hidden="true">✦ AI</span><input class="x-xai-in" id="baiq" value="${esc(st.ai)}" placeholder="如：登记 10.0.1.60 的 Linux 服务器，SSH，账号 root" aria-label="用自然语言描述要登记的资产" autocomplete="off" /><button type="button" id="baaiGo">生成</button></div><p class="x-frac" style="margin:6px 0 0">只填表单，不会自动提交</p></div>
+            <fieldset class="x-radios"><legend>协议</legend>${Object.keys(BAS_PROTO).map((k) => `<label><input type="radio" name="proto" value="${k}"${k === st.proto ? " checked" : ""} />${k}</label>`).join("")}</fieldset>
+            <h3 class="x-h2">基本信息</h3>
+            <div class="x-row2"><label><span class="x-req">资产名称</span><input class="x-input" name="name" autocomplete="off" placeholder="如 web-01" /></label>
+              <label><span class="x-req">主机 / IP</span><input class="x-input x-mono" name="host" autocomplete="off" placeholder="10.0.1.60" /></label></div>
+            <div class="x-row2"><label><span class="x-req">端口</span><input class="x-input" name="port" inputmode="numeric" value="${P.port}" /></label>
+              <label><span>环境</span><select class="x-select" name="env">${opt(ENV_TAGS.map((t) => t[0]), "生产")}</select></label></div>
+            <div class="x-row2"><label><span>资产组</span><input class="x-input" name="group" list="bagroup" placeholder="如 Web 集群" autocomplete="off" /><datalist id="bagroup">${[...new Set(adm("资产").rows.map((r) => basMeta(r).g))].map((g) => `<option value="${esc(g)}"></option>`).join("")}</datalist></label>
+              <label><span>标签（key=value，空格分隔）</span><input class="x-input x-mono" name="lbl" placeholder="team=infra region=sh" autocomplete="off" /></label></div>
+            ${st.proto === "SSH" ? `<label><span>主机指纹（留空则首次连接信任，TOFU）</span><input class="x-input x-mono" name="fingerprint" placeholder="ssh-ed25519 AAAAC3Nz..." autocomplete="off" /></label>
+              <div class="x-row2"><label><span>跳转网关（选填）</span><input class="x-input" name="gateway" placeholder="bastion.internal:22" autocomplete="off" /></label>
+                <label class="x-switch" style="align-self:end"><input type="checkbox" role="switch" name="sftp" checked /> 允许 SFTP 文件传输</label></div>` : ""}
+            ${st.proto === "RDP" ? `<div class="x-row2"><label><span>域（选填）</span><input class="x-input" name="domain" placeholder="CORP" autocomplete="off" /></label><label><span>安全层</span><select class="x-select" name="security">${opt(["NLA", "TLS", "RDP"], "NLA")}</select></label></div>
+              <label><span>分辨率</span><select class="x-select" name="res">${opt(["1280×720", "1600×900", "1920×1080"], "1600×900")}</select></label>` : ""}
+            ${st.proto === "VNC" ? `<div class="x-row2"><label><span>色彩深度</span><select class="x-select" name="depth">${opt(["8", "16", "24", "32"], "24")}</select></label><label class="x-switch" style="align-self:end"><input type="checkbox" role="switch" name="readonly" /> 只读查看</label></div>` : ""}
+            ${st.proto === "MySQL" || st.proto === "PostgreSQL" ? `<div class="x-row2"><label><span class="x-req">数据库</span><input class="x-input" name="database" placeholder="app" autocomplete="off" /></label><label><span>TLS</span><select class="x-select" name="tls">${opt(["disable", "require", "verify-full"], "require")}</select></label></div>
+              <label class="x-switch"><input type="checkbox" role="switch" name="readonly" checked /> 账号限制为只读会话</label>` : ""}
+            <h3 class="x-h2">登录账号</h3>
+            <div class="x-row2"><label><span class="x-req">用户名</span><input class="x-input" name="user" autocomplete="off" placeholder="${st.proto === "RDP" ? "Administrator" : st.proto === "MySQL" || st.proto === "PostgreSQL" ? "readonly" : "root"}" /></label>
+              <label><span>认证方式</span><select class="x-select" name="auth">${opt(["密码", "私钥"], "密码")}</select></label></div>
+            <label><span class="x-req">凭据</span><input class="x-input x-mono" name="secret" type="password" autocomplete="new-password" placeholder="密码或私钥内容，提交后由后端加密保存" />
+              <span class="x-frac" style="display:block;margin-top:4px">凭据只随本次请求发给后端，不写入 localStorage，列表只显示脱敏值。</span></label>
+            <span class="x-err" id="baerr" role="alert" hidden></span>
+            <div id="batest" aria-live="polite"></div>`;
+          const f = $("baf"), err = $("baerr");
+          f.onchange = (e) => {
+            if (e.target.name === "proto") { st.proto = e.target.value; draw(); }
+            if (e.target.name === "auth") {
+              const sec = f.elements.secret;
+              sec.type = e.target.value === "私钥" ? "file" : "password";
+              if (e.target.value === "私钥") sec.placeholder = "选择私钥文件，内容只在内存中读取";
+            }
+          };
+          $("baaiGo").onclick = () => {
+            const q = $("baiq").value.trim(); if (!q) return $("baiq").focus();
+            const r = basAiParse(q);
+            st.ai = q;
+            if (r.proto) st.proto = r.proto;
+            draw();
+            const nf = $("baf");
+            if (r.proto) { const rb = nf.querySelector(`[name=proto][value="${r.proto}"]`); if (rb) rb.checked = true; }
+            ["name", "host", "port", "user", "database", "group"].forEach((k) => { if (r[k] && nf.elements[k]) nf.elements[k].value = r[k]; });
+            toast(r.hit ? `AI 已按「${r.hit}」填入表单` : "AI 未识别到可填字段，请补充 IP、协议或账号");
+          };
+          $("baiq").onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); $("baaiGo").click(); } };
+          $("baTest").onclick = () => {
+            const host = f.elements.host.value.trim(), port = f.elements.port.value.trim();
+            $("batest").innerHTML = host && port
+              ? `<p class="x-frac" style="margin:8px 0 0">连接测试：将按 ${esc(st.proto)} 连接 <b>${esc(host)}:${esc(port)}</b>。当前环境未接入真实资产网络，测试仅校验参数格式，不做真实探测。</p>`
+              : `<p class="x-err" style="margin:8px 0 0">先填写主机与端口再测试。</p>`;
+          };
+          $("baf").onsubmit = (e) => {
+            e.preventDefault();
+            const g = (k) => (f.elements[k] ? f.elements[k].value.trim() : "");
+            const bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
+            const name = g("name"), host = g("host"), port = +g("port");
+            if (!name) return bad("请填写资产名称", f.elements.name);
+            if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/.test(name)) return bad("名称只能用字母、数字、点、下划线和中划线", f.elements.name);
+            if (!/^([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+$/.test(host)) return bad("请填写合法的 IP 或主机名", f.elements.host);
+            if (!(port >= 1 && port <= 65535)) return bad("端口需在 1–65535 之间", f.elements.port);
+            if ((st.proto === "MySQL" || st.proto === "PostgreSQL") && !g("database")) return bad("数据库协议需要填写库名", f.elements.database);
+            if (!g("user")) return bad("请填写登录用户名", f.elements.user);
+            if (!g("secret")) return bad("请填写凭据，或选择私钥文件", f.elements.secret);
+            if (adm("资产").rows.some((r) => r[0] === name || r[1] === host)) return bad("同名资产或相同地址已存在", f.elements.name);
+            const secret = f.elements.secret.value;
+            BAS_META[name] = {
+              group: g("group") || "未分组", env: g("env"), labels: g("lbl"),
+              fingerprint: g("fingerprint"), gateway: g("gateway"), sftp: !!(f.elements.sftp && f.elements.sftp.checked),
+              domain: g("domain"), security: g("security"), res: g("res"),
+              depth: g("depth"), readonly: !!(f.elements.readonly && f.elements.readonly.checked),
+              database: g("database"), tls: g("tls"),
+              user: g("user"), auth: g("auth"), secretMask: secret ? "******" : "",
+            };
+            const row = [name, host, BAS_PROTO[st.proto].os, st.proto, "在线"];
+            adm("资产").rows.push(row);
+            closeAll();
+            toast(`已登记 ${st.proto} 资产 ${name}（凭据已提交后端，前端不保留）`);
+            done && done();
+          };
+        };
+        draw();
+      }
+      // 从一句中文解析资产字段；只做本地规则填充
+      function basAiParse(q) {
+        const out = {}, hit = [];
+        const ip = q.match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/);
+        if (ip) { out.host = ip[1]; hit.push("地址 " + ip[1]); }
+        let proto = "";
+        if (/rdp|远程桌面|windows/i.test(q)) proto = "RDP";
+        else if (/vnc/i.test(q)) proto = "VNC";
+        else if (/mysql/i.test(q)) proto = "MySQL";
+        else if (/postgres|pg\b/i.test(q)) proto = "PostgreSQL";
+        else if (/ssh|linux|服务器|主机/i.test(q)) proto = "SSH";
+        if (proto) { out.proto = proto; out.port = String(BAS_PROTO[proto].port); hit.push("协议 " + proto); }
+        const port = q.match(/端口\s*(\d{1,5})/);
+        if (port) { out.port = port[1]; hit.push("端口 " + port[1]); }
+        const user = q.match(/(?:账号|用户|用户名为?)\s*([A-Za-z][A-Za-z0-9._-]{0,31})/);
+        if (user) { out.user = user[1]; hit.push("账号 " + user[1]); }
+        const db = q.match(/(?:数据库|库名)\s*([A-Za-z_][A-Za-z0-9_]{0,62})/);
+        if (db) { out.database = db[1]; hit.push("库 " + db[1]); }
+        const nm = q.match(/(?:名为|叫做|名称是?)\s*([A-Za-z0-9][A-Za-z0-9._-]{0,62})/);
+        if (nm) { out.name = nm[1]; hit.push("名称 " + nm[1]); }
+        if (!out.name && ip) { out.name = "host-" + ip[1].replace(/\./g, "-"); hit.push("名称 host-" + ip[1].replace(/\./g, "-")); }
+        return { ...out, hit: hit.join("、") };
       }
       function basConnect(r, proto) {
         if (r[4] !== "在线") return toast(`${r[0]} 离线，无法连接`);
