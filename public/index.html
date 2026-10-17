@@ -137,6 +137,10 @@
       .x-modal--wide { width: min(680px, calc(100vw - 32px)); top: 6vh; max-height: 88vh; display: flex; flex-direction: column; }
       .x-modal.x-modal--wlg { width: min(780px, calc(100vw - 24px)); }
       .x-modal .x-xai-f > button { flex: none; white-space: nowrap; }
+      .x-nparams { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+      .x-nparams label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+      .x-nparams .x-select { height: 30px; }
+      .x-nparams .x-input { height: 30px; }
       .x-aip .x-aip-r { margin-top: 10px; border-top: 1px dashed var(--x-line); padding-top: 10px; }
       .x-aip .x-aip-t { margin: 0 0 8px; font-weight: 500; }
       .x-aip .x-aip-l { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
@@ -3412,7 +3416,7 @@
           ["#1044 灰度发布", "发布", a.envs[a.envs.length - 2], "e7d2a19-317", "成功", "2026-10-12 15:36"],
           ["#1044 蓝绿发布", "发布", "生产", "e7d2a19-317", "成功", "2026-10-12 15:45"],
         ];
-        const orch = { tab: "编排流程", name: "", env: a.envs[a.envs.length - 1], nodes: [], warn: "", run: -1, running: false };
+        const orch = { tab: "编排流程", name: "", env: a.envs[a.envs.length - 1], nodes: [], params: {}, warn: "", run: -1, running: false };
         const what = "2fb6ab3-319 · feat: 网关限流规则支持热更新";
         const flows = [
           mkFlow({ app: a.name, build: 1046, env: "prod", until: "2026-10-15 10:08", ver: "agent @ 05874c1e…", what }),
@@ -3580,6 +3584,40 @@
         ["通用", [["人工审批", "指定审批人确认后继续"], ["等待", "暂停一段时间后继续"], ["通知", "向群聊推送执行结果"]]],
       ];
       const STEPS = PAL.flatMap(([g, l]) => l.map(([t, desc]) => ({ g, t, desc })));
+      // 编排步骤参数：每个步骤只暴露它真正需要的参数，保存/运行前校验
+      const STEP_PARAM = {
+        滚动发布: [{ k: "batch", l: "批次", t: "select", o: ["1", "2", "3"], d: "2" }, { k: "watch", l: "观察(分)", t: "num", d: "5" }],
+        发灰度: [{ k: "weight", l: "灰度流量%", t: "num", d: "10" }],
+        调灰度权重: [{ k: "weight", l: "目标权重%", t: "num", d: "50" }],
+        人工审批: [{ k: "who", l: "审批人", t: "select", o: OWN, d: OWN[0] }],
+        等待: [{ k: "min", l: "等待(分)", t: "num", d: "5" }],
+        通知: [{ k: "ch", l: "渠道", t: "select", o: ["企业微信", "钉钉", "邮件"], d: "企业微信" }],
+        起绿轨: [{ k: "watch", l: "观察(分)", t: "num", d: "10" }],
+      };
+      function stepParam(o, s) {
+        const t = STEPS[s].t, p = (o.params[t] ||= {});
+        (STEP_PARAM[t] || []).forEach((f) => { if (p[f.k] == null || p[f.k] === "") p[f.k] = f.d; });
+        return p;
+      }
+      function stepParamHtml(o, s) {
+        const f = STEP_PARAM[STEPS[s].t]; if (!f) return "";
+        const p = stepParam(o, s);
+        return `<div class="x-nparams">${f.map((x) => x.t === "select"
+          ? `<label class="x-frac">${x.l}<select class="x-select" data-pk="${s}" data-pf="${x.k}" aria-label="${esc(STEPS[s].t)} ${x.l}">${opt(x.o, p[x.k])}</select></label>`
+          : `<label class="x-frac">${x.l}<input class="x-input" type="number" min="1" data-pk="${s}" data-pf="${x.k}" value="${esc(p[x.k])}" aria-label="${esc(STEPS[s].t)} ${x.l}" style="width:84px" /></label>`).join("")}</div>`;
+      }
+      function orchIssue(o) {
+        for (const s of o.nodes) {
+          const t = STEPS[s].t, need = STEP_PARAM[t]; if (!need) continue;
+          const p = o.params[t] || {};
+          for (const f of need) {
+            const v = p[f.k];
+            if (f.t === "num") { const n = Number(v); if (!Number.isFinite(n) || n <= 0) return `${t} 的「${f.l}」需要大于 0`; }
+            else if (!v) return `${t} 需要选择${f.l}`;
+          }
+        }
+        return "";
+      }
       const POL = { dev: ["滚动发布", "1 批 · 观察 0 分钟", "—", "已完成"], 测试环境: ["滚动发布", "1 批 · 观察 0 分钟", "—", "已完成"], 预发: ["灰度发布", "2 批 · 观察 5 分钟", "Header x-canary 染色分流", "灰度 20%"], 生产: ["蓝绿发布 + 人工审批", "全量 · 观察 15 分钟", "A/B 按用户分组；镜像 10% 流量到隔离环境", "蓝轨在线"] };
       const pad = (n) => String(n).padStart(2, "0");
       const fmt = (t) => `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
@@ -3973,6 +4011,7 @@
                   <div class="x-pal">${PAL.map(([g, l]) => `<div><h3>${g}</h3>${l.map(([t, desc]) => `<button class="x-pcard" data-s="${STEPS.findIndex((s) => s.t === t)}"><b>${t}</b>${g === "通用" ? "" : '<span class="x-tag x-orange x-tag--s">独占</span>'}<small>${desc}</small></button>`).join("")}</div>`).join("")}</div>
                   <div class="x-canvas" id="canvas">${o.nodes.length ? o.nodes.map((s, k) => `${k ? '<div class="x-arrow" aria-hidden="true">↓</div>' : ""}<div class="x-node ${cls(k)}">
                       <span class="x-frac">${k + 1}</span><span class="x-grow"><span class="x-name">${STEPS[s].t}</span><small class="x-frac x-blk">${STEPS[s].g}${{ run: " · 执行中…", ok: " · ✓ 已完成" }[cls(k)] || ""}</small></span>
+                      ${stepParamHtml(o, s)}
                       <button class="x-act" data-mv="-1" data-k="${k}" aria-label="上移"${k ? "" : " disabled"}>↑</button><button class="x-act" data-mv="1" data-k="${k}" aria-label="下移"${k < o.nodes.length - 1 ? "" : " disabled"}>↓</button><button class="x-act" data-rm="${k}">移除</button>
                     </div>`).join("") : '<p class="x-empty">点击左侧步骤卡片，添加到编排流程</p>'}</div>
                 </div>`,
@@ -3980,6 +4019,7 @@
           p.querySelectorAll("[data-tb]").forEach((b) => (b.onclick = () => { o.tab = b.dataset.tb; refresh(); }));
           if (o.tab !== "编排流程") return;
           const ed = (f) => () => { if (o.running) return; o.warn = ""; o.run = -1; f(); refresh(); };
+          p.querySelectorAll("[data-pk]").forEach((inp) => { inp.onchange = inp.oninput = () => { const t = STEPS[+inp.dataset.pk].t; (o.params[t] ||= {})[inp.dataset.pf] = inp.value; o.warn = ""; }; });
           p.querySelectorAll("[data-s]").forEach((b) => (b.onclick = ed(() => {
             const s = +b.dataset.s;
             const shared = PAL.some(([g, l]) => g === "通用" && l.some(([t]) => t === STEPS[s].t));
@@ -3992,11 +4032,13 @@
           $("oenv").onchange = (e) => (o.env = e.target.value);
           $("osave").onclick = ed(() => {
             if (!o.nodes.length) return (o.warn = "请先从左侧添加步骤");
+            { const issue = orchIssue(o); if (issue) return (o.warn = "参数不完整：" + issue); }
             d.recs.unshift([o.name.trim() || "未命名编排", "编排", o.env, o.nodes.map((s) => STEPS[s].t).join(" → "), "已保存", fmt(new Date())]);
             toast("已保存，可在「发布记录」查看");
           });
           $("orun").onclick = ed(() => {
             if (!o.nodes.length) return (o.warn = "请先从左侧添加步骤");
+            { const issue = orchIssue(o); if (issue) return (o.warn = "参数不完整：" + issue); }
             o.running = true; o.run = 0;
             const tick = () => setTimeout(() => {
               if (++o.run >= o.nodes.length) { o.running = false; toast(`「${o.name.trim() || "未命名编排"}」运行完成`); } else tick();
