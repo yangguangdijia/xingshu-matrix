@@ -4465,7 +4465,8 @@
       function userDlg(i) {
         const x = IAM.users[i] || { u: "", n: "", mail: "", tel: "", dept: IAM.dsel, roles: [] }, isNew = i < 0;
         dlg(isNew ? "新建用户" : "编辑用户 · " + esc(x.u), `<form class="x-form" id="uf" novalidate>
-          <p class="x-err" id="uerr" role="alert" hidden></p>
+          <p class="x-err" id="uerr" role="alert" hidden></p><div style="display:flex;gap:8px;align-items:flex-end"><label style="flex:1"><span>✦ 用一句话描述</span><input class="x-input" name="aiq" placeholder="如：新建运维工程师张三，邮箱 zhangsan@xingshu.com" autocomplete="off" /></label><button class="x-btn" type="button" data-aifill-user>生成</button></div>
+
           <label><span>用户名</span><input class="x-input" name="u" value="${esc(x.u)}" placeholder="小写字母开头，3–32 位"${isNew ? "" : " readonly"} autocomplete="off" /></label>
           <label><span>姓名</span><input class="x-input" name="n" value="${esc(x.n)}" /></label>
           <label><span>邮箱</span><input class="x-input" name="mail" type="email" value="${esc(x.mail)}" /></label>
@@ -4476,6 +4477,20 @@
           <label class="x-switch"><input type="checkbox" role="switch" name="must" checked /> 首次登录强制修改密码</label>` : ""}
         </form>`, `<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="uf">${isNew ? "创建" : "保存"}</button>`);
         const f = $("uf"), e = f.elements, err = $("uerr");
+        const aiBtn = f.querySelector("[data-aifill-user]");
+        if (aiBtn) aiBtn.onclick = async () => {
+          const q = (e.aiq && e.aiq.value.trim()) || "";
+          if (!q) { err.textContent = "请先描述要创建的用户"; err.hidden = false; return; }
+          aiBtn.disabled = true; aiBtn.textContent = "生成中...";
+          try {
+            const d = await XS.post("/ai/assist", { scene: "user.create", instruction: q, schema: { display_name: "string, 中文姓名", email: "string, 邮箱(可从描述推断，没有则空)", note: "string, 备注" } }, { timeoutMs: 60000 });
+            const v = (d && d.fields) || {};
+            if (v.display_name) e.n.value = v.display_name;
+            if (v.email) e.mail.value = v.email;
+            toast("已根据描述生成，请核对后创建");
+          } catch (e2) { err.textContent = "AI 生成失败：" + (e2.message || "未知错误"); err.hidden = false; }
+          finally { aiBtn.disabled = false; aiBtn.textContent = "生成"; }
+        };
         e[isNew ? "u" : "n"].focus();
         f.onsubmit = async (ev) => {
           ev.preventDefault();
