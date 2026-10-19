@@ -10902,6 +10902,10 @@
         dlg(r ? `编辑告警规则 · ${esc(r.name)}` : "新建告警规则", `<form class="x-form" id="obr" novalidate><div id="obrbody"></div></form>`, tfFoot("obr", r ? "保存" : "创建"));
         const draw = () => {
           $("obrbody").innerHTML = `
+            <div style="display:flex;gap:8px;align-items:flex-end">
+              <label style="flex:1"><span>✦ 用一句话描述，自动生成规则</span><input class="x-input" name="aiq" placeholder="如：节点 CPU 使用率超过 85% 持续 5 分钟就告警" autocomplete="off" /></label>
+              <button class="x-btn" type="button" id="obai">生成</button>
+            </div>
             <label><span class="x-req">名称</span><input class="x-input" name="name" maxlength="40" value="${esc(v.name)}" placeholder="例如：订单服务 5xx 比例过高" autocomplete="off" /></label>
             <fieldset class="x-radios"><legend>表达式方式</legend>${["可视化", "手写 PromQL"].map((m) => `<label><input type="radio" name="mode" value="${m}"${m === st.mode ? " checked" : ""} />${m}</label>`).join("")}</fieldset>
             ${st.mode === "可视化" ? `
@@ -10934,6 +10938,26 @@
             if (e.target.name === "mode") { st.mode = e.target.value; draw(); return; }
             if (e.target.name === "metric") { f.elements.filter.value = ""; st.filter = ""; }
             sync();
+          };
+          $("obai").onclick = async () => {
+            const q = f.elements.aiq.value.trim(), btn = $("obai");
+            if (!q) return tfErr("obrerr", "请先描述你想要的告警", f.elements.aiq);
+            btn.disabled = true; btn.textContent = "生成中…";
+            try {
+              const d = await XS.post("/ai/assist", {
+                scene: "alert.rule",
+                instruction: q,
+                schema: { name: "string, 告警名(英文CamelCase)", expr: "string, PromQL 表达式", for: "string, 如 5m", severity: "enum: critical/warning/info", summary: "string, 中文摘要" },
+              }, { timeoutMs: 60000 });
+              const v = (d && d.fields) || {};
+              if (v.name) f.elements.name.value = v.name;
+              if (v.expr) f.elements.expr.value = v.expr;
+              if (v.for) f.elements.dur.value = v.for;
+              if (v.severity) { const el = f.querySelector(`[name=p][value="${{ critical: "P1", warning: "P2", info: "P3" }[v.severity] || "P2"}"]`); if (el) el.checked = true; }
+              sync(); toast("已根据描述生成规则，请核对后保存");
+            } catch (e2) {
+              tfErr("obrerr", "AI 生成失败：" + (e2.message || "未知错误"), null);
+            } finally { btn.disabled = false; btn.textContent = "生成"; }
           };
           sync();
           f.onsubmit = async (e) => {
