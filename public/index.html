@@ -4578,8 +4578,22 @@
           };
         };
         $("dNew").onclick = () => {
-          dlg("新建部门", `<form class="x-form" id="df" novalidate><p class="x-err" id="derr" role="alert" hidden></p><label><span>部门名称</span><input class="x-input" name="n" /></label><label><span>上级部门</span><select class="x-select" name="p">${opt(["", ...IAM.depts.map((d) => d.n)], "")}</select></label></form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="df">创建</button>');
+          dlg("新建部门", `<form class="x-form" id="df" novalidate><p class="x-err" id="derr" role="alert" hidden></p><div style="display:flex;gap:8px;align-items:flex-end"><label style="flex:1"><span>✦ 用一句话描述</span><input class="x-input" name="aiq" placeholder="如：新建一个负责数据库运维的部门" autocomplete="off" /></label><button class="x-btn" type="button" data-aifill>生成</button></div>
+<label><span>部门名称</span><input class="x-input" name="n" /></label><label><span>上级部门</span><select class="x-select" name="p">${opt(["", ...IAM.depts.map((d) => d.n)], "")}</select></label></form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="df">创建</button>');
           const f = $("df"); f.elements.n.focus();
+          f.querySelector("[data-aifill]").onclick = async () => {
+            const q = f.elements.aiq.value.trim(), b = f.querySelector("[data-aifill]");
+            if (!q) { const e = $("derr"); e.textContent = "请先描述这个部门"; e.hidden = false; return; }
+            b.disabled = true; b.textContent = "生成中...";
+            try {
+              const d = await XS.post("/ai/assist", { scene: "department.create", instruction: q, schema: { name: "string, 部门名称", note: "string, 职责说明" } }, { timeoutMs: 60000 });
+              const v = (d && d.fields) || {};
+              if (v.name) f.elements.n.value = v.name;
+              if (v.note && f.elements.note) f.elements.note.value = v.note;
+              toast("已根据描述生成，请核对后创建");
+            } catch (e2) { const el = $("derr"); el.textContent = "AI 生成失败：" + (e2.message || "未知错误"); el.hidden = false; }
+            finally { b.disabled = false; b.textContent = "生成"; }
+          };
           f.onsubmit = async (ev) => { ev.preventDefault(); const n = f.elements.n.value.trim(), err = $("derr");
             if (!n || IAM.depts.some((d) => d.n === n)) { err.textContent = n ? "部门名称已存在" : "请输入部门名称"; err.hidden = false; return f.elements.n.focus(); }
             if (window.XS && XS.mode === "live") {
@@ -4616,13 +4630,27 @@
       }
       function groupDlg(i) {
         const g = IAM.groups[i] || { n: "", desc: "", members: [], roles: [] }, isNew = i < 0;
-        dlg(isNew ? "新建用户组" : "编辑用户组 · " + esc(g.n), `<form class="x-form" id="gf" novalidate><p class="x-err" id="gerr" role="alert" hidden></p>
+        dlg(isNew ? "新建用户组" : "编辑用户组 · " + esc(g.n), `<form class="x-form" id="gf" novalidate><p class="x-err" id="gerr" role="alert" hidden></p><div style="display:flex;gap:8px;align-items:flex-end"><label style="flex:1"><span>✦ 用一句话描述</span><input class="x-input" name="aiq" placeholder="如：新建一个负责数据库运维的部门" autocomplete="off" /></label><button class="x-btn" type="button" data-aifill>生成</button></div>
+
           <label><span>名称</span><input class="x-input" name="n" value="${esc(g.n)}"${g.sys ? " readonly" : ""} /></label>
           <label><span>说明</span><input class="x-input" name="desc" value="${esc(g.desc)}" /></label>
           <fieldset class="x-radios" style="display:grid;gap:6px"><legend>成员</legend>${checks("m", IAM.users.map((u) => u.u), g.members, g.sys ? ["admin"] : [])}</fieldset>
           <fieldset class="x-radios" style="display:grid;gap:6px"><legend>授予角色</legend>${checks("r", roleAll().map((r) => r.name), g.roles, g.sys ? ["超级管理员"] : [])}</fieldset>
         </form>`, `<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="gf">${isNew ? "创建" : "保存"}</button>`);
         const f = $("gf"); f.elements.n.focus();
+        f.querySelector("[data-aifill]").onclick = async () => {
+          const q = f.elements.aiq.value.trim(), b = f.querySelector("[data-aifill]");
+          if (!q) { const e = $("gerr"); e.textContent = "请先描述这个用户组"; e.hidden = false; return; }
+          b.disabled = true; b.textContent = "生成中...";
+          try {
+            const d = await XS.post("/ai/assist", { scene: "group.create", instruction: q, schema: { name: "string, 用户组名称", description: "string, 说明" } }, { timeoutMs: 60000 });
+            const v = (d && d.fields) || {};
+            if (v.name) f.elements.n.value = v.name;
+            if (v.description && f.elements.desc) f.elements.desc.value = v.description;
+            toast("已根据描述生成，请核对后保存");
+          } catch (e2) { const el = $("gerr"); el.textContent = "AI 生成失败：" + (e2.message || "未知错误"); el.hidden = false; }
+          finally { b.disabled = false; b.textContent = "生成"; }
+        };
         f.onsubmit = async (ev) => {
           ev.preventDefault(); const n = f.elements.n.value.trim(), err = $("gerr");
           if (!n || IAM.groups.some((x, j) => x.n === n && j !== i)) { err.textContent = n ? "用户组名称已存在" : "请输入名称"; err.hidden = false; return f.elements.n.focus(); }
