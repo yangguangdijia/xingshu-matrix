@@ -4523,10 +4523,20 @@
         } catch (e) { IAM._deptsErr = e.message || "部门加载失败"; }
       }
 
+      // 用户组：真实后端 /user-groups（成员与角色按名映射到 id）
+      async function iamLoadGroups() {
+        try {
+          const d = await XS.get("/user-groups");
+          const items = Array.isArray(d) ? d : ((d && d.items) || []);
+          IAM.groups = items.map((g) => ({ id: g.id, n: g.name, desc: g.description || "", members: g.members || [], roles: g.roles || [], memberIds: g.member_ids || [], roleIds: g.role_ids || [], sys: false }));
+          IAM._groupsErr = "";
+        } catch (e) { IAM._groupsErr = e.message || "用户组加载失败"; }
+      }
+
       function iamGroups(el) {
-        if (window.XS && XS.mode === "live" && !IAM._deptsLoaded) {
-          IAM._deptsLoaded = true;
-          iamLoadDepts().then(() => iamRe());
+        if (window.XS && XS.mode === "live" && (!IAM._deptsLoaded || !IAM._groupsLoaded)) {
+          IAM._deptsLoaded = true; IAM._groupsLoaded = true;
+          Promise.all([iamLoadDepts(), iamLoadGroups()]).then(() => iamRe());
         }
         const kids = (p) => IAM.depts.filter((d) => d.p === p);
         const cnt = (n) => IAM.users.filter((u) => u.dept === n).length;
@@ -4573,7 +4583,13 @@
         });
         $("gNew").onclick = () => groupDlg(-1);
         on(el, "gedit", (i) => groupDlg(i));
-        on(el, "gdel", (i) => { const g = IAM.groups[i]; k8Confirm("删除用户组", `删除 <b>${esc(g.n)}</b> 后，${g.members.length} 名成员将不再经此组获得 ${esc(g.roles.join("、") || "任何")} 角色。`, "删除", () => { IAM.groups.splice(i, 1); if (g.demo) IAM.gone.add("groups:" + g.n); iamRe(); toast("已删除用户组"); }); });
+        on(el, "gdel", (i) => { const g = IAM.groups[i]; k8Confirm("删除用户组", `删除 <b>${esc(g.n)}</b> 后，${g.members.length} 名成员将不再经此组获得 ${esc(g.roles.join("、") || "任何")} 角色。`, "删除", async () => {
+          if (window.XS && XS.mode === "live" && g.id) {
+            try { await XS.api("/user-groups/" + g.id, { method: "DELETE" }); await iamLoadGroups(); }
+            catch (e2) { return toast("删除失败：" + (e2.message || "未知错误")); }
+          } else IAM.groups.splice(i, 1);
+          iamRe(); toast("已删除用户组");
+        }); });
       }
       function groupDlg(i) {
         const g = IAM.groups[i] || { n: "", desc: "", members: [], roles: [] }, isNew = i < 0;
@@ -4584,11 +4600,20 @@
           <fieldset class="x-radios" style="display:grid;gap:6px"><legend>授予角色</legend>${checks("r", roleAll().map((r) => r.name), g.roles, g.sys ? ["超级管理员"] : [])}</fieldset>
         </form>`, `<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="gf">${isNew ? "创建" : "保存"}</button>`);
         const f = $("gf"); f.elements.n.focus();
-        f.onsubmit = (ev) => {
+        f.onsubmit = async (ev) => {
           ev.preventDefault(); const n = f.elements.n.value.trim(), err = $("gerr");
           if (!n || IAM.groups.some((x, j) => x.n === n && j !== i)) { err.textContent = n ? "用户组名称已存在" : "请输入名称"; err.hidden = false; return f.elements.n.focus(); }
           const d = { n, desc: f.elements.desc.value.trim(), members: [...new Set([...(g.sys ? ["admin"] : []), ...picked(f, "m")])], roles: [...new Set([...(g.sys ? ["超级管理员"] : []), ...picked(f, "r")])] };
-          if (isNew) IAM.groups.push(d); else Object.assign(g, d);
+          if (window.XS && XS.mode === "live") {
+            const uid = (name) => { const u = IAM.users.find((x) => x.u === name); return u && u.id ? u.id : null; };
+            const rid = (name) => { const r = roleAll().find((x) => x.name === name); return r && r.id ? r.id : null; };
+            const payload = { name: d.n, description: d.desc, member_ids: d.members.map(uid).filter(Boolean), role_ids: d.roles.map(rid).filter(Boolean) };
+            try {
+              if (isNew) await XS.post("/user-groups", payload);
+              else await XS.put("/user-groups/" + g.id, payload);
+              await iamLoadGroups();
+            } catch (e2) { err.textContent = e2.message || "保存失败"; err.hidden = false; return; }
+          } else if (isNew) IAM.groups.push(d); else Object.assign(g, d);
           closeAll(); iamRe(); toast(isNew ? `已创建用户组 ${n}` : "已保存");
         };
       }

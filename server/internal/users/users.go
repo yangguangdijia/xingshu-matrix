@@ -402,6 +402,7 @@ func GeneratePassword(n int) string {
 func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 	read, manage := rbac.RequirePerm("user:read"), rbac.RequirePerm("user:manage")
 	s.registerDepartments(r, read, manage)
+	s.registerUserGroups(r, read, manage)
 
 	r.GET("/users", read, func(c *gin.Context) {
 		p := httpx.ParsePage(c)
