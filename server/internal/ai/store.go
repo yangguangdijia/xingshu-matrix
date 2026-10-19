@@ -211,6 +211,10 @@ func validateModel(in *ModelInput) error {
 
 // CreateModel inserts a model (the first model becomes default).
 func (s *Store) CreateModel(ctx context.Context, in ModelInput) (*ModelConfig, error) {
+	// tags 是 NOT NULL 列：未传时 nil slice 会被编码成 NULL，必须先归一成空数组
+	if in.Tags == nil {
+		in.Tags = []string{}
+	}
 	if err := validateModel(&in); err != nil {
 		return nil, err
 	}
@@ -254,6 +258,9 @@ func (s *Store) CreateModel(ctx context.Context, in ModelInput) (*ModelConfig, e
 
 // UpdateModel updates a model.
 func (s *Store) UpdateModel(ctx context.Context, id int64, in ModelInput) (*ModelConfig, error) {
+	if in.Tags == nil {
+		in.Tags = []string{}
+	}
 	cur, err := s.GetModel(ctx, id)
 	if err != nil {
 		return nil, err
