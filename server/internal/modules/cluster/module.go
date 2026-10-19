@@ -98,6 +98,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.POST("/:id/test", rbac.RequirePerm(PermClusterRead), m.testCluster)
 
 	g.GET("/:id/nodes", rbac.RequirePerm(PermNodeRead), m.listNodes)
+	m.registerAlertRuleRoutes(g)
 	g.GET("/:id/nodes/:node", rbac.RequirePerm(PermNodeRead), m.getNode)
 	g.POST("/:id/nodes/:node/cordon", rbac.RequirePerm(PermNodeWrite), m.change("cordon"))
 	g.POST("/:id/nodes/:node/uncordon", rbac.RequirePerm(PermNodeWrite), m.change("uncordon"))
