@@ -4671,7 +4671,24 @@
         };
       }
 
+      // 登录日志：真实 /audit-logs（按 path=/auth/login 过滤）
+      async function iamLoadLogins() {
+        try {
+          const d = await XS.get("/audit-logs", { page: 1, page_size: 200 });
+          const items = Array.isArray(d) ? d : ((d && d.items) || []);
+          LOGINS.length = 0;
+          items.filter((x) => (x.path || "").indexOf("/auth/login") >= 0).forEach((x) => {
+            LOGINS.push({ u: x.username || "-", ip: x.ip || "-", t: new Date(x.created_at),
+              ok: x.result === "success", m: "账号密码", note: x.status_code === 200 ? "" : `HTTP ${x.status_code}` });
+          });
+          IAM._logsErr = "";
+        } catch (e) { IAM._logsErr = e.message || "日志加载失败"; }
+      }
+
       function iamLogs(el) {
+        if (window.XS && XS.mode === "live" && !IAM._logsLoaded) {
+          IAM._logsLoaded = true; iamLoadLogins().then(() => iamRe());
+        }
         const key = "#/iam/logs";
         const rows = LOGINS.map((l) => [l.u, l.ip, fmtT(l.t), l.ok ? "成功" : "失败", l.m, ["本次会话", l.note].filter(Boolean).join(" · ")]).concat(demo ? IAM_DEMO.logs : []);
         el.innerHTML = phead("登录日志", "每次登录的用户、来源 IP、时间、结果与认证方式；本次会话的真实登录排在最前", demo ? '<span class="x-tag x-orange x-pill"></span>' : "") +
