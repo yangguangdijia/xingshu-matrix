@@ -50,14 +50,31 @@ import_tar() {
   echo "[image] 从离线包导入：$TAR"
   case "$(runtime)" in
     ctr)
-      ctr -n "$CONTAINERD_NS" images import "$TAR" >/dev/null
-      # 离线包内记录的 tag 与目标 tag 可能不同（例如 v40 → v1.3），这里补齐别名
+      # 离线包是 gzip 压缩的 OCI tar；containerd 不会自动解压，先判断再解压导入
+      case "$TAR" in
+        *.gz|*.tgz)
+          # containerd 不支持从 stdin 读压缩流，必须先落盘解压再导入
+          local tmp; tmp="$(mktemp /tmp/matrix-img-XXXXXX.tar)"
+          gzip -dc "$TAR" > "$tmp"
+          ctr -n "$CONTAINERD_NS" images import "$tmp" >/dev/null
+          rm -f "$tmp" ;;
+        *)          ctr -n "$CONTAINERD_NS" images import "$TAR" >/dev/null ;;
+      esac
+      # 离线包内记录的 tag 与目标 tag 可能不同（例如 v40 → v1.3），这里补齐别名。
+      # containerd 里同一个镜像可能以 "xingshu/xxx" 或 "docker.io/xingshu/xxx" 两种名字存在，
+      # 因此源 tag 找不到时自动去掉 docker.io/ 前缀再试一次。
       if [ "$SRC_TAG" != "$IMAGE" ] && ! has_image; then
-        ctr -n "$CONTAINERD_NS" images tag "$SRC_TAG" "$IMAGE" >/dev/null 2>&1 || true
+        local src="$SRC_TAG"
+        ctr -n "$CONTAINERD_NS" images ls -q | grep -qx "$src" || src="${SRC_TAG#docker.io/}"
+        if ctr -n "$CONTAINERD_NS" images tag "$src" "$IMAGE" >/dev/null 2>&1; then
+          echo "[image] 已补 tag 别名：$src → $IMAGE"
+        else
+          echo "[image] 警告：无法把 $src 别名为 $IMAGE" >&2
+        fi
       fi
       ;;
-    docker) gunzip -c "$TAR" 2>/dev/null | docker load || docker load -i "$TAR" ;;
-    crictl) gunzip -c "$TAR" 2>/dev/null | ctr -n "$CONTAINERD_NS" images import - ;;
+    docker) case "$TAR" in *.gz|*.tgz) gunzip -c "$TAR" | docker load ;; *) docker load -i "$TAR" ;; esac ;;
+    crictl) case "$TAR" in *.gz|*.tgz) gzip -dc "$TAR" | ctr -n "$CONTAINERD_NS" images import - ;; *) ctr -n "$CONTAINERD_NS" images import "$TAR" ;; esac ;;
     *) return 1 ;;
   esac
 }
