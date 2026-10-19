@@ -28,6 +28,8 @@ type ModelConfig struct {
 	Temperature  float32           `json:"temperature"`
 	MaxTokens    int               `json:"max_tokens"`
 	MaxContext   int               `json:"max_context"`
+	Tags         []string          `json:"tags"`
+	Note         string            `json:"note"`
 	ExtraHeaders map[string]string `json:"extra_headers"`
 	IsDefault    bool              `json:"is_default"`
 	Enabled      bool              `json:"enabled"`
@@ -46,6 +48,8 @@ type ModelInput struct {
 	Temperature  *float32          `json:"temperature"`
 	MaxTokens    int               `json:"max_tokens" binding:"min=0,max=1000000"`
 	MaxContext   int               `json:"max_context" binding:"min=0,max=10000000"`
+	Tags         []string          `json:"tags" binding:"max=8"`
+	Note         string            `json:"note" binding:"max=200"`
 	ExtraHeaders map[string]string `json:"extra_headers"`
 	IsDefault    bool              `json:"is_default"`
 	Enabled      *bool             `json:"enabled"`
@@ -119,12 +123,12 @@ func (s *Store) APIKey(m *ModelConfig) (string, error) {
 	return string(b), err
 }
 
-const modelCols = `id, name, provider, base_url, api_key_enc, model, temperature, max_tokens, max_context, extra_headers, is_default, enabled, created_at, updated_at`
+const modelCols = `id, name, provider, base_url, api_key_enc, model, temperature, max_tokens, max_context, tags, note, extra_headers, is_default, enabled, created_at, updated_at`
 
 func (s *Store) scanModel(row pgx.Row) (*ModelConfig, error) {
 	var m ModelConfig
 	var hdr []byte
-	err := row.Scan(&m.ID, &m.Name, &m.Provider, &m.BaseURL, &m.APIKeyEnc, &m.Model, &m.Temperature, &m.MaxTokens, &m.MaxContext, &hdr,
+	err := row.Scan(&m.ID, &m.Name, &m.Provider, &m.BaseURL, &m.APIKeyEnc, &m.Model, &m.Temperature, &m.MaxTokens, &m.MaxContext, &m.Tags, &m.Note, &hdr,
 		&m.IsDefault, &m.Enabled, &m.CreatedAt, &m.UpdatedAt)
 	if store.IsNoRows(err) {
 		return nil, httpx.NotFound("model not found")
@@ -235,9 +239,9 @@ func (s *Store) CreateModel(ctx context.Context, in ModelInput) (*ModelConfig, e
 				return err
 			}
 		}
-		return tx.QueryRow(ctx, `INSERT INTO ai_models(name, provider, base_url, api_key_enc, model, temperature, max_tokens, max_context, extra_headers, is_default, enabled)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11) RETURNING id`,
-			in.Name, in.Provider, strings.TrimSpace(in.BaseURL), enc, in.Model, temp, in.MaxTokens, in.MaxContext, string(hdr), isDefault, enabled).Scan(&id)
+		return tx.QueryRow(ctx, `INSERT INTO ai_models(name, provider, base_url, api_key_enc, model, temperature, max_tokens, max_context, tags, note, extra_headers, is_default, enabled)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13) RETURNING id`,
+			in.Name, in.Provider, strings.TrimSpace(in.BaseURL), enc, in.Model, temp, in.MaxTokens, in.MaxContext, in.Tags, in.Note, string(hdr), isDefault, enabled).Scan(&id)
 	})
 	if store.IsUniqueViolation(err) {
 		return nil, httpx.Conflict("model name already exists")
@@ -282,8 +286,8 @@ func (s *Store) UpdateModel(ctx context.Context, id int64, in ModelInput) (*Mode
 			}
 		}
 		_, err := tx.Exec(ctx, `UPDATE ai_models SET name=$2, provider=$3, base_url=$4, api_key_enc=$5, model=$6, temperature=$7,
-			max_tokens=$8, max_context=$9, extra_headers=$10::jsonb, is_default=$11, enabled=$12, updated_at=now() WHERE id=$1`,
-			id, in.Name, in.Provider, strings.TrimSpace(in.BaseURL), enc, in.Model, temp, in.MaxTokens, in.MaxContext, string(hdr),
+			max_tokens=$8, max_context=$9, tags=$10, note=$11, extra_headers=$12::jsonb, is_default=$13, enabled=$14, updated_at=now() WHERE id=$1`,
+			id, in.Name, in.Provider, strings.TrimSpace(in.BaseURL), enc, in.Model, temp, in.MaxTokens, in.MaxContext, in.Tags, in.Note, string(hdr),
 			in.IsDefault || (cur.IsDefault && enabled), enabled)
 		return err
 	})

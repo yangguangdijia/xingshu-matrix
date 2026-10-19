@@ -12110,7 +12110,7 @@ spec:
           ai.models = items.map((m) => ({
             k: m.id, name: m.name, base: m.base_url, model: m.model, key: "",
             ctx: m.max_context || 0, max: m.max_tokens || 4096, temp: m.temperature === undefined ? 0.2 : m.temperature,
-            tags: [], note: "", st: "", why: "", hasKey: !!m.has_api_key, masked: m.api_key_masked || ""
+            tags: Array.isArray(m.tags) ? m.tags : [], note: m.note || "", st: "", why: "", hasKey: !!m.has_api_key, masked: m.api_key_masked || ""
           }));
           const def = items.find((m) => m.is_default);
           ai.def = def ? def.id : (ai.models[0] ? ai.models[0].k : "");
@@ -12201,7 +12201,7 @@ spec:
           if (btn) { btn.disabled = true; btn.textContent = "保存中…"; }
           try {
             // 真实落库：新增 POST /ai/models，编辑 PUT /ai/models/:id
-            const payload = { name: o.name, base_url: o.base, model: o.model, temperature: o.temp, max_tokens: o.max, max_context: o.ctx, provider: "openai", enabled: true };
+            const payload = { name: o.name, base_url: o.base, model: o.model, temperature: o.temp, max_tokens: o.max, max_context: o.ctx, provider: "openai", enabled: true, tags: o.tags, note: o.note };
             if (o.key) payload.api_key = o.key;
             if (p) await XS.put("/ai/models/" + p.k, payload);
             else if (!ai.models.length) payload.is_default = true;
