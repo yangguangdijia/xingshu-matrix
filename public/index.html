@@ -4546,7 +4546,7 @@
         const canDel = !!selDept && kids(sel).length === 0 && !inDept.length && !!selDept.p;
         el.innerHTML = phead("部门与用户组", "部门决定组织归属；用户组把一组成员与角色绑定，成员自动获得组内角色", demo ? '' : "") + `
           <div class="x-iamgrid">
-            <section class="x-panel"><div class="x-iamhd"><h2 class="x-h2">部门</h2><button class="x-btn" id="dNew">+ 新建</button></div>${IAM.depts.length ? tree("") : '<p class="x-frac">还没有部门，点右上角「+ 新建」创建第一个</p>'}</section>
+            <section class="x-panel"><div class="x-iamhd"><h2 class="x-h2">部门</h2><span class="x-kacts"><button class="x-btn" id="dEdit"${selDept ? "" : " disabled"}>编辑</button><button class="x-btn" id="dNew">+ 新建</button></span></div>${IAM.depts.length ? tree("") : '<p class="x-frac">还没有部门，点右上角「+ 新建」创建第一个</p>'}</section>
             <section class="x-panel"><div class="x-iamhd"><h2 class="x-h2">${esc(sel || "未选择部门")}</h2><span class="x-frac">${inDept.length} 名成员</span>${canDel ? '<button class="x-btn" id="dDel">删除部门</button>' : ""}</div>
               ${inDept.length ? tbl(["用户名", "姓名", "角色", "状态"], inDept.map((u) => [esc(u.u), esc(u.n), esc(u.roles.join("、")), iamTag(u.st)])) : '<p class="x-frac">该部门下暂无成员</p>'}</section>
           </div>
@@ -4554,8 +4554,31 @@
             ${tbl(["用户组", "成员", "授予角色", "说明", "操作"], IAM.groups.map((g, i) => [`<b>${esc(g.n)}</b>${g.sys ? ' <span class="x-tag x-blue">内置</span>' : ""}`, esc(g.members.join("、") || "—") + ` <span class="x-frac">(${g.members.length})</span>`, esc(g.roles.join("、") || "—"), `<span class="x-frac">${esc(g.desc || "")}</span>`,
               `<span class="x-kacts">${k8Act("gedit", i, "编辑")}${k8Act("gdel", i, "删除", !g.sys, "内置用户组不可删除")}</span>`]))}</section>`;
         el.querySelectorAll("[data-dpt]").forEach((b) => (b.onclick = () => { IAM.dsel = b.dataset.dpt; iamRe(); }));
+        $("dEdit").onclick = () => {
+          if (!selDept) return toast("请先选择一个部门");
+          dlg("编辑部门 · " + esc(selDept.n), `<form class="x-form" id="de" novalidate><p class="x-err" id="deerr" role="alert" hidden></p>
+            <label><span>部门名称</span><input class="x-input" name="n" value="${esc(selDept.n)}" /></label>
+            <label><span>上级部门</span><select class="x-select" name="p">${opt(["", ...IAM.depts.filter((d) => d.n !== selDept.n).map((d) => d.n)], selDept.p || "")}</select></label>
+            <label><span>备注</span><input class="x-input" name="note" value="${esc(selDept.note || "")}" maxlength="200" /></label>
+          </form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="de">保存</button>');
+          const df = $("de"), derr = $("deerr"); df.elements.n.focus();
+          df.onsubmit = async (ev) => {
+            ev.preventDefault();
+            const n = df.elements.n.value.trim();
+            if (!n) { derr.textContent = "请输入部门名称"; derr.hidden = false; return; }
+            if (IAM.depts.some((d) => d.n === n && d.id !== selDept.id)) { derr.textContent = "部门名称已存在"; derr.hidden = false; return; }
+            const parent = IAM.depts.find((d) => d.n === df.elements.p.value);
+            if (window.XS && XS.mode === "live" && selDept.id) {
+              try { await XS.put("/departments/" + selDept.id, { name: n, parent_id: parent && parent.id ? parent.id : null, note: df.elements.note.value.trim() }); }
+              catch (e2) { derr.textContent = e2.message || "保存失败"; derr.hidden = false; return; }
+              Object.assign(selDept, { n, p: parent ? parent.n : "", note: df.elements.note.value.trim() });
+              IAM.dsel = n;
+            } else Object.assign(selDept, { n, p: parent ? parent.n : "", note: df.elements.note.value.trim() });
+            closeAll(); iamRe(); toast(`已保存部门 ${n}`);
+          };
+        };
         $("dNew").onclick = () => {
-          dlg("新建部门", `<form class="x-form" id="df" novalidate><p class="x-err" id="derr" role="alert" hidden></p><label><span>部门名称</span><input class="x-input" name="n" /></label><label><span>上级部门</span><select class="x-select" name="p">${opt(IAM.depts.map((d) => d.n), sel)}</select></label></form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="df">创建</button>');
+          dlg("新建部门", `<form class="x-form" id="df" novalidate><p class="x-err" id="derr" role="alert" hidden></p><label><span>部门名称</span><input class="x-input" name="n" /></label><label><span>上级部门</span><select class="x-select" name="p">${opt(["", ...IAM.depts.map((d) => d.n)], "")}</select></label></form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="df">创建</button>');
           const f = $("df"); f.elements.n.focus();
           f.onsubmit = async (ev) => { ev.preventDefault(); const n = f.elements.n.value.trim(), err = $("derr");
             if (!n || IAM.depts.some((d) => d.n === n)) { err.textContent = n ? "部门名称已存在" : "请输入部门名称"; err.hidden = false; return f.elements.n.focus(); }
