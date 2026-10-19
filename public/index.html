@@ -7463,9 +7463,30 @@
         dlg("创建工作负载", '<form class="x-form" id="wlf" novalidate><div id="wlbody"></div></form>',
           '<button class="x-btn" data-close>取消</button><button class="x-btn" type="button" id="wlYaml">高级：粘贴 YAML</button><button class="x-btn x-btn--pri" type="submit" form="wlf">创建</button>');
         $("modal").classList.add("x-modal--wlg");
+        $("wlf").addEventListener("click", async (ev) => {
+          const b = ev.target.closest("[data-aifill-wl]");
+          if (!b) return;
+          const f = $("wlf"), fq = f.elements.aiq.value.trim();
+          if (!fq) return toast("请先描述要创建的工作负载");
+          b.disabled = true; b.textContent = "生成中...";
+          try {
+            const d = await XS.post("/ai/assist", {
+              scene: "workload.create",
+              instruction: fq,
+              schema: { kind: "enum: Deployment/StatefulSet/DaemonSet/Job/CronJob", name: "string, k8s 名称(小写短横线)", namespace: "string", image: "string, 镜像地址", port: "number, 容器端口(可为0)", replicas: "number" },
+            }, { timeoutMs: 60000 });
+            const v = (d && d.fields) || {};
+            const set = (k, val) => { if (f.elements[k] && val !== undefined && val !== null && val !== "") f.elements[k].value = val; };
+            if (v.kind) { const r = f.querySelector(`[name=kind][value="${v.kind}"]`); if (r) { r.checked = true; r.dispatchEvent(new Event("change", { bubbles: true })); } }
+            set("name", v.name); set("ns", v.namespace); set("image", v.image); set("port", v.port);
+            toast("已根据描述生成，请核对后创建");
+          } catch (e2) { toast("AI 生成失败：" + (e2.message || "未知错误")); }
+          finally { b.disabled = false; b.textContent = "生成"; }
+        });
         const draw = () => {
           const K = st.k, scal = K === "Deployment" || K === "StatefulSet", job = K === "Job", cron = K === "CronJob";
           $("wlbody").innerHTML = `
+            <div style="display:flex;gap:8px;align-items:flex-end"><label style="flex:1"><span>✦ 用一句话描述</span><input class="x-input" name="aiq" placeholder="如：用 nginx:1.25 在 default 建一个 order-service，端口 8080" autocomplete="off" /></label><button class="x-btn" type="button" data-aifill-wl>生成</button></div>
             <fieldset class="x-radios"><legend>工作负载类型</legend>${WL_KINDS.map((k) => `<label><input type="radio" name="kind" value="${k}"${k === K ? " checked" : ""} />${k}</label>`).join("")}</fieldset>
             <div class="x-row2"><label><span class="x-req">名称</span><input class="x-input" name="name" maxlength="63" autocomplete="off" placeholder="如 order-service" /></label>
               <label><span class="x-req">命名空间</span><input class="x-input" name="ns" list="wlns" value="default" autocomplete="off" /><datalist id="wlns">${WL_NS().map((n) => `<option value="${esc(n)}"></option>`).join("")}</datalist></label></div>
