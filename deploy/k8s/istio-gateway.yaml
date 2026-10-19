@@ -1,0 +1,35 @@
+# Istio 入口：helm install istio-ingress istio/gateway -n istio-system \
+#   --set service.type=NodePort --set 'service.ports[0].name=http2' \
+#   --set 'service.ports[0].port=80' --set 'service.ports[0].targetPort=8080' \
+#   --set 'service.ports[0].nodePort=30880'
+#
+# 装完后 apply 本文件，入口即生效：http://<任意节点IP>:30880 → xingshu-matrix
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: matrix-gw
+  namespace: istio-system
+spec:
+  selector:
+    istio: ingress
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts: ["*"]
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: matrix-vs
+  namespace: xingshu-system
+spec:
+  hosts: ["*"]
+  gateways: ["istio-system/matrix-gw"]
+  http:
+    - route:
+        - destination:
+            host: xingshu-matrix
+            port:
+              number: 80
