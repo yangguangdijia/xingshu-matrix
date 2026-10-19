@@ -10526,9 +10526,23 @@
         };
       }
 
+      // 告警规则：真实来源是集群内 PrometheusRule（/clusters/:id/alert-rules）
+      async function obLoadRules() {
+        try {
+          const cid = (typeof curCluster === "function" && curCluster()) || 1;
+          const d = await XS.get("/clusters/" + cid + "/alert-rules", { namespace: "monitoring" });
+          const items = Array.isArray(d) ? d : ((d && d.items) || []);
+          const lvl = (sev) => (sev === "critical" ? "P1" : sev === "warning" ? "P2" : "P3");
+          ob.rules = items.map((x) => ({ name: x.name, expr: x.expr, p: lvl(x.severity), dur: x.for || "5m", ch: ["Prometheus"], on: true, sil: 0, group: x.rule_group, ns: x.namespace }));
+          ob._rulesErr = "";
+          ob._rulesLoaded = true;
+        } catch (e) { ob._rulesErr = e.message || "规则加载失败"; ob._rulesLoaded = true; }
+      }
+
       // 告警规则
       const obChTags = (list) => `<span class="x-tags">${list.map((c) => `<span class="x-tag x-grey x-tag--s">${esc(c)}</span>`).join("")}</span>`;
       OB_BODY.rules = () => {
+        if (window.XS && XS.mode === "live" && !ob._rulesLoaded) { obLoadRules().then(() => obDraw()); }
         const key = "#/observe/rules", on = ob.rules.filter((r) => r.on).length, sil = ob.rules.filter(obSil).length;
         return bar(key, { q: "搜索规则名称 / 表达式", fl: "级别", fo: OB_P, fc: 2, act: "+ 新建规则", id: "obRuleNew" }) +
           `<section class="x-panel x-setform">${tfHead(`告警规则 ${tfTag(`${on} 条启用`, "x-green")}`, `<span class="x-frac">共 ${ob.rules.length} 条 · ${sil} 条静默中 · 由 Prometheus Alertmanager 评估</span>`)}
@@ -10922,7 +10936,7 @@
             sync();
           };
           sync();
-          f.onsubmit = (e) => {
+          f.onsubmit = async (e) => {
             e.preventDefault();
             const name = f.elements.name.value.trim();
             const expr = (st.mode === "可视化" ? buildExpr() : f.elements.expr.value.trim());
@@ -10936,7 +10950,14 @@
             if (!/(>=?|<=?|==|!=)\s*-?[\d.]+/.test(expr)) return tfErr("obrerr", "表达式需包含触发条件，如 > 0.01", f.elements.expr);
             if (!ch.length) return tfErr("obrerr", "至少选择一个通知渠道", f.querySelector("[name=ch]:not(:disabled)"));
             const nv = { name, expr, p: f.querySelector("[name=p]:checked").value, dur: f.elements.dur.value, ch, on: f.elements.on.checked };
-            if (r) Object.assign(r, nv); else ob.rules.unshift({ ...nv, sil: 0 });
+            if (window.XS && XS.mode === "live" && !r) {
+              const sev = { P0: "critical", P1: "critical", P2: "warning", P3: "info" }[nv.p] || "warning";
+              const cid = (typeof curCluster === "function" && curCluster()) || 1;
+              try {
+                await XS.post("/clusters/" + cid + "/alert-rules", { namespace: "monitoring", rule_group: "matrix-ui", name, expr, for: nv.dur, severity: sev, summary: name }, { timeoutMs: 30000 });
+                await obLoadRules();
+              } catch (e2) { return tfErr("obrerr", e2.message || "写入集群失败", null); }
+            } else if (r) Object.assign(r, nv); else ob.rules.unshift({ ...nv, sil: 0 });
             closeAll(); obDraw(); toast(r ? `「${name}」已更新` : `已创建告警规则「${name}」`);
           };
         };
