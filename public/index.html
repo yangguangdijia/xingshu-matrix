@@ -9666,7 +9666,7 @@
       const tfDraw = () => current() === "traffic" && renderTraffic($("view"));
       const tfFoot = (form, ok) => `<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="${form}">${ok}</button>`;
       const tfHost = (v) => /^([a-z0-9-]+\.)+[a-z]{2,}$/i.test(v);
-      const tfErr = (id, msg, el) => { $(id).textContent = msg; $(id).hidden = false; el.focus(); };
+      const tfErr = (id, msg, el) => { const box = $(id); if (!box) return; box.textContent = msg; box.hidden = false; if (el && typeof el.focus === "function") el.focus(); };
       const tfHead = (t, right) => `<div class="x-sethead" style="margin-bottom:12px"><h2 class="x-h2">${t}</h2>${right}</div>`;
 
       const TF_BODY = {
@@ -12224,12 +12224,14 @@ spec:
         if (pg.bar) bindBar(el, key);
         const w = $("aiw"), box = w.querySelector("[data-aichat]");
         if (box) aiMount(box);
-        const byK = (k) => ai.models.find((m) => m.k === k);
+        // 模型 id 是数字、data-* 取出的是字符串，必须按字符串比较，否则所有按钮都拿不到模型
+        const byK = (k) => ai.models.find((m) => String(m.k) === String(k));
         w.onclick = (e) => {
           const b = e.target.closest("button");
           if (!b) return;
           const d = b.dataset, p = byK(d.aitest || d.aied || d.aicp || d.aidel || d.aidef);
           if ("aiadd" in d) return aiEdit();
+          if (d.aitest && p) return aiTest(p);
 
           if (d.aidel && p) return k8Confirm("删除模型", `确定删除 <b>${esc(p.name)}</b>（${esc(p.model)}）？使用它的场景将改为跟随默认模型。`, "删除", async () => {
             try { await XS.api("/ai/models/" + p.k, { method: "DELETE" }); } catch (err) { return toast("删除失败：" + (err.message || "未知错误")); }
