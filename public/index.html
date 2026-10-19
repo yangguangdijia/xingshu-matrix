@@ -5042,6 +5042,7 @@
       }
       function clAdd() {
         dlg("接入集群", `<form class="x-form" id="claf" novalidate>
+          <div style="display:flex;gap:8px;align-items:flex-end"><label style="flex:1"><span>✦ 用一句话描述</span><input class="x-input" name="aiq" placeholder="如：接入一个生产环境的集群，名字 prod-sh" autocomplete="off" /></label><button class="x-btn" type="button" data-aifill-cl>生成</button></div>
           <fieldset class="x-radios"><legend>接入方式</legend>${["kubeconfig", "Agent", "云托管"].map((m) => `<label><input type="radio" name="mode" value="${m}"${m === "kubeconfig" ? " checked" : ""} />${m}</label>`).join("")}</fieldset>
           <div class="x-msec" data-m="kubeconfig">
             <label><span>上传 kubeconfig 文件</span><input class="x-input" type="file" name="kf" accept=".yaml,.yml,.conf,.config,.txt" /></label>
@@ -5058,6 +5059,25 @@
           <div class="x-msec" data-m="Agent 云托管" hidden>${envField("生产")}</div>
           ${lblField()}<div class="x-warn" id="clpre" role="status" style="display:block"></div><span class="x-err" id="claerr" role="alert" hidden></span></form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="claf">接入</button>');
         const f = $("claf"), bad = formBad("claerr"); envBind(f);
+        f.querySelector("[data-aifill-cl]").onclick = async () => {
+          const b = f.querySelector("[data-aifill-cl]"), q = f.elements.aiq.value.trim();
+          if (!q) return bad("请先描述要接入的集群");
+          b.disabled = true; b.textContent = "生成中...";
+          try {
+            const d = await XS.post("/ai/assist", {
+              scene: "cluster.create",
+              instruction: q,
+              schema: { name: "string, 集群名(小写短横线)", env: "enum: 生产/预发/测试/开发", labels: "string, key=value 空格分隔，可为空", api_server: "string, 仅 Agent 模式使用，可为空" },
+            }, { timeoutMs: 60000 });
+            const v = (d && d.fields) || {};
+            if (v.name && f.elements.n) f.elements.n.value = v.name;
+            if (v.env && f.elements.env) { const o = [...f.elements.env.options].find((x) => x.value === v.env); if (o) { f.elements.env.value = v.env; f.elements.env.dispatchEvent(new Event("change", { bubbles: true })); } }
+            if (v.labels && f.elements.lbl) f.elements.lbl.value = v.labels;
+            if (v.api_server && f.elements.api) f.elements.api.value = v.api_server;
+            toast("已根据描述生成，请核对后创建");
+          } catch (e2) { bad("AI 生成失败：" + (e2.message || "未知错误")); }
+          finally { b.disabled = false; b.textContent = "生成"; }
+        };
         let KC = [];
         const mode = () => f.querySelector("[name=mode]:checked").value;
         f.querySelectorAll("[name=mode]").forEach((r) => (r.onchange = () => { f.querySelectorAll("[data-m]").forEach((s) => (s.hidden = !s.dataset.m.split(" ").includes(mode()))); $("claerr").hidden = true; }));
