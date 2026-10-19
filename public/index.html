@@ -4465,7 +4465,24 @@
         };
       }
 
+      // 部门：真实后端 /departments（可手工创建/删除），失败不影响页面渲染
+      async function iamLoadDepts() {
+        try {
+          const d = await XS.get("/departments");
+          const items = Array.isArray(d) ? d : ((d && d.items) || []);
+          const nameById = {};
+          items.forEach((x) => (nameById[x.id] = x.name));
+          IAM.depts = items.map((x) => ({ id: x.id, n: x.name, p: x.parent_id ? (nameById[x.parent_id] || "") : "", note: x.note || "" }));
+          if (!IAM.depts.some((x) => x.n === IAM.dsel)) IAM.dsel = IAM.depts[0] ? IAM.depts[0].n : "";
+          IAM._deptsErr = "";
+        } catch (e) { IAM._deptsErr = e.message || "部门加载失败"; }
+      }
+
       function iamGroups(el) {
+        if (window.XS && XS.mode === "live" && !IAM._deptsLoaded) {
+          IAM._deptsLoaded = true;
+          iamLoadDepts().then(() => iamRe());
+        }
         const kids = (p) => IAM.depts.filter((d) => d.p === p);
         const cnt = (n) => IAM.users.filter((u) => u.dept === n).length;
         const tree = (p) => `<ul${p ? "" : ' class="x-tree" role="tree"'}>${kids(p).map((d) => `<li><button type="button" data-dpt="${esc(d.n)}" class="${d.n === IAM.dsel ? "on" : ""}">${esc(d.n)}<small>${cnt(d.n)}</small></button>${kids(d.n).length ? tree(d.n) : ""}</li>`).join("")}</ul>`;
@@ -4485,11 +4502,30 @@
         $("dNew").onclick = () => {
           dlg("新建部门", `<form class="x-form" id="df" novalidate><p class="x-err" id="derr" role="alert" hidden></p><label><span>部门名称</span><input class="x-input" name="n" /></label><label><span>上级部门</span><select class="x-select" name="p">${opt(IAM.depts.map((d) => d.n), sel)}</select></label></form>`, '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="df">创建</button>');
           const f = $("df"); f.elements.n.focus();
-          f.onsubmit = (ev) => { ev.preventDefault(); const n = f.elements.n.value.trim(), err = $("derr");
+          f.onsubmit = async (ev) => { ev.preventDefault(); const n = f.elements.n.value.trim(), err = $("derr");
             if (!n || IAM.depts.some((d) => d.n === n)) { err.textContent = n ? "部门名称已存在" : "请输入部门名称"; err.hidden = false; return f.elements.n.focus(); }
-            IAM.depts.push({ n, p: f.elements.p.value }); IAM.dsel = n; closeAll(); iamRe(); toast(`已创建部门 ${n}`); };
+            if (window.XS && XS.mode === "live") {
+              const parent = IAM.depts.find((d) => d.n === f.elements.p.value);
+              const btn = document.querySelector('[form="df"]');
+              if (btn) { btn.disabled = true; btn.textContent = "创建中…"; }
+              try {
+                const created = await XS.post("/departments", { name: n, parent_id: parent && parent.id ? parent.id : null });
+                IAM.depts.push({ id: created.id, n: created.name, p: parent ? parent.n : "", note: created.note || "" });
+              } catch (e2) {
+                if (btn) { btn.disabled = false; btn.textContent = "创建"; }
+                err.textContent = e2.message || "创建失败"; err.hidden = false; return;
+              }
+            } else { IAM.depts.push({ n, p: f.elements.p.value }); }
+            IAM.dsel = n; closeAll(); iamRe(); toast(`已创建部门 ${n}`); };
         };
-        if (canDel) $("dDel").onclick = () => k8Confirm("删除部门", `确认删除部门 <b>${esc(sel)}</b>？`, "删除", () => { const i = IAM.depts.findIndex((d) => d.n === sel); if (IAM.depts[i].demo) IAM.gone.add("depts:" + sel); IAM.dsel = IAM.depts[i].p; IAM.depts.splice(i, 1); iamRe(); toast("已删除部门"); });
+        if (canDel) $("dDel").onclick = () => k8Confirm("删除部门", `确认删除部门 <b>${esc(sel)}</b>？成员会变为未分配，不会被删除。`, "删除", async () => {
+          const i = IAM.depts.findIndex((d) => d.n === sel), cur = IAM.depts[i];
+          if (window.XS && XS.mode === "live" && cur && cur.id) {
+            try { await XS.api("/departments/" + cur.id, { method: "DELETE" }); }
+            catch (e2) { return toast("删除失败：" + (e2.message || "未知错误")); }
+          }
+          IAM.depts.splice(i, 1); IAM.dsel = cur ? cur.p || "" : ""; iamRe(); toast("已删除部门");
+        });
         $("gNew").onclick = () => groupDlg(-1);
         on(el, "gedit", (i) => groupDlg(i));
         on(el, "gdel", (i) => { const g = IAM.groups[i]; k8Confirm("删除用户组", `删除 <b>${esc(g.n)}</b> 后，${g.members.length} 名成员将不再经此组获得 ${esc(g.roles.join("、") || "任何")} 角色。`, "删除", () => { IAM.groups.splice(i, 1); if (g.demo) IAM.gone.add("groups:" + g.n); iamRe(); toast("已删除用户组"); }); });
