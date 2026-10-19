@@ -44,6 +44,8 @@ type User struct {
 	LastLoginAt        *time.Time `json:"last_login_at"`
 	LastLoginIP        string     `json:"last_login_ip"`
 	PasswordChangedAt  *time.Time `json:"password_changed_at"`
+	DepartmentID       *int64     `json:"department_id"`
+	DepartmentName     string     `json:"department_name"`
 	Roles              []RoleRef  `json:"roles"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
@@ -66,6 +68,7 @@ var usernameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.\-]{2,63}$`)
 
 const userSelect = `SELECT u.id, u.username, u.display_name, u.email, u.phone, u.status, u.is_builtin, u.must_change_password,
 	u.locked_until, u.last_login_at, u.last_login_ip, u.password_changed_at, u.created_at, u.updated_at,
+	u.department_id, COALESCE((SELECT d.name FROM departments d WHERE d.id=u.department_id), ''),
 	COALESCE((SELECT json_agg(json_build_object('id', r.id, 'code', r.code, 'name', r.name) ORDER BY r.id)
 	          FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id), '[]'::json)
 	FROM users u`
@@ -73,7 +76,8 @@ const userSelect = `SELECT u.id, u.username, u.display_name, u.email, u.phone, u
 func scanUser(row pgx.Row) (*User, error) {
 	var u User
 	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Phone, &u.Status, &u.IsBuiltin, &u.MustChangePassword,
-		&u.LockedUntil, &u.LastLoginAt, &u.LastLoginIP, &u.PasswordChangedAt, &u.CreatedAt, &u.UpdatedAt, &u.Roles)
+		&u.LockedUntil, &u.LastLoginAt, &u.LastLoginIP, &u.PasswordChangedAt, &u.CreatedAt, &u.UpdatedAt,
+		&u.DepartmentID, &u.DepartmentName, &u.Roles)
 	if store.IsNoRows(err) {
 		return nil, httpx.NotFound("user not found")
 	}
@@ -149,15 +153,17 @@ type CreateInput struct {
 	Phone              string  `json:"phone" binding:"max=32"`
 	Password           string  `json:"password" binding:"max=72"`
 	RoleIDs            []int64 `json:"role_ids"`
+	DepartmentID       *int64  `json:"department_id"`
 	MustChangePassword *bool   `json:"must_change_password"`
 }
 
 // UpdateInput updates profile fields; RoleIDs nil keeps roles.
 type UpdateInput struct {
-	DisplayName string   `json:"display_name" binding:"max=64"`
-	Email       string   `json:"email" binding:"max=128"`
-	Phone       string   `json:"phone" binding:"max=32"`
-	RoleIDs     *[]int64 `json:"role_ids"`
+	DisplayName  string   `json:"display_name" binding:"max=64"`
+	Email        string   `json:"email" binding:"max=128"`
+	Phone        string   `json:"phone" binding:"max=32"`
+	RoleIDs      *[]int64 `json:"role_ids"`
+	DepartmentID *int64   `json:"department_id"`
 }
 
 func validateProfile(email string) error {
@@ -195,9 +201,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*User, string, er
 	}
 	var id int64
 	err = store.InTx(ctx, s.DB, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `INSERT INTO users(username, display_name, email, phone, password_hash, must_change_password)
-			VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-			in.Username, in.DisplayName, in.Email, in.Phone, hash, mustChange).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, `INSERT INTO users(username, display_name, email, phone, password_hash, must_change_password, department_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+			in.Username, in.DisplayName, in.Email, in.Phone, hash, mustChange, in.DepartmentID).Scan(&id); err != nil {
 			return err
 		}
 		return s.RBAC.SetUserRoles(ctx, tx, id, in.RoleIDs)
@@ -218,8 +224,9 @@ func (s *Service) Update(ctx context.Context, id int64, in UpdateInput) (*User, 
 		return nil, err
 	}
 	err := store.InTx(ctx, s.DB, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE users SET display_name=$2, email=$3, phone=$4, updated_at=now() WHERE id=$1`,
-			id, in.DisplayName, in.Email, in.Phone)
+		tag, err := tx.Exec(ctx, `UPDATE users SET display_name=$2, email=$3, phone=$4,
+			department_id=COALESCE($5, department_id), updated_at=now() WHERE id=$1`,
+			id, in.DisplayName, in.Email, in.Phone, in.DepartmentID)
 		if err != nil {
 			return err
 		}

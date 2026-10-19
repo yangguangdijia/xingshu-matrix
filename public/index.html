@@ -4413,7 +4413,7 @@
           const items = Array.isArray(d) ? d : ((d && d.items) || []);
           IAM.users = items.map((x) => ({
             id: x.id, u: x.username, n: x.display_name || x.username, mail: x.email || "", tel: x.phone || "",
-            dept: "", roles: (x.roles || []).map((r) => r.name),
+            dept: x.department_name || "", deptId: x.department_id || null, roles: (x.roles || []).map((r) => r.name),
             st: x.status === "active" ? "正常" : (x.locked ? "锁定" : "禁用"),
             mfa: false, sys: !!x.is_builtin,
             last: x.last_login_at ? new Date(x.last_login_at).toLocaleString("zh-CN") : "—",
@@ -4425,9 +4425,9 @@
       }
 
       function iamUsers(el) {
-        if (window.XS && XS.mode === "live" && !IAM._usersLoaded) {
-          IAM._usersLoaded = true;
-          iamLoadUsers().then(() => iamRe());
+        if (window.XS && XS.mode === "live" && (!IAM._usersLoaded || !IAM._deptsLoaded)) {
+          const first = !IAM._usersLoaded; IAM._usersLoaded = true; IAM._deptsLoaded = true;
+          Promise.all([first ? iamLoadUsers() : null, iamLoadDepts()]).then(() => iamRe());
         }
         const key = "#/iam/users", L = IAM.users;
         el.innerHTML = phead("用户管理", "平台账号、所属部门与角色；内置管理员 admin 不可删除、禁用或降级", demo ? '' : "") +
@@ -4477,7 +4477,7 @@
         </form>`, `<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="uf">${isNew ? "创建" : "保存"}</button>`);
         const f = $("uf"), e = f.elements, err = $("uerr");
         e[isNew ? "u" : "n"].focus();
-        f.onsubmit = (ev) => {
+        f.onsubmit = async (ev) => {
           ev.preventDefault();
           const v = (k) => e[k].value.trim(), bad = (m, k) => { err.textContent = m; err.hidden = false; if (k) e[k].focus(); };
           const roles = [...new Set([...(x.sys ? ["超级管理员"] : []), ...picked(f, "roles")])];
@@ -4488,8 +4488,23 @@
           if (v("tel") && !/^1\d{10}$/.test(v("tel"))) return bad("手机号须为 11 位数字", "tel");
           if (!roles.length) return bad("至少选择一个角色");
           if (isNew) { const miss = PW_RULES.find((r) => !r[1](e.pw.value)); if (miss) return bad("初始密码需" + miss[0], "pw"); }
-          const d = { n: v("n"), mail: v("mail"), tel: v("tel"), dept: e.dept.value, roles };
-          if (isNew) IAM.users.push({ u: v("u"), ...d, st: "正常", mfa: false, last: "", must: e.must.checked });
+          const dept = IAM.depts.find((y) => y.n === e.dept.value);
+          const d = { n: v("n"), mail: v("mail"), tel: v("tel"), dept: e.dept.value, deptId: dept && dept.id ? dept.id : null, roles };
+          if (window.XS && XS.mode === "live") {
+            const btn = document.querySelector('[form="uf"]');
+            if (btn) { btn.disabled = true; btn.textContent = "保存中…"; }
+            try {
+              if (isNew) {
+                await XS.post("/users", { username: v("u"), display_name: d.n, email: d.mail, phone: d.tel, password: e.pw.value, department_id: d.deptId, must_change_password: e.must.checked });
+              } else {
+                await XS.put("/users/" + x.id, { display_name: d.n, email: d.mail, phone: d.tel, department_id: d.deptId });
+              }
+              await iamLoadUsers();
+            } catch (e2) {
+              if (btn) { btn.disabled = false; btn.textContent = isNew ? "创建" : "保存"; }
+              return bad(e2.message || "保存失败");
+            }
+          } else if (isNew) { IAM.users.push({ u: v("u"), ...d, st: "正常", mfa: false, last: "", must: e.must.checked }); }
           else Object.assign(x, d);
           closeAll(); iamRe(); toast(isNew ? `已创建用户 ${v("u")}` : "已保存");
         };
