@@ -117,20 +117,22 @@ matrix-server (Go)
 **后端（真实代码，可编译、单元测试通过）**
 - 服务入口与路由装配、配置（YAML + `MATRIX_*` 环境变量）、数据库迁移（按模块版本化）、优雅退出、`/healthz`、`/api/v1/health`、`/metrics`。
 - 核心：认证、RBAC、用户、角色、环境策略、系统设置、审计、审批、AI 模型/提示词/对话/工具调用。
-- 6 个业务模块：cluster、hosts（含 matrix-agent）、bastion、observability、cicd、middleware。
+- 8 个业务模块：cluster、hosts（含 matrix-agent）、bastion、observability、cicd、middleware、automation、devcenter。
 
 **已做过的真实联调**
 - 在真实 PostgreSQL 16 上启动 matrix-server：全部迁移执行成功，登录 → 强制改密 → 用户/角色/审计/审批/AI 接口全部返回正常；6 个模块的列表与创建接口可用。
 - matrix-agent 真实注册到服务端并上线，平台下发 `uname -a && uptime` 成功返回输出并入库。
 
 **前端**
-- 运维中心、研发中心全部页面 UI 与演示数据；登录页；Web 终端、日志 AI 查询等。
+- 登录页、真实 JWT 登录/刷新/改密/退出，以及独立 API 客户端 `public/xs-api.js`。
+- `public/xs-live-core.js` 与 `public/xs-live-ops.js` 在 `XS.mode === "live"` 时按路由接管真实接口：总览、用户权限、审批、集群/节点/工作负载/日志、主机、团队协作、可观测/日志、CI/CD、中间件、值班/SLO、设置、AI、自动化编排。
+- 后端不可用时保留原演示渲染器；流量治理、网络策略、堡垒机控制台、部分集群高级子页仍使用演示数据。
 
 ## 7. 未实现 / 未验证，以及实现方法
 
 | 项目 | 现状 | 实现方法 |
 |---|---|---|
-| 前端对接真实接口 | 页面仍使用演示数据 | 增加 `Api` 层：启动时探测 `/api/v1/health`，有后端则走真实接口（实时数据），否则保持演示模式；逐页把 mock 数组替换为接口调用 |
+| 前端对接真实接口 | 登录与 18 个核心/运维页已接；流量治理、网络策略、堡垒机控制台、部分集群高级子页仍为演示数据 | 继续按路由补适配器，保持原渲染器在演示模式下不变 |
 | 与真实 K8s / Prometheus / Loki / ES / Alertmanager / Jenkins / Kafka 联调 | 仅用 httptest 假服务与 client-go fake 测试 | 准备一套测试集群（kind/k3s + kube-prometheus-stack + Loki + Kafka），按 `scripts/smoke-test.sh` 扩展端到端用例 |
 | K8s 集群 Agent 隧道、Web Shell（exec）、端口转发 | 仅支持 kubeconfig 直连 | 增加 `matrix-cluster-agent`（集群内 Deployment，反向 WebSocket 隧道）；exec 用 `remotecommand.NewSPDYExecutor` 桥接 WebSocket |
 | Service / Ingress / ConfigMap / Secret / PVC / HPA 专用接口 | 只能通过 YAML apply | 在 cluster 模块按资源类型补 list/get/patch，复用 dynamic client |
@@ -139,8 +141,9 @@ matrix-server (Go)
 | Agent 多副本路由 | Agent 连接只在单个实例内存 | 用 Redis 记录 host→实例映射，跨实例转发命令（或 NATS） |
 | 告警认领/关闭回写 Alertmanager、通知重试与聚合 | 只在平台内记录 | 认领时创建对应静默；通知加重试队列与按标签聚合 |
 | CI/CD 断点续跑、阶段共享工作区、并行阶段 | 重启后运行标记失败；每阶段重新克隆 | 用 PVC 共享工作区；阶段 DAG 调度；或接入 Tekton / Argo Workflows |
-| 自动化编排（E14）、值班排班、SLO | 仅前端 | 新增 `automation` 模块：剧本 = 步骤 DAG（主机命令 / K8s 操作 / HTTP / 审批），复用 hosts、cluster、approval |
-| 研发中心（需求、缺陷、测试）后端 | 仅前端 | 新增 `devcenter` 模块：需求/缺陷/测试用例表 + 状态流转 + 与 Git 提交、流水线关联 |
+| 自动化编排执行器 | automation 模块已有流程/版本/触发/运行记录；trigger 只写 queued，没有 worker | 增加受控步骤执行器（HTTP/等待/主机/K8s/审批），或接 Tekton/Argo |
+| 值班排班、SLO 后端 | 前端页面已按 API 预留，但后端暂无 oncall 模块 | 新增 oncall：排班/轮值/代班、故障时间线、SLO 错误预算 |
+| 研发中心状态流转与关联 | devcenter 已有基础 CRUD；状态机、评论、Git/流水线关联未实现 | 按资源定义状态机，增加 comments/links 表与接口 |
 | 单点登录（LDAP / OIDC） | 仅本地账号 | auth 增加 OIDC（coreos/go-oidc）与 LDAP 绑定，首次登录自动建用户并按组映射角色 |
 | 多副本权限缓存 | 每副本 15 秒缓存 | 角色变更时经 Redis Pub/Sub 广播失效 |
 | 压测、安全审计、备份恢复演练 | 未做 | 上线前必做：k6 压测、依赖漏洞扫描（govulncheck）、PostgreSQL 定时备份 |

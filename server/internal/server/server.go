@@ -16,6 +16,7 @@ import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/auth"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/metrics"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/platform"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/rbac"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/settings"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/users"
@@ -85,6 +86,7 @@ func New(d *app.Deps, c Core, mods []app.Module) *gin.Engine {
 	c.RBAC.RegisterRoutes(authed)
 	c.Users.RegisterRoutes(authed)
 	c.Settings.RegisterRoutes(authed)
+	platform.Register(authed, c.Settings)
 	c.AuditDB.RegisterRoutes(authed)
 	c.Approval.RegisterRoutes(authed)
 	c.AI.RegisterRoutes(authed)

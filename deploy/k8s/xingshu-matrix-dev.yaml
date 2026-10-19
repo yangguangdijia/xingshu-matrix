@@ -1,0 +1,295 @@
+# 星枢 Matrix — 192.168.6.3 集群部署清单（离线镜像，无外网）
+# 用法：kubectl apply -f xingshu-matrix-dev.yaml
+# 访问：http://192.168.6.3:30080  （NodePort）或 http://matrix.192.168.6.3.nip.io （Ingress）
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xingshu-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: matrix-secrets
+  namespace: xingshu-system
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "1Z0tMtyIRsATGxOotOlh7Jn0"
+  MATRIX_JWT_SECRET: "QU_aGKVUP0_6fNVfmWxClrDKGUz4FGaVaW3jHIQ7KLuV1o_Dl_G1Tw"
+  MATRIX_ENCRYPTION_KEY: "pyw4wIn82QEeVyGpx2A/aTCAj1XxMQ/+VNMcBmVBnDU="
+  MATRIX_ADMIN_INITIAL_PASSWORD: "Xingshu@2026"
+---
+# ---------------- PostgreSQL ----------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: xingshu-system
+spec:
+  selector: { app: postgres }
+  ports: [{ name: pg, port: 5432, targetPort: 5432 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: xingshu-system
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      # 镜像只在部分节点导入时，用 nodeSelector 兜底（本次三节点均已导入，可删）
+      containers:
+        - name: postgres
+          image: docker.m.daocloud.io/library/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 5432 }]
+          env:
+            - name: POSTGRES_DB
+              value: matrix
+            - name: POSTGRES_USER
+              value: matrix
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: matrix-secrets, key: POSTGRES_PASSWORD } }
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "matrix", "-d", "matrix"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "matrix", "-d", "matrix"] }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 768Mi }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources: { requests: { storage: 5Gi } }
+---
+# ---------------- Redis（可选，单副本时可不配） ----------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: xingshu-system
+spec:
+  selector: { app: redis }
+  ports: [{ name: redis, port: 6379, targetPort: 6379 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: xingshu-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: redis }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      containers:
+        - name: redis
+          image: docker.m.daocloud.io/library/redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          args: ["redis-server", "--appendonly", "yes"]
+          ports: [{ containerPort: 6379 }]
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 256Mi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+---
+# ---------------- 平台自身需要的 RBAC：维护自己的 Ingress ----------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: xingshu-matrix
+  namespace: xingshu-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: xingshu-matrix-platform
+  namespace: xingshu-system
+rules:
+  # 保存「平台域名」时由后端自动创建/更新 Ingress
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: xingshu-matrix-platform
+  namespace: xingshu-system
+subjects:
+  - { kind: ServiceAccount, name: xingshu-matrix, namespace: xingshu-system }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: xingshu-matrix-platform }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: xingshu-matrix-ingressclass-reader
+rules:
+  # 只读：判断集群里有没有可用的 IngressClass
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: xingshu-matrix-ingressclass-reader
+subjects:
+  - { kind: ServiceAccount, name: xingshu-matrix, namespace: xingshu-system }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: xingshu-matrix-ingressclass-reader }
+---
+# ---------------- 星枢 Matrix ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xingshu-matrix
+  namespace: xingshu-system
+  labels: { app: xingshu-matrix }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: { app: xingshu-matrix }
+  template:
+    metadata:
+      labels: { app: xingshu-matrix }
+    spec:
+      serviceAccountName: xingshu-matrix
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+      containers:
+        - name: web
+          image: docker.io/xingshu/matrix-server:v32
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            # 必须排在 MATRIX_DB_DSN 之前，$(POSTGRES_PASSWORD) 才会被展开
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: matrix-secrets, key: POSTGRES_PASSWORD } }
+            - name: MATRIX_MODE
+              value: prod
+            - name: MATRIX_LISTEN
+              value: ":8080"
+            - name: MATRIX_STATIC_DIR
+              value: /app/public
+            - name: MATRIX_DB_DSN
+              value: postgres://matrix:$(POSTGRES_PASSWORD)@postgres:5432/matrix?sslmode=disable
+            - name: MATRIX_DB_AUTO_MIGRATE
+              value: "true"
+            - name: MATRIX_REDIS_ADDR
+              value: redis:6379
+            - name: MATRIX_TRUSTED_PROXIES
+              value: "10.0.0.0/8,192.168.0.0/16,172.16.0.0/12"
+            - name: MATRIX_LOG_LEVEL
+              value: info
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: MATRIX_NODEPORT
+              value: "30080"
+            - name: MATRIX_TLS_SECRET
+              value: xingshu-matrix-tls
+            - name: MATRIX_RECORD_DIR
+              value: /data/recordings
+            - name: MATRIX_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: matrix-secrets, key: MATRIX_JWT_SECRET } }
+            - name: MATRIX_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: matrix-secrets, key: MATRIX_ENCRYPTION_KEY } }
+            - name: MATRIX_ADMIN_INITIAL_PASSWORD
+              valueFrom: { secretKeyRef: { name: matrix-secrets, key: MATRIX_ADMIN_INITIAL_PASSWORD } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 384Mi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: xingshu-matrix
+  namespace: xingshu-system
+spec:
+  selector: { app: xingshu-matrix }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: xingshu-matrix-nodeport
+  namespace: xingshu-system
+spec:
+  type: NodePort
+  selector: { app: xingshu-matrix }
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: xingshu-matrix
+  namespace: xingshu-system
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 50m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    # 自签证书：CN=xingshu matrix，有效期 10 年（3650 天），见 deploy/scripts/gen-tls-cert.sh
+    - hosts: ["xingshu-matrix.com"]
+      secretName: xingshu-matrix-tls
+  rules:
+    - host: xingshu-matrix.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: xingshu-matrix, port: { number: 80 } } }

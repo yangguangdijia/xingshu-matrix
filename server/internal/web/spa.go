@@ -36,7 +36,10 @@ func NoRoute(dir string) gin.HandlerFunc {
 			return
 		}
 		if fi, err := os.Stat(full); err == nil && !fi.IsDir() && clean != "/index.html" {
-			c.Header("Cache-Control", "public, max-age=3600")
+			// 前端没有构建步骤、文件名不带内容哈希：一旦设长缓存，发版后浏览器会继续用
+			// 旧的 index.html / *.js（实测踩过：升级镜像后页面仍跑旧脚本）。
+			// 因此一律 no-cache，由 Last-Modified/ETag 协商成 304，成本可忽略。
+			c.Header("Cache-Control", "no-cache")
 			c.File(full)
 			return
 		}

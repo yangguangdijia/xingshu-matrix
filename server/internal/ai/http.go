@@ -308,4 +308,7 @@ func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 		}
 		_ = em.write("data: [DONE]\n\n")
 	})
+	s.RegisterAssist(r)
+	s.RegisterDiscover(r)
+	s.RegisterTest(r)
 }

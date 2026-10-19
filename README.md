@@ -86,17 +86,18 @@
 
 ## 当前状态（务必阅读）
 
-当前 **v1.0-preview** 为 **前端完整原型**：
+当前 **v1.0-preview** 为 **可联调的预览版**：
 
-- 所有页面、交互、流程均已实现，可用于评审、演示和前端联调。
-- 数据为浏览器内存中的数据，**刷新即重置**。新部署的平台默认为空，初始化完成后可在右上角打开「加载演示数据」查看效果。
-- **后端接入状态**：认证、RBAC、审计、审批、Kubernetes/可观测性/CI/CD 等既有模块已提供后端接口；研发中心（需求、迭代、缺陷、测试）与 automation（流程版本、触发、执行历史、重试、取消）已接入 PostgreSQL 和权限体系。Kubernetes API、SSH/RDP 代理、Prometheus/Loki/ES、Jenkins、Kafka 等是否返回实时数据取决于部署配置和上游服务健康状态，未配置时接口会返回可观察的错误状态，不回退为实时数据。
+- **前端已接入真实接口**：登录/会话/改密、总览、用户与权限、审批、集群/节点/工作负载/日志、主机、团队协作、可观测/日志、CI/CD、中间件、值班/SLO、设置、AI、自动化编排。未接入的页面（流量治理、网络策略、堡垒机控制台、部分集群高级子页）保留内置演示数据。
+- 无法连接后端时自动进入**演示模式**，登录页会明确提示，不会把演示数据伪装成实时数据。
+- **后端已有**：认证、RBAC、审计、审批、AI，以及 cluster / hosts / bastion / observability / cicd / middleware / automation / devcenter 模块；SSO、oncall/SLO、告警静默回写、S3 录像、多副本路由等仍待补。
+- 本轮尚未在真实 PostgreSQL / K8s / Prometheus / Loki / ES / Jenkins / Kafka 上做端到端联调；接口未配置时返回可观察错误。
 
-因此 **请勿直接作为生产系统使用**。上生产前需要完成后端服务（API 网关、认证与 RBAC、集群代理、堡垒机代理、数据库与审计存储、指标/日志数据源对接）。
+因此 **请勿直接作为生产系统使用**。
 
 ## 部署方式
 
-三种方式部署的是同一份静态前端，任选其一。
+三种方式部署的是同一份前端资源；Docker / K8s 运行 `matrix-server`（内置 SPA），物理机脚本可用 Nginx 单独托管静态前端。
 
 ### 环境要求
 
@@ -131,7 +132,7 @@ docker compose up -d --build
 
 # 或纯 Docker
 docker build -t xingshu-matrix:latest .
-docker run -d --name xingshu-matrix -p 8080:80 --restart unless-stopped xingshu-matrix:latest
+docker run -d --name xingshu-matrix -p 8080:8080 --restart unless-stopped xingshu-matrix:latest
 ```
 
 ### 方式三：物理机 / 虚拟机
