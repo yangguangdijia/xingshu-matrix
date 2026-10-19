@@ -4406,7 +4406,29 @@
         ({ users: iamUsers, groups: iamGroups, roles: iamRoles, logs: iamLogs })[p.k](el, p);
       }
 
+      // 用户：真实后端 /users（列表 + 启用/禁用），字段映射到页面既有结构
+      async function iamLoadUsers() {
+        try {
+          const d = await XS.get("/users", { page: 1, page_size: 200 });
+          const items = Array.isArray(d) ? d : ((d && d.items) || []);
+          IAM.users = items.map((x) => ({
+            id: x.id, u: x.username, n: x.display_name || x.username, mail: x.email || "", tel: x.phone || "",
+            dept: "", roles: (x.roles || []).map((r) => r.name),
+            st: x.status === "active" ? "正常" : (x.locked ? "锁定" : "禁用"),
+            mfa: false, sys: !!x.is_builtin,
+            last: x.last_login_at ? new Date(x.last_login_at).toLocaleString("zh-CN") : "—",
+            must: !!x.must_change_password,
+          }));
+          // 部门归属：前端用名字匹配，后面接用户编辑时再补
+          IAM._usersErr = "";
+        } catch (e) { IAM._usersErr = e.message || "用户加载失败"; }
+      }
+
       function iamUsers(el) {
+        if (window.XS && XS.mode === "live" && !IAM._usersLoaded) {
+          IAM._usersLoaded = true;
+          iamLoadUsers().then(() => iamRe());
+        }
         const key = "#/iam/users", L = IAM.users;
         el.innerHTML = phead("用户管理", "平台账号、所属部门与角色；内置管理员 admin 不可删除、禁用或降级", demo ? '' : "") +
           bar(key, { q: "搜索用户名 / 姓名 / 部门", fl: "状态", fo: ["正常", "禁用", "锁定"], fc: 4, act: "+ 新建用户", id: "iamNew" }) +
@@ -4419,7 +4441,15 @@
           }))}</div>`;
         $("iamNew").onclick = () => userDlg(-1);
         on(el, "uedit", (i) => userDlg(i));
-        on(el, "utog", (i) => { const x = L[i]; x.st = x.st === "禁用" ? "正常" : "禁用"; iamRe(); toast(`已${x.st === "禁用" ? "禁用" : "启用"}用户 ${x.u}`); });
+        on(el, "utog", async (i) => {
+          const x = L[i], next = x.st === "禁用" ? "active" : "disabled";
+          if (window.XS && XS.mode === "live" && x.id) {
+            try { await XS.put("/users/" + x.id + "/status", { status: next }); }
+            catch (e2) { return toast("操作失败：" + (e2.message || "未知错误")); }
+          }
+          x.st = x.st === "禁用" ? "正常" : "禁用"; iamRe();
+          toast(`已${x.st === "禁用" ? "禁用" : "启用"}用户 ${x.u}`);
+        });
         on(el, "uunl", (i) => { L[i].st = "正常"; iamRe(); toast(`已解锁 ${L[i].u}`); });
         on(el, "upw", (i) => { const x = L[i]; k8Confirm("重置密码", `将为 <b>${esc(x.u)}</b> 生成临时密码，用户下次登录时必须修改。${x.sys ? "<br />admin 的当前密码会立即失效。" : ""}`, "重置", () => {
           const pw = genPw(); x.must = true; if (x.sys) { adminPw = pw; pwChanged = false; }
