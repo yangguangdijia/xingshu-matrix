@@ -4469,11 +4469,13 @@
         const kids = (p) => IAM.depts.filter((d) => d.p === p);
         const cnt = (n) => IAM.users.filter((u) => u.dept === n).length;
         const tree = (p) => `<ul${p ? "" : ' class="x-tree" role="tree"'}>${kids(p).map((d) => `<li><button type="button" data-dpt="${esc(d.n)}" class="${d.n === IAM.dsel ? "on" : ""}">${esc(d.n)}<small>${cnt(d.n)}</small></button>${kids(d.n).length ? tree(d.n) : ""}</li>`).join("")}</ul>`;
-        const sel = IAM.dsel, inDept = IAM.users.filter((u) => u.dept === sel), canDel = kids(sel).length === 0 && !inDept.length && IAM.depts.find((d) => d.n === sel).p;
+        const sel = IAM.dsel, inDept = IAM.users.filter((u) => u.dept === sel);
+        const selDept = IAM.depts.find((d) => d.n === sel);           // 部门为空时 find 返回 undefined，必须判空
+        const canDel = !!selDept && kids(sel).length === 0 && !inDept.length && !!selDept.p;
         el.innerHTML = phead("部门与用户组", "部门决定组织归属；用户组把一组成员与角色绑定，成员自动获得组内角色", demo ? '' : "") + `
           <div class="x-iamgrid">
-            <section class="x-panel"><div class="x-iamhd"><h2 class="x-h2">部门</h2><button class="x-btn" id="dNew">+ 新建</button></div>${tree("")}</section>
-            <section class="x-panel"><div class="x-iamhd"><h2 class="x-h2">${esc(sel)}</h2><span class="x-frac">${inDept.length} 名成员</span>${canDel ? '<button class="x-btn" id="dDel">删除部门</button>' : ""}</div>
+            <section class="x-panel"><div class="x-iamhd"><h2 class="x-h2">部门</h2><button class="x-btn" id="dNew">+ 新建</button></div>${IAM.depts.length ? tree("") : '<p class="x-frac">还没有部门，点右上角「+ 新建」创建第一个</p>'}</section>
+            <section class="x-panel"><div class="x-iamhd"><h2 class="x-h2">${esc(sel || "未选择部门")}</h2><span class="x-frac">${inDept.length} 名成员</span>${canDel ? '<button class="x-btn" id="dDel">删除部门</button>' : ""}</div>
               ${inDept.length ? tbl(["用户名", "姓名", "角色", "状态"], inDept.map((u) => [esc(u.u), esc(u.n), esc(u.roles.join("、")), iamTag(u.st)])) : '<p class="x-frac">该部门下暂无成员</p>'}</section>
           </div>
           <section class="x-panel" style="margin-top:16px"><div class="x-iamhd"><h2 class="x-h2">用户组</h2><span class="x-frac">${IAM.groups.length} 个</span><button class="x-btn x-btn--pri" id="gNew">+ 新建用户组</button></div>
