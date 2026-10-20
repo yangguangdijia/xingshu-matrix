@@ -5893,7 +5893,29 @@
       }
 
       // 变更审批: every app's 流程中心 cards on one page
+      let APV = { list: [], loaded: false, err: "" };
+      async function loadApprovals() {
+        try {
+          const d = await XS.get("/approvals", { page_size: 200 });
+          APV.list = Array.isArray(d) ? d : ((d && d.items) || []);
+          APV.err = "";
+        } catch (e) { APV.err = e.message || "审批加载失败"; }
+        APV.loaded = true;
+      }
       function renderApprovals(el) {
+        if (window.XS && XS.mode === "live") {
+          if (!APV.loaded) { loadApprovals().then(() => renderApprovals(el)); }
+          const rows = APV.list.map((a) => [
+            `<span class="x-mono">${esc(a.id)}</span>`, esc(a.type || "—"), esc(a.title || a.summary || "—"),
+            esc(a.status || "—"), esc(a.applicant || a.created_by || "—"),
+            a.created_at ? new Date(a.created_at).toLocaleString("zh-CN") : "—",
+            `<span class="x-kacts"><a class="x-act" href="#/approvals/${encodeURIComponent(a.id)}">查看</a></span>`]);
+          el.innerHTML = phead("变更审批", `全部变更单 · ${APV.list.length} 条`) +
+            bar("#/approvals", { q: "搜索标题 / 申请人" }) +
+            `<div class="x-panel">${APV.err ? `<p class="x-aerr">${esc(APV.err)}</p>` : rows.length ? tbl(["编号", "类型", "标题", "状态", "申请人", "创建时间", "操作"], rows) : '<p class="x-empty">暂无审批单</p>'}</div>`;
+          bindBar(el, "#/approvals");
+          return;
+        }
         rlSeed();
         const ds = APPS.map((a) => [a, appData(a)]);
         const n = ds.reduce((s, [, d]) => s + d.flows.filter((c) => c.st === "待审批").length, 0);
@@ -7103,7 +7125,18 @@
         }));
         bindBar(el, "#/bastion/assets");
       }
+      let BAS_ACC_LOADED = false;
+      async function loadBastionAccounts() {
+        try {
+          const d = await XS.get("/bastion/accounts");
+          const items = Array.isArray(d) ? d : ((d && d.items) || []);
+          BAS_AC.length = 0;
+          items.forEach((a) => BAS_AC.push({ id: a.id, n: a.username || a.name || "—", host: a.asset_name || a.asset_id || "—", type: a.type || "SSH", secret: a.secret_type || "托管" }));
+        } catch (e) { /* 空态 */ }
+        BAS_ACC_LOADED = true;
+      }
       function renderBasAccounts(el) {
+        if (window.XS && XS.mode === "live" && !BAS_ACC_LOADED) { loadBastionAccounts().then(() => renderBasAccounts(el)); }
         const list = envRows(BAS_AC.map((a, i) => ({ a, i })), (v) => (BAS_A.find((x) => x.n === v.a.host) || {}).env);
         el.innerHTML = phead("账号", "资产上的登录账号与凭据托管方式；密码与私钥只保存在后端") +
           `<div class="x-panel">${tbl(["账号", "资产", "类型", "凭据", "轮换", "最近轮换", "操作"], list.map(({ a, i }) => [`<span class="x-name x-mono">${esc(a.a)}</span>`, `<b>${esc(a.host)}</b>`, pillTag(a.type, a.type === "特权" ? "x-red" : "x-grey"), esc(a.cred), esc(a.rot), esc(a.last),
