@@ -11538,9 +11538,9 @@
               <button class="x-btn x-btn--pri" type="submit">测试</button>
             </form><span class="x-err" id="npterr" hidden></span>${t.res ? npRes(t) : ""}</section>`;
         },
-        egress: () => `<section class="x-panel x-setform">${tfHead(`出网代理 egress-http · 10.0.9.1:3128 ${tfTag(`${np.wl.length} 条放行`, "x-green")}`, '<span class="x-frac">默认拒绝 · 变更 1 分钟内同步到代理</span>')}
+        egress: () => { if (window.XS && XS.mode === "live") np.wl = []; return `<section class="x-panel x-setform">${tfHead(`出网代理 egress-http · 10.0.9.1:3128 ${tfTag(`${np.wl.length} 条放行`, "x-green")}`, '<span class="x-frac">默认拒绝 · 变更 1 分钟内同步到代理</span>')}
           ${tbl(["域名 / CIDR", "类型", "用途", "添加人", "添加时间", "操作"], np.wl.map((w, i) => [`<span class="x-name">${esc(w.v)}</span>`, w.v.includes("/") ? "CIDR" : "域名", esc(w.note), w.by, w.at, `<button class="x-act" data-wld="${i}">删除</button>`]))}
-          ${np.wl.length ? "" : '<p class="x-frac" style="margin:8px 0 0">白名单为空，所有出网请求都会被拒绝。</p>'}</section>`,
+          ${np.wl.length ? "" : '<p class="x-frac" style="margin:8px 0 0">白名单为空，所有出网请求都会被拒绝。</p>'}</section>`; },
       };
       function npRes(t) {
         const s = npEp(t.s), d = npEp(t.d), r = npCheck(s, d, t.port), tag = (ok) => tfTag(ok ? "允许" : "拒绝", ok ? "x-green" : "x-red");
