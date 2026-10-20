@@ -3490,6 +3490,8 @@
 
       function appData(a) {
         if (a.d) return a.d;
+        // live 模式下不编造构建/制品：没有真实运行记录就返回空，让页面显示空态
+        if (window.XS && XS.mode === "live") return { builds: [], arts: [] };
         const builds = [
           { id: 1046, branch: "main", commit: "2fb6ab3", st: "成功", dur: "3分12秒", time: "10-14 10:08" },
           { id: 1045, branch: "feature/rate-limit", commit: "9c41e07", st: "失败", dur: "1分47秒", time: "10-13 17:52" },
