@@ -2069,6 +2069,17 @@
       }
       function gate() {
         if (!authBoot) { showAuth("boot"); return true; }
+        // 本地缓存的 must 可能已过期：向 /auth/me 复核一次（JWT 中的 claims 为准）
+        if (session && session.must && !session._mustChecked && window.XS && XS.mode === "live") {
+          session._mustChecked = true;
+          XS.get("/auth/me").then((me) => {
+            if (me && me.must_change_password === false) {
+              session.must = false;
+              if (location.hash === "#/change-password") history.replaceState(null, "", "#/workbench");
+              showAuth("boot"); authView = ""; enterApp();
+            }
+          }).catch(() => {});
+        }
         if (session && !session.must) {
           if (location.hash !== "#/login" && location.hash !== "#/change-password") {
             // 首屏渲染时认证尚未恢复完会先 showAuth("boot")；恢复成功后这里必须把遮罩收掉，
