@@ -187,7 +187,7 @@ Prometheus / Loki / Elasticsearch / Alertmanager / Jaeger / Tempo / Jenkins / Ka
 
 | # | 事项 | 现状 | 需要你决定什么 |
 | --- | --- | --- | --- |
-| C1 | 镜像 tag 统一为应用版本 | 四套并存：集群 `v1.61`、Argo/test1 的 `v1.57`、`image.sh` 默认 `v1.3`、离线包 `v40` | 是否改成 `v1.16`，并把构建序号降级为 label |
+| C1 | 镜像 tag 统一为应用版本 | 四套并存：集群 `v1.62`、Argo/test1 的 `v1.57`、`image.sh` 默认 `v1.3`、离线包 `v40` | 是否改成 `v1.16`，并把构建序号降级为 label |
 | C2 | 补 Helm Chart | 只有 values 示例 | 是否本轮就做，还是继续用原生清单 + Argo CD |
 | C3 | Go 缓存持久化到 D 盘 | 只做了临时 env，未 `go env -w` | 是否允许改全局 Go 配置（会影响其它项目） |
 | C4 | 下版本优先级 | 已给建议（oncall P0 → 堡垒机 P0 → 联调 P1） | 是否按这个顺序排 v1.17 |

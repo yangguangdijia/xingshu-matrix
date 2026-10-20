@@ -2,7 +2,7 @@
 
 > 报告生成时间：2026-10-20
 > 代码基线：`05cfcf1`（`chore(deploy): 清单镜像对齐到 v1.34，供 Argo CD 接管`），上一个版本标签 `v1.15`
-> 版本口径：应用版本 **v1.16**；集群内镜像 tag 为构建序号 **v1.61**（两者不同，见 §9.1）
+> 版本口径：应用版本 **v1.16**；集群内镜像 tag 为构建序号 **v1.62**（两者不同，见 §9.1）
 > 判定原则：**只写能在仓库里找到证据的状态**。每条结论附文件路径或命令输出；无法验证的标「未核实」。
 
 ---
@@ -238,6 +238,7 @@ bash scripts/smoke-test.sh http://<服务器IP>:8080
 | `CHANGELOG.md` | 新增，倒序记录 v1.0 → v1.16 | 之前只有 git log，没有面向使用者的版本说明 |
 | `docs/fix-ci-smoke-script.md` | 新增，按「报错问题 / 原因 / 解决方案 / 如何避免」记录 CI 修复 | 项目既有文档惯例 |
 | `docs/OUTSTANDING.md` | 新增，未完成 / 未落实清单（含未做浏览器实测、缓存未迁移、功能缺口；beta 推送已于本日完成） | 需要一份"欠账"口径 |
+| `docs/fix-stale-image-uncommitted-code.md` | 新增，四段式记录集群镜像混入未提交代码的排查与重建（v1.61→v1.62） | 镜像内容无法用 version 接口证明 |
 
 ---
 
@@ -247,7 +248,7 @@ bash scripts/smoke-test.sh http://<服务器IP>:8080
 
 | 位置 | tag | 说明 |
 | --- | --- | --- |
-| `deploy/k8s/xingshu-matrix-dev.yaml:196` | `docker.io/xingshu/matrix-server:v1.61` | 已对齐集群实际运行（v1.16 修正） |
+| `deploy/k8s/xingshu-matrix-dev.yaml:196` | `docker.io/xingshu/matrix-server:v1.62` | 已对齐集群实际运行（commit `ac63d0f`，干净构建） |
 | Argo CD（application `xingshu-matrix`，target `test1`） | `docker.io/xingshu/matrix-server:v1.57` | 落后于集群实际，且 Argo 与 beta 清单不同源 |
 | `deploy/scripts/image.sh` 默认 `IMAGE` | `docker.io/xingshu/matrix-server:v1.3` | 脚本默认值滞后 |
 | `deploy/images/README.md` | 离线包内 tag `v40`，标注「对应代码版本 v1.3」 | 离线包与文档不同步 |

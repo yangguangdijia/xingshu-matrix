@@ -191,9 +191,10 @@ spec:
         runAsNonRoot: true
       containers:
         - name: web
-          # 与集群实际运行的镜像保持一致：v1.61 由 commit 1c2f62b 构建（GET /api/v1/version 可验证）。
-          # 注意：这是构建序号，不等于应用版本 v1.16；升级镜像时同步修改此处，避免 Argo CD 回滚。
-          image: docker.io/xingshu/matrix-server:v1.61
+          # 与集群实际运行的镜像保持一致：v1.62 由 commit ac63d0f 构建（GET /api/v1/version 返回 version=v1.16）。
+          # 注意：v1.6x 是构建序号，不等于应用版本 v1.16；升级镜像时同步修改此处，避免 Argo CD 回滚。
+          # 历史坑：v1.61 虽显示 commit=1c2f62b，但构建时工作区含未提交的 oncall/SSO 代码（见 docs/fix-stale-image-uncommitted-code.md）。
+          image: docker.io/xingshu/matrix-server:v1.62
           imagePullPolicy: IfNotPresent
           ports: [{ name: http, containerPort: 8080 }]
           env:

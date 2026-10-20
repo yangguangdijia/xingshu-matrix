@@ -131,7 +131,7 @@
 | 概念 | 当前值 | 说明 |
 | --- | --- | --- |
 | 应用版本 | `v1.16` | 取自 git tag，写入二进制 `Version` 字段，`GET /api/v1/version` 可见 |
-| 集群内镜像 tag | `docker.io/xingshu/matrix-server:v1.61` | 构建序号，与上面**不是同一个号**；对应 commit `1c2f62b`（`GET /api/v1/version` 可验证） |
+| 集群内镜像 tag | `docker.io/xingshu/matrix-server:v1.62` | 构建序号，与上面**不是同一个号**；对应 commit `ac63d0f`（`GET /api/v1/version` 返回 `version=v1.16`） |
 | 离线包 | `deploy/images/matrix-server-v40.tar.gz` | 包里 tag 为 `v40`，`image.sh` 会自动补目标 tag 别名 |
 | CI 产物 | `ghcr.io/<owner>/xingshu-matrix:latest` | 目前只推 `latest`，无版本 tag（待治理，见 docs/PROGRESS.md §9.1） |
 

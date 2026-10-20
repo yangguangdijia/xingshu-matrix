@@ -3,7 +3,7 @@
 本文件记录面向使用者与运维者的版本变更。更细的逐页状态见 [docs/PROGRESS.md](docs/PROGRESS.md)。
 
 版本规则：应用版本取 `vMAJOR.MINOR`（如 `v1.16`），通过 `git tag` 与 `--build-arg VERSION` 写入二进制；
-集群内镜像 tag 使用构建序号（当前 `v1.61`），两者不通用。
+集群内镜像 tag 使用构建序号（当前 `v1.62`，commit `ac63d0f`），两者不通用。
 
 ---
 
@@ -47,9 +47,10 @@
 | 运行版本 | `GET /api/v1/version` → `version=v1.61`、**`commit=1c2f62b`**、`build_time=2026-10-20T14:05:00Z`、`go1.25.7 linux/amd64` |
 | 代码一致性 | `1c2f62b` 即当前 `beta` HEAD → **集群跑的就是当前代码**，无需重新部署 |
 | 前端资源 | `/`、`/xs-api.js`、`/xs-live-core.js`、`/xs-live-ops.js`、`/chart.js` 全部返回 200（非空壳镜像） |
-| 清单一致性 | 修正 `deploy/k8s/xingshu-matrix-dev.yaml` 镜像 `v1.34` → `v1.61`，与集群实际对齐 |
+| 清单一致性 | 修正 `deploy/k8s/xingshu-matrix-dev.yaml` 镜像 → `v1.62`，与集群实际对齐（v1.61 含未提交代码，已重建） |
 | Argo CD | application `xingshu-matrix` 跟踪 `deploy/k8s`、target 分支 `test1`（`e6e0c31`、镜像 `v1.57`），状态 `OutOfSync` + `Progressing`；`syncPolicy.automated` 为空，**未开启自动同步，不会自动回滚到 v1.57** |
 | 遗留 | Argo 的 source 分支是 `test1` 而不是 `beta`，与仓库主线不同源；是否切换需另行确认 |
+| **脏镜像修复** | v1.61 的 `version` 显示 `commit=1c2f62b`，但 `/api/v1/oncall/*` 返回 **401** 证明二进制里混入了未提交代码；已用干净代码重建 **v1.62**（`version=v1.16`、`commit=ac63d0f`），切换后 oncall/sso 全部 404，见 [docs/fix-stale-image-uncommitted-code.md](docs/fix-stale-image-uncommitted-code.md) |
 
 ### 校验（实测）
 
@@ -74,7 +75,7 @@
   修复创建模型时 `tags` 为 `nil` 导致 500、测试连接未触发请求、`tfErr` 空元素崩溃。
 - **可观测**：告警规则页改接集群内 `PrometheusRule`（后端 `GET/POST /clusters/:id/alert-rules`）。
 - **集群**：节点详情改为真实字段，不再用哈希编造。
-- **部署**：新增 Istio 入口网关与路由（`deploy/k8s/istio-gateway.yaml`）；清单镜像最初对齐 `v1.34`（v1.16 已改为与集群一致的 `v1.61`）供 Argo CD 接管；
+- **部署**：新增 Istio 入口网关与路由（`deploy/k8s/istio-gateway.yaml`）；清单镜像最初对齐 `v1.34`（v1.16 已改为与集群一致的 `v1.62`）供 Argo CD 接管；
   `image.sh` 修三处真实缺陷；`.gitattributes` 强制 LF；新增离线镜像包与本地优先的镜像后勤脚本。
 
 ## v1.4 — v1.10（前端可用性建设）

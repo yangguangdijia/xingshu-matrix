@@ -157,6 +157,7 @@ matrix-server (Go)
 | [docs/backend-architecture.md](backend-architecture.md) | 后端接入方案（初版设计说明） |
 | [docs/PROGRESS.md](PROGRESS.md) | 进度报告：逐页接线矩阵、已完成/部分完成/未开始 |
 | [docs/OUTSTANDING.md](OUTSTANDING.md) | 未完成 / 未落实清单：未做浏览器实测、缓存未迁移、功能缺口（推送已完成） |
+| [docs/fix-stale-image-uncommitted-code.md](fix-stale-image-uncommitted-code.md) | 集群镜像混入未提交代码的排查与重建（v1.61 → v1.62） |
 | [docs/deploy-192.168.6.3.md](deploy-192.168.6.3.md) | 真实集群部署与验收记录（7 个真实故障与解法） |
 
 ## 6. 已实现（截至 v1.16）
@@ -250,7 +251,7 @@ docker build --build-arg VERSION=v1.16 --build-arg COMMIT=$(git rev-parse --shor
 ctr -n k8s.io images export matrix-server-v1.16.tar.gz docker.io/xingshu/matrix-server:v1.16
 ```
 
-镜像 tag 有三套历史口径（`v1.61` 集群实际运行 / `v1.3` 脚本默认 / `v40` 离线包），
+镜像 tag 有三套历史口径（`v1.62` 集群实际运行 / `v1.3` 脚本默认 / `v40` 离线包），
 v1.16 起约定以**应用版本**为镜像 tag，差异与治理建议见 [PROGRESS.md §9.1](PROGRESS.md)。
 
 ## 9. 质量门禁
