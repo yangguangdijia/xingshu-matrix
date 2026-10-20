@@ -3339,7 +3339,28 @@
       const plLast = (p) => { const r = p.runs[0]; if (!r) return pillTag("未运行", "x-grey"); const s = r.stages.find((x) => x.st === "运行中");
         return `${pillTag(r.st === "运行中" && s ? "运行中 · " + PL_ST.find((x) => x[0] === s.k)[1] : r.st, PL_TAG[r.st])} <span class="x-frac">#${r.no} · ${plWhen(r.t)}</span>`; };
 
+      // 流水线：来自真实 /cicd/pipelines 与 /cicd/runs
+      async function loadPipelines() {
+        try {
+          const [dp, dr] = await Promise.all([XS.get("/cicd/pipelines"), XS.get("/cicd/runs", { page_size: 100 })]);
+          const ps = Array.isArray(dp) ? dp : ((dp && dp.items) || []);
+          const rs = Array.isArray(dr) ? dr : ((dr && dr.items) || []);
+          const byPipe = {};
+          rs.forEach((r) => { (byPipe[r.pipeline_id] ||= []).push(r); });
+          pl.list.length = 0;
+          ps.forEach((x) => {
+            const app = APPS.find((a) => a.id === x.app_id);
+            const mine = (byPipe[x.id] || []).sort((a, b) => (b.id - a.id));
+            pl.list.push({ id: x.id, name: x.name, app: app ? app.name : ("#" + x.app_id),
+              onPush: !!x.on_push, stages: x.stages || [], runs: mine,
+              last: mine[0] || null });
+          });
+          pl._loaded = true; pl._err = "";
+        } catch (e) { pl._err = e.message || "流水线加载失败"; pl._loaded = true; }
+      }
+
       function renderPipeline(el, id) {
+        if (window.XS && XS.mode === "live" && !pl._loaded) { loadPipelines().then(() => renderPipeline(el, id)); }
         if (!pl.list) plSeed();
         const p = id && plGet(id);
         if (id && !p) { history.replaceState(null, "", "#/cicd/pipeline"); }
