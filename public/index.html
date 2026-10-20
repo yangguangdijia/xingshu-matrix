@@ -11409,7 +11409,8 @@
         ],
         // Attempts the graph always shows, so denied paths are visible too
         probe: [["test", "order", 8080], ["api", "redis", 6379], ["user", "alipay", 443], ["test", "alipay", 443]],
-        wl: [
+        // live 模式：出网白名单必须来自后端，未接入前为空，不展示演示数据
+        wl: (window.XS && window.XS.mode === "live") ? [] : [
           { v: "api.alipay.com", note: "支付回调与查询", by: "王芳", at: "2026-09-02" },
           { v: "*.xingshu.com", note: "公司内部域名", by: "李明", at: "2026-08-15" },
           { v: "registry.npmjs.org", note: "前端构建依赖", by: "张伟", at: "2026-07-30" },
