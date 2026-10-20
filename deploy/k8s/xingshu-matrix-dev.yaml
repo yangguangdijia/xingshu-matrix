@@ -191,7 +191,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: web
-          image: docker.io/xingshu/matrix-server:v1.56
+          image: docker.io/xingshu/matrix-server:v1.57
           imagePullPolicy: IfNotPresent
           ports: [{ name: http, containerPort: 8080 }]
           env:

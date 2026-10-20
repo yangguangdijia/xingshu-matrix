@@ -5587,6 +5587,10 @@
         try { notices = (await apiRequest("/platform/notices")).items || []; } catch (e) { failed.push("公告：" + e.message); }
         try { if (window.XS && XS.mode === "live") await XS.ready; } catch (e) {}
 
+        // 顶栏「环境」筛选必须真正作用于数据：先按环境过滤集群，再做所有统计
+        const envSel = (typeof nav !== "undefined" && nav.env && nav.env !== "全部") ? nav.env : "";
+        if (envSel) clusters = clusters.filter((c) => (c.env || "") === envSel);
+
         // 逐集群拿节点（含 CPU/内存使用率，依赖 metrics-server）
         const nodes = [];
         await Promise.all(clusters.map(async (c) => {
