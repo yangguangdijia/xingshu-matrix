@@ -3875,6 +3875,8 @@
       }
 
       function rlSeed() {
+        // live 模式不造发布单：真实发布记录来自 /cicd/applications/:id/releases，未接入前显示空态
+        if (window.XS && XS.mode === "live") { rl.list.length = 0; rl._loaded = true; return; }
         if (rl.list) return;
         rl.list = [];
         const day = (n, hm) => fmt(new Date(Date.now() + n * 864e5)).slice(0, 11) + hm, ago = (min) => fmt(new Date(Date.now() - min * 6e4));
