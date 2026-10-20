@@ -191,7 +191,9 @@ spec:
         runAsNonRoot: true
       containers:
         - name: web
-          image: docker.io/xingshu/matrix-server:v1.34
+          # 与集群实际运行的镜像保持一致：v1.61 由 commit 1c2f62b 构建（GET /api/v1/version 可验证）。
+          # 注意：这是构建序号，不等于应用版本 v1.16；升级镜像时同步修改此处，避免 Argo CD 回滚。
+          image: docker.io/xingshu/matrix-server:v1.61
           imagePullPolicy: IfNotPresent
           ports: [{ name: http, containerPort: 8080 }]
           env:

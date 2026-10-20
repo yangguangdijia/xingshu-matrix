@@ -2,7 +2,7 @@
 
 > 报告生成时间：2026-10-20
 > 代码基线：`05cfcf1`（`chore(deploy): 清单镜像对齐到 v1.34，供 Argo CD 接管`），上一个版本标签 `v1.15`
-> 版本口径：应用版本 **v1.16**；集群内镜像 tag 为构建序号 **v1.34**（两者不同，见 §9.1）
+> 版本口径：应用版本 **v1.16**；集群内镜像 tag 为构建序号 **v1.61**（两者不同，见 §9.1）
 > 判定原则：**只写能在仓库里找到证据的状态**。每条结论附文件路径或命令输出；无法验证的标「未核实」。
 
 ---
@@ -114,7 +114,7 @@
 | 工作负载 | `postgres-0 1/1`、`redis 1/1`、`xingshu-matrix 2/2` | 同上 §5.1 |
 | 入口 | `https://xingshu-matrix.com`（自签 TLS，需 hosts）；备用 `http://192.168.6.3:30080` | 同上 §1、§8 |
 | 验收 | 登录 → 强制改密 → `/auth/me`、`/users`、`/roles`、`/clusters`、`/hosts`、`/approvals`、`/audit-logs` 全部 200 | 同上 §5.2 |
-| 镜像 | 集群内为 `docker.io/xingshu/matrix-server:v1.34` | `deploy/k8s/xingshu-matrix-dev.yaml:194` |
+| 镜像 | 集群内为 `docker.io/xingshu/matrix-server:v1.61`，`GET /api/v1/version` 返回 `commit=1c2f62b`、`build_time=2026-10-20T14:05:00Z` | `deploy/k8s/xingshu-matrix-dev.yaml:196`；version 接口实测 |
 
 ---
 
@@ -247,7 +247,8 @@ bash scripts/smoke-test.sh http://<服务器IP>:8080
 
 | 位置 | tag | 说明 |
 | --- | --- | --- |
-| `deploy/k8s/xingshu-matrix-dev.yaml:194` | `docker.io/xingshu/matrix-server:v1.34` | 当前集群实际运行 |
+| `deploy/k8s/xingshu-matrix-dev.yaml:196` | `docker.io/xingshu/matrix-server:v1.61` | 已对齐集群实际运行（v1.16 修正） |
+| Argo CD（application `xingshu-matrix`，target `test1`） | `docker.io/xingshu/matrix-server:v1.57` | 落后于集群实际，且 Argo 与 beta 清单不同源 |
 | `deploy/scripts/image.sh` 默认 `IMAGE` | `docker.io/xingshu/matrix-server:v1.3` | 脚本默认值滞后 |
 | `deploy/images/README.md` | 离线包内 tag `v40`，标注「对应代码版本 v1.3」 | 离线包与文档不同步 |
 | `.github/workflows/docker.yml` | 只推 `:latest` | 无版本 tag，无法回滚定位 |

@@ -250,7 +250,7 @@ docker build --build-arg VERSION=v1.16 --build-arg COMMIT=$(git rev-parse --shor
 ctr -n k8s.io images export matrix-server-v1.16.tar.gz docker.io/xingshu/matrix-server:v1.16
 ```
 
-镜像 tag 有三套历史口径（`v1.34` 集群实际运行 / `v1.3` 脚本默认 / `v40` 离线包），
+镜像 tag 有三套历史口径（`v1.61` 集群实际运行 / `v1.3` 脚本默认 / `v40` 离线包），
 v1.16 起约定以**应用版本**为镜像 tag，差异与治理建议见 [PROGRESS.md §9.1](PROGRESS.md)。
 
 ## 9. 质量门禁
