@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -111,6 +112,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 
 	g.GET("/targets", read, m.listTargets)
 	g.POST("/targets", manage, m.createTarget)
+	g.DELETE("/targets/:id", manage, m.deleteTarget)
 	g.DELETE("/targets/:id", manage, m.deleteRow("cicd_targets", "target"))
 
 	g.GET("/jenkins", read, m.listJenkins)
@@ -319,6 +321,34 @@ type targetIn struct {
 	Name       string `json:"name" binding:"required,max=64"`
 	Kubeconfig string `json:"kubeconfig" binding:"required"`
 	Namespace  string `json:"namespace"`
+}
+
+// deleteTarget 删除 runner target；仍被流水线引用时拒绝，避免出现悬空引用。
+func (m *Module) deleteTarget(c *gin.Context) {
+	id, ok := httpx.ParamID(c, "id")
+	if !ok {
+		return
+	}
+	var used int
+	if err := m.db.QueryRow(c, `SELECT count(*) FROM cicd_pipelines WHERE runner_target_id=$1`, id).Scan(&used); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if used > 0 {
+		httpx.Fail(c, httpx.Conflict("该 target 仍被 "+strconv.Itoa(used)+" 条流水线引用，请先删除或改绑流水线"))
+		return
+	}
+	tag, err := m.db.Exec(c, `DELETE FROM cicd_targets WHERE id=$1`, id)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		httpx.Fail(c, httpx.NotFound("target not found"))
+		return
+	}
+	audit.SetResource(c, "cicd_targets", strconv.FormatInt(id, 10))
+	httpx.OK(c, gin.H{"deleted": id})
 }
 
 func (m *Module) listTargets(c *gin.Context) {
