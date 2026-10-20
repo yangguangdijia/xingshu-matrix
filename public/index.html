@@ -3223,6 +3223,22 @@
         if (pg === "pipeline") return renderPipeline(el, app);
         const list = a ? [a] : APPS, sel = `<select class="x-select" style="width:auto" id="cicdApp" aria-label="按应用筛选"><option value="">全部应用</option>${opt(APPS.map((x) => x.name), a ? a.name : "")}</select>`;
         if (pg === "build") {
+          if (window.XS && XS.mode === "live" && !RUNS.loaded) { loadRuns().then(() => renderCicd(el)); }
+          if (window.XS && XS.mode === "live") {
+            const rows = RUNS.list.filter((r) => !a || r.app_id === a.id);
+            el.innerHTML = phead("构建", a ? `${a.name} 的构建历史与触发记录` : "各应用的构建历史与触发记录") +
+              `<div class="x-tbar">${sel}</div><div class="x-panel">` +
+              tbl(["应用", "编号", "分支", "提交", "状态", "耗时", "时间"], rows.map((r) => {
+                const app = APPS.find((x) => x.id === r.app_id);
+                const st = runStatus(r), cls = st === "成功" ? "x-green" : st === "失败" ? "x-red" : "x-orange";
+                return [`<span class="x-name">${esc(app ? app.name : "#" + r.app_id)}</span>`,
+                  `<span class="x-mono">#${r.id}</span>`, esc(r.branch || "—"),
+                  `<span class="x-mono">${esc((r.commit || "").slice(0, 7) || "—")}</span>`,
+                  `<span class="x-tag ${cls}">${esc(st)}</span>`, runDur(r), `<span class="x-frac">${runTime(r)}</span>`];
+              })) + `</div>`;
+            $("cicdApp").onchange = (e) => navGo(`#/cicd/build${e.target.value ? "/" + encodeURIComponent(e.target.value) : ""}`);
+            return;
+          }
           el.innerHTML = phead("构建", a ? `${a.name} 的构建历史与触发记录` : "各应用的构建历史与触发记录", `<button class="x-btn x-btn--pri" id="buildBtn"${a ? "" : ' disabled title="先选择应用"'}>立即构建</button>`) +
             `<div class="x-tbar">${sel}</div><div class="x-panel">` +
             tbl(["应用", "编号", "分支", "提交", "状态", "耗时", "时间"], list.flatMap((x) => appData(x).builds.map((b) => [`<a class="x-tlink" href="#/delivery/${encodeURIComponent(x.name)}">${esc(x.name)}</a>`, `<span class="x-name">#${b.id}</span>`, b.branch, `<span class="x-mono">${b.commit}</span>`, stTag(b.st), b.dur, b.time]))) + "</div>";
@@ -3487,6 +3503,24 @@
           if (location.hash !== h) navGo(h); else renderPipeline($("view"), t.id);
         };
       }
+
+      // 构建：来自真实 /cicd/runs
+      const RUNS = { list: [], loaded: false };
+      async function loadRuns() {
+        try {
+          const d = await XS.get("/cicd/runs", { page_size: 200 });
+          RUNS.list = Array.isArray(d) ? d : ((d && d.items) || []);
+          RUNS.loaded = true; RUNS.err = "";
+        } catch (e) { RUNS.err = e.message || "运行记录加载失败"; RUNS.loaded = true; }
+      }
+      const runDur = (r) => {
+        if (!r.started_at) return "—";
+        const end = r.finished_at ? new Date(r.finished_at) : new Date();
+        const ms = end - new Date(r.started_at);
+        return ms > 0 ? `${Math.floor(ms / 60000)}分${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}秒` : "—";
+      };
+      const runTime = (r) => r.started_at ? new Date(r.started_at).toLocaleString("zh-CN") : (r.created_at ? new Date(r.created_at).toLocaleString("zh-CN") : "—");
+      const runStatus = (r) => ({ succeeded: "成功", failed: "失败", running: "运行中", queued: "排队中", canceled: "已取消" })[r.status] || r.status;
 
       function appData(a) {
         if (a.d) return a.d;
