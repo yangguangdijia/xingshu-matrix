@@ -2,9 +2,11 @@
 
 > 统一的云原生运维与研发效能平台 —— 一个入口管好集群、主机、应用交付、可观测、堡垒机与研发协作，并在每个功能里直接调用 AI。
 
-![status](https://img.shields.io/badge/version-v1.0--preview-2f6bff) ![deploy](https://img.shields.io/badge/deploy-K8s%20%7C%20Docker%20%7C%20物理机-0b1a33)
+![status](https://img.shields.io/badge/version-v1.16-2f6bff) ![deploy](https://img.shields.io/badge/deploy-K8s%20%7C%20Docker%20%7C%20物理机-0b1a33) ![api](https://img.shields.io/badge/API-237%20routes-0b1a33) ![pages](https://img.shields.io/badge/pages-20%2F28%20live-3F8F1F)
 
 > **技术说明文档**：开发语言、架构、背景、接口逻辑、接口文档索引、已实现与未实现清单见 [docs/PLATFORM.md](docs/PLATFORM.md)。后端为 Go 1.23（`server/`），接口文档在 `docs/api/`。
+>
+> **进度与版本**：逐页接线矩阵、已完成/部分完成/未开始清单见 [docs/PROGRESS.md](docs/PROGRESS.md)；版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -64,19 +66,24 @@
 
 ## 功能一览
 
+> 标注说明：**[真]** 页面已接真实接口；**[演]** 仍为内置演示数据；**[缺]** 前端就绪、后端未实现。
+
 **运维中心**
-- 总览：集群、主机、应用、告警健康度一屏可见
-- 集群：集群接入（kubeconfig / Agent / 托管云 ACK、TKE、EKS）、节点、节点池与升级、主机纳管、多集群对比与资源分发
-- 工作负载：Deployment/StatefulSet/DaemonSet/Pod、配置与密钥、CRD、项目与配额、Helm 应用商店、HPA/VPA、CronJob、备份恢复（Velero）、kubectl Web Shell
-- 应用交付：应用、构建、制品、流水线、部署编排（滚动/灰度/蓝绿）、发布单、变更审批
-- 网络：服务网格与流量治理、网关、网络策略（Cilium）、证书
-- 可观测：监控与告警、日志检索、链路追踪
-- 堡垒机：Web SSH、RDP/VNC、SFTP、批量命令、会话监控与录像回放、命令审计与高危拦截、访问申请
-- 值班与故障：排班、故障单、SLO
-- 设置：用户与权限（组织/部门/用户组/角色/RBAC 权限矩阵/SSO/LDAP/API Token）、系统接入、AI 模型配置
+- 总览：集群、主机、应用、告警健康度一屏可见 **[真]**
+- 集群：接入（kubeconfig）、节点 cordon/drain/标签/污点、命名空间、工作负载、事件、Pod 日志、YAML apply、告警规则（集群内 `PrometheusRule`）**[真]**
+- 多集群对比与资源分发 **[演]**
+- 应用交付：应用、流水线、运行与 SSE 日志、部署/回滚、发布单、Jenkins、GitLab/GitHub Webhook **[真]**
+- 自动化编排：流程、版本、触发、运行记录 **[真，无执行器]**
+- 网络：流量治理、网关、网络策略、证书 **[演]**
+- 可观测：监控与告警（PromQL、认领/关闭、静默、通知渠道）、日志检索（Loki/ES）**[真]**；链路追踪 **[演]**（后端已有接口）
+- 堡垒机：Web SSH / 会话 / 命令审计 / 录像回放 **[演]**（后端完整，前端未接）；RDP / VNC **[未实现]**
+- 值班与故障：排班、故障、复盘、SLO **[缺]**
+- 设置：用户、角色、权限矩阵、部门、用户组、环境策略、登录日志、访问域名、AI 模型与提示词 **[真]**；SSO/LDAP **[未实现]**
 
 **研发中心**
-- 工作台、需求管理、代码仓库与合并请求、迭代与看板、团队协作、缺陷总览、测试管理
+- Coding（需求）、项目管理（迭代）、缺陷总览、团队协作 **[真]**
+- 工作台、需求管理、测试管理 **[演]**
+- 状态机、评论、Git/流水线关联 **[未实现]**
 
 ## AI 能力
 
@@ -86,14 +93,26 @@
 
 ## 当前状态（务必阅读）
 
-当前 **v1.0-preview** 为 **可联调的预览版**：
+当前版本 **v1.16**，定位是**可在真实集群部署的内测版**，不是生产版。
 
-- **前端已接入真实接口**：登录/会话/改密、总览、用户与权限、审批、集群/节点/工作负载/日志、主机、团队协作、可观测/日志、CI/CD、中间件、值班/SLO、设置、AI、自动化编排。未接入的页面（流量治理、网络策略、堡垒机控制台、部分集群高级子页）保留内置演示数据。
-- 无法连接后端时自动进入**演示模式**，登录页会明确提示，不会把演示数据伪装成实时数据。
-- **后端已有**：认证、RBAC、审计、审批、AI，以及 cluster / hosts / bastion / observability / cicd / middleware / automation / devcenter 模块；SSO、oncall/SLO、告警静默回写、S3 录像、多副本路由等仍待补。
-- 本轮尚未在真实 PostgreSQL / K8s / Prometheus / Loki / ES / Jenkins / Kafka 上做端到端联调；接口未配置时返回可观察错误。
+**已经做到的**
 
-因此 **请勿直接作为生产系统使用**。
+- **后端可编译、可测试**：237 条路由、34 张表、13 个迁移、50 个权限点、7 类审批；`go build ./...`、`go vet ./...` 全部通过，`go test ./...` 中 bastion / cicd / cluster / hosts / middleware / observability 六个模块测试通过。
+- **8 个业务模块全部有真实执行链路**：cluster（client-go 直连）、hosts（WebSocket Agent）、bastion（SSH 代理 + 录像 + 命令审计）、observability（Prometheus/Loki/ES/Jaeger/Tempo/Alertmanager）、cicd（K8s Job + Kaniko + Helm）、middleware（Kafka/RabbitMQ/RocketMQ/SQL/Redis）、automation、devcenter。
+- **AI 嵌到操作里**：12 个 Function Calling 工具，3 个写工具（`k8s_scale_deployment`、`hosts_exec`、`cicd_run_pipeline`）必须用户二次确认，生产环境继续走审批；告警规则、创建工作负载、创建用户、部门/用户组、接入集群等对话框均可 AI 生成。
+- **前端 28 个页面中 20 个已接真实接口**（明细见 [docs/PROGRESS.md](docs/PROGRESS.md) §6）。
+- **已在真实集群验证**：`192.168.6.3` 三节点，`https://xingshu-matrix.com` 入口，登录 → 强制改密 → 用户/角色/集群/主机/审批/审计接口全部 200（记录见 [docs/deploy-192.168.6.3.md](docs/deploy-192.168.6.3.md)）。
+
+**还没做到的**
+
+- **值班故障 / SLO 只有前端**：页面会调 `/oncall/*`，但后端没有 oncall 模块，请求返回 404，页面顶部会显示加载失败横幅。
+- **8 个页面仍是演示数据**：多集群、流量治理、网络策略、链路追踪（后端有接口、前端未接）、堡垒机控制台（后端最完整却未接）、工作台、需求管理、测试管理。
+- **自动化编排没有执行器**：触发只写 `queued`，流程不会真的执行步骤。
+- **真实外部依赖未联调**：Prometheus / Loki / Elasticsearch / Alertmanager / Jenkins / Kafka 目前只有 httptest 与 client-go fake 测试。
+- **单集群、单副本 PostgreSQL、单节点 Ingress**：无高可用，PostgreSQL 用 `local-path` PVC，Pod 重建后绑回原节点。
+- **无 SSO**：登录页有「企业 SSO」入口，但后端没有 OIDC/LDAP。
+
+因此 **请勿直接作为生产系统使用**；可以先在测试集群里跑通集群接入、主机纳管、审计与审批链路。
 
 ## 部署方式
 
@@ -107,12 +126,28 @@
 | 端口 | 默认 8080（Docker/物理机）或 Ingress 80/443（K8s） |
 | 浏览器 | Chrome / Edge / Firefox 最近两个大版本 |
 
+### 版本与镜像标签
+
+| 概念 | 当前值 | 说明 |
+| --- | --- | --- |
+| 应用版本 | `v1.16` | 取自 git tag，写入二进制 `Version` 字段，`GET /api/v1/version` 可见 |
+| 集群内镜像 tag | `docker.io/xingshu/matrix-server:v1.34` | 构建序号，与上面**不是同一个号**，用于 Argo CD 接管 |
+| 离线包 | `deploy/images/matrix-server-v40.tar.gz` | 包里 tag 为 `v40`，`image.sh` 会自动补目标 tag 别名 |
+| CI 产物 | `ghcr.io/<owner>/xingshu-matrix:latest` | 目前只推 `latest`，无版本 tag（待治理，见 docs/PROGRESS.md §9.1） |
+
+构建时务必带上版本号，否则 `/api/v1/version` 只会显示 `dev`：
+
+```bash
+docker build --build-arg VERSION=v1.16 --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  -t <你的仓库>/xingshu-matrix:v1.16 .
+```
+
 ### 方式一：Kubernetes
 
 ```bash
 # 1. 构建并推送镜像（或使用你自己的镜像仓库）
-docker build -t <你的仓库>/xingshu-matrix:v1.0 .
-docker push <你的仓库>/xingshu-matrix:v1.0
+docker build --build-arg VERSION=v1.16 -t <你的仓库>/xingshu-matrix:v1.16 .
+docker push <你的仓库>/xingshu-matrix:v1.16
 
 # 2. 修改 deploy/k8s/xingshu-matrix.yaml 中的 image 与 Ingress host
 kubectl apply -f deploy/k8s/xingshu-matrix.yaml
@@ -148,8 +183,8 @@ sudo bash deploy/baremetal/install.sh --port 8080 --dir /opt/xingshu-matrix
 **离线环境**：在有网机器上打包，拷贝到目标机安装：
 
 ```bash
-bash scripts/package.sh v1.0                   # 生成 dist/xingshu-matrix-v1.0.tar.gz
-sudo bash deploy/baremetal/install.sh --offline xingshu-matrix-v1.0.tar.gz
+bash scripts/package.sh v1.16                  # 生成 dist/xingshu-matrix-v1.16.tar.gz
+sudo bash deploy/baremetal/install.sh --offline xingshu-matrix-v1.16.tar.gz
 ```
 
 卸载：`sudo bash deploy/baremetal/uninstall.sh /opt/xingshu-matrix`
@@ -170,25 +205,52 @@ bash scripts/smoke-test.sh http://<服务器IP>:8080
 ## 目录结构
 
 ```
-public/                 前端静态资源（index.html 为平台入口）
-deploy/nginx.conf       Nginx 配置（含 /healthz 与 SPA 路由回退）
-deploy/k8s/             Kubernetes 清单
-deploy/baremetal/       物理机 / 虚拟机安装与卸载脚本
-Dockerfile              Nginx 镜像
-docker-compose.yml      Compose 部署
-scripts/package.sh      打离线包
-scripts/smoke-test.sh   部署后冒烟测试
+server/                  Go 后端（cmd/matrix-server、cmd/matrix-agent、internal/*）
+public/                  前端静态资源（index.html 为入口，xs-api.js / xs-live-core.js / xs-live-ops.js 为实时适配层）
+docs/                    技术说明（PLATFORM.md）、进度报告（PROGRESS.md）、接口文档（api/）、真实部署记录
+tests/frontend/          前端单测与浏览器冒烟（xs-api.test.mjs、smoke.mjs、mock-server.mjs）
+deploy/nginx.conf        Nginx 配置（含 /healthz 与 SPA 路由回退）
+deploy/k8s/              Kubernetes 清单（开发集群完整版 + Istio 网关 + Helm 值示例）
+deploy/baremetal/        物理机 / 虚拟机安装与卸载脚本
+deploy/scripts/          镜像后勤（image.sh）与自签证书（gen-tls-cert.sh）
+deploy/images/           离线镜像包（OCI tar + gzip）
+Dockerfile               多阶段镜像（构建 matrix-server + matrix-agent）
+docker-compose.yml       Compose 部署（server + PostgreSQL + Redis + MinIO + guacd）
+scripts/package.sh       打前端离线包
+scripts/smoke-test.sh    部署后冒烟测试
+Makefile                 build / test / vet / run / docker / package
 ```
+
+## 质量门禁
+
+本地可复现的全部检查（v1.16 实测结果）：
+
+```bash
+cd server && go build ./... && go vet ./...   # 通过
+cd server && go test ./...                    # 6 个模块包 ok（bastion/cicd/cluster/hosts/middleware/observability）
+node --test tests/frontend/xs-api.test.mjs    # 5 通过
+node public/xs-live-core.js                   # 48 条断言全部通过
+```
+
+CI（`.github/workflows/docker.yml`）在 `push` 到 `main`、打 `v*` 标签或手工触发时执行同一组检查并推送镜像。
+浏览器级冒烟需要本机 Chrome，按 `tests/frontend/` 下的说明手工运行。
 
 ## 路线图
 
 - [x] 运维中心全模块前端（集群、工作负载、应用交付、网络、可观测、堡垒机、值班、设置）
 - [x] 研发中心前端
-- [x] 场景化 AI 入口与模型配置
-- [x] 核心后端 API 与持久化（认证、RBAC、审计）
+- [x] 场景化 AI 入口与模型配置（12 个工具 + 3 个写操作确认）
+- [x] 核心后端 API 与持久化（认证、RBAC、审计、审批、AI）
 - [x] automation 与研发中心 API、迁移和前端真实接口
-- [ ] 真实 Kubernetes / SSH / 指标与日志数据源生产环境联调
+- [x] 真实集群部署与平台自身链路验收（192.168.6.3）
+- [x] 用户组 / 部门 / 登录日志 / 访问域名 / 告警规则 PrometheusRule
+- [x] CI 修复（v1.16）
+- [ ] oncall 后端模块（排班 / 故障 / 复盘 / SLO）
+- [ ] 堡垒机控制台、链路追踪前端接真实接口
+- [ ] automation 执行器 worker
+- [ ] 真实 Kubernetes / Prometheus / Loki / ES / Jenkins / Kafka 生产级联调
 - [ ] Helm Chart 与高可用部署方案
+- [ ] OIDC / LDAP 单点登录
 
 ## License
 

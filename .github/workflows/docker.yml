@@ -12,8 +12,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Smoke test
-        run: cd scripts && npm i jsdom@24 --no-save && node smoke-test.mjs
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: server/go.sum
+      - name: Go build & test
+        working-directory: server
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+      - name: Frontend unit test
+        # 前端单测不依赖第三方包：xs-api.test.mjs 只用 node:test / node:vm。
+        # 浏览器级冒烟（tests/frontend/smoke.mjs）需要本机 Chrome，只在手工执行。
+        run: node --test tests/frontend/xs-api.test.mjs
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
