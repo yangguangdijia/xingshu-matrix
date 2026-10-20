@@ -27,29 +27,31 @@
 | 项 | 事实 |
 | --- | --- |
 | 约定流程 | checkout `beta` → `git merge --ff-only test` → 打附注标签 → `git push origin HEAD:beta` → `git push origin <tag>` → 用 `git rev-list --left-right --count` 校验与 `origin/beta` 同步 |
-| 实际做了什么 | 只在本地 `beta` 分支提交 `18c3999`，并本地打附注标签 `v1.16` |
-| 实际没做什么 | 没有合并 `test`、没有推送分支、没有推送标签、没有做同步校验 |
-| 当前证据 | `git branch -vv` → `* beta 18c3999 [origin/beta: ahead 2]`；`git log --oneline origin/beta..HEAD` 列出 2 条：`18c3999`、`05cfcf1` |
-| 网络状态 | `git ls-remote --tags origin` 在本机 30 秒超时，未拿到远端响应；推送能力**未核实** |
+| 实际做了什么 | 只在本地 `beta` 分支提交 `18c3999`（v1.16 文档首版）与 `a3f30f7`（本清单），并本地打附注标签 `v1.16` |
+| 实际没做什么 | 没有合并 `test`、没有推送分支、没有推送标签、没有做同步校验（推送已尝试一次并失败，见下） |
+| 当前证据 | `git branch -vv` → `* beta a3f30f7 [origin/beta: ahead 3]`；本地标签 `v1.16` 已指向 `a3f30f7` |
+| 实际尝试过 | 2026-10-20 执行 `git push origin HEAD:beta`，**失败**：`fatal: unable to access 'https://github.com/yangguangdijia/xingshu-matrix.git/': Failed to connect to github.com port 443 after 21123 ms: Could not connect to server`（退出码 128） |
+| 阻塞原因 | 本机到 `github.com:443` 不可达（`git ls-remote` 同样在 30 秒超时）；与本轮改动无关，属网络环境问题 |
 
-**补齐方式**
+**补齐方式**（网络恢复后执行，本地提交已就绪）
 
 ```bash
-# 1) 先确认远端可达
-git ls-remote --heads origin beta
+# 0) 先确认这台机器能连到 github.com:443
+git ls-remote --heads origin beta     # 通则继续，超时先修网络/代理
 
-# 2) 按约定快进合并 test（若 test 领先）
+# 1) 按约定快进合并 test（若 test 领先）
 git checkout beta && git merge --ff-only test
 
-# 3) 推送分支与标签
+# 2) 推送分支与标签
 git push origin HEAD:beta
 git push origin v1.16
 
-# 4) 校验同步（左右两边都应为 0）
+# 3) 校验同步（左右两边都应为 0）
 git fetch origin && git rev-list --left-right --count origin/beta...HEAD
 ```
 
-> 说明：没有推送不是"忘了"，是这一轮我把它当成了发布动作而没有触发；你的既定完成标准里这一条是硬性的。
+> 说明：本地已提交 `a3f30f7`（文档）与 `18c3999`（v1.16 首版），`v1.16` 标签已指向 `a3f30f7`；
+> 唯一缺的动作就是"推上去"。代理可用时应设置 `HTTPS_PROXY` 后重试，不要重复提交。
 
 ### A2. 没有做多分辨率浏览器实测
 
