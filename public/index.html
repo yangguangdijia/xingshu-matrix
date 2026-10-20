@@ -7049,7 +7049,26 @@
           closeAll(); done && done(); toast(isNew ? `已添加资产 ${n}` : `已保存资产 ${n}`);
         };
       }
+      // 堡垒机资产：真实来源 /bastion/assets
+      let BAS_LOADED = false;
+      async function loadBastionAssets() {
+        try {
+          const d = await XS.get("/bastion/assets");
+          const items = Array.isArray(d) ? d : ((d && d.items) || []);
+          BAS_A.length = 0;
+          items.forEach((a) => BAS_A.push({
+            id: a.id, n: a.name, ip: a.host, port: a.port || 22,
+            env: a.env || "生产", grp: a.description || "—",
+            proto: String(a.protocol || "SSH").split(/[,\s]+/).filter(Boolean),
+          }));
+          BAS_ERR = "";
+        } catch (e) { BAS_ERR = e.message || "资产加载失败"; }
+        BAS_LOADED = true;
+      }
+      let BAS_ERR = "";
+
       function renderBasAssets(el) {
+        if (window.XS && XS.mode === "live" && !BAS_LOADED) { loadBastionAssets().then(() => renderBasAssets(el)); }
         const all = BAS_A, list = basAEnv();
         const rows = list.map(({ x, i }) => {
           const canConn = ["SSH", "SFTP", "RDP", "VNC"].some((q) => x.proto.includes(q));
