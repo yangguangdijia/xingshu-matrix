@@ -10922,10 +10922,14 @@
       const TR_BUCKET = { 15: [15, 1], 60: [12, 5], 360: [12, 30], 1440: [24, 60] };
       const trRedSvc = () => tr.f.svc || tr.red || "api-gateway";
       // 每个接口在当前时间范围内的 QPS / P99 / 错误率，随范围略有起伏
-      const trEps = () => TR_EP.map(([svc, op, q, p50, p99, e]) => {
+      const trEps = () => {
+        // live 模式：接口基线是演示数据，未接入真实 RED 指标前返回空，页面显示"暂无数据"
+        if (window.XS && XS.mode === "live") return [];
+        return TR_EP.map(([svc, op, q, p50, p99, e]) => {
         const s = obN(op + tr.f.win) % 100 / 100;
         return { svc, op, qps: Math.round(q * (0.88 + s * 0.24)), p50: +(p50 * (0.9 + s * 0.2)).toFixed(1), p99: Math.round(p99 * (0.85 + s * 0.35)), err: +(e * (0.7 + s * 0.6)).toFixed(2) };
-      });
+        });
+      };
       function trRedSeries(svc) {
         const eps = trEps().filter((x) => x.svc === svc), qps = eps.reduce((s, x) => s + x.qps, 0) || 1;
         const w = (k) => eps.reduce((s, x) => s + x[k] * x.qps, 0) / qps;
@@ -10937,6 +10941,10 @@
         return { labels, qps: S(qps, 0.16, 0, 0), err: S(err, 0.5, 1, 2), p50: l50, p95: l95.map((v, i) => Math.max(v, l50[i])), p99: l99.map((v, i) => Math.max(v, l95[i])) };
       }
       function trRedHTML() {
+        // live 且没有真实接口指标时，直接给空态，避免用 0 数据画曲线或出现 NaN
+        if (window.XS && XS.mode === "live" && !trEps().length) {
+          return `<section class="x-panel"><p class="x-empty">未接入真实 RED 指标（Prometheus/Tempo），暂无接口 QPS、延迟与错误率数据</p></section>`;
+        }
         const svc = trRedSvc(), r = trRedSeries(svc), last = (a) => a[a.length - 1], win = OB_WIN.find((w) => w[0] === tr.f.win)[1];
         const card = (id, t, now, al) => `<section class="x-panel"><div class="x-sethead" style="margin-bottom:8px"><h3 class="x-h2" style="margin:0">${t}</h3><span class="x-obv">${now}</span></div><div class="x-ochart"><canvas id="${id}" role="img" aria-label="${al}"></canvas></div></section>`;
         return `<div class="x-redhead"><h2 class="x-h2">服务 RED 指标 <span class="x-frac">${win} · 全量指标</span></h2>
