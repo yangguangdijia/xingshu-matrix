@@ -237,7 +237,7 @@ bash scripts/smoke-test.sh http://<服务器IP>:8080
 | `docs/PROGRESS.md` | 新增本报告 | 需要一份可复核的进度口径 |
 | `CHANGELOG.md` | 新增，倒序记录 v1.0 → v1.16 | 之前只有 git log，没有面向使用者的版本说明 |
 | `docs/fix-ci-smoke-script.md` | 新增，按「报错问题 / 原因 / 解决方案 / 如何避免」记录 CI 修复 | 项目既有文档惯例 |
-| `docs/OUTSTANDING.md` | 新增，未完成 / 未落实清单（含未推送、未做浏览器实测、缓存未迁移等） | 需要一份"欠账"口径 |
+| `docs/OUTSTANDING.md` | 新增，未完成 / 未落实清单（含未做浏览器实测、缓存未迁移、功能缺口；beta 推送已于本日完成） | 需要一份"欠账"口径 |
 
 ---
 

@@ -156,7 +156,7 @@ matrix-server (Go)
 | [docs/dev-guide.md](dev-guide.md) | 新增模块、迁移、权限、审批、AI 工具的开发规范 |
 | [docs/backend-architecture.md](backend-architecture.md) | 后端接入方案（初版设计说明） |
 | [docs/PROGRESS.md](PROGRESS.md) | 进度报告：逐页接线矩阵、已完成/部分完成/未开始 |
-| [docs/OUTSTANDING.md](OUTSTANDING.md) | 未完成 / 未落实清单：未推送、未做浏览器实测、缓存未迁移、功能缺口 |
+| [docs/OUTSTANDING.md](OUTSTANDING.md) | 未完成 / 未落实清单：未做浏览器实测、缓存未迁移、功能缺口（推送已完成） |
 | [docs/deploy-192.168.6.3.md](deploy-192.168.6.3.md) | 真实集群部署与验收记录（7 个真实故障与解法） |
 
 ## 6. 已实现（截至 v1.16）

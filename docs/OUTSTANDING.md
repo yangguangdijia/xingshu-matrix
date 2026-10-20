@@ -22,18 +22,17 @@
 
 ## A. 你明确要求过，但这一轮我没有执行
 
-### A1. 没有推送到 GitHub 的 `beta` 分支（最严重的一条）
+### A1. ~~没有推送到 GitHub 的 `beta` 分支~~ → 已推送（2026-10-20 补推完成）
 
 | 项 | 事实 |
 | --- | --- |
 | 约定流程 | checkout `beta` → `git merge --ff-only test` → 打附注标签 → `git push origin HEAD:beta` → `git push origin <tag>` → 用 `git rev-list --left-right --count` 校验与 `origin/beta` 同步 |
-| 实际做了什么 | 只在本地 `beta` 分支提交 `18c3999`（v1.16 文档首版）与 `a3f30f7`（本清单），并本地打附注标签 `v1.16` |
-| 实际没做什么 | 没有合并 `test`、没有推送分支、没有推送标签、没有做同步校验（推送已尝试一次并失败，见下） |
-| 当前证据 | `git branch -vv` → `* beta a3f30f7 [origin/beta: ahead 3]`；本地标签 `v1.16` 已指向 `a3f30f7` |
-| 实际尝试过 | 2026-10-20 执行 `git push origin HEAD:beta`，**失败**：`fatal: unable to access 'https://github.com/yangguangdijia/xingshu-matrix.git/': Failed to connect to github.com port 443 after 21123 ms: Could not connect to server`（退出码 128） |
-| 阻塞原因 | 本机到 `github.com:443` 不可达（`git ls-remote` 同样在 30 秒超时）；与本轮改动无关，属网络环境问题 |
+| 当前状态 | **已推送成功（2026-10-20 补推）**：`36cca24..dac8dfc  HEAD -> beta`，标签 `v1.16` 已推送到远端 |
+| 同步校验 | `git fetch origin && git rev-list --left-right --count origin/beta...HEAD` → `0  0`（远端与本地完全一致）；`origin/beta` = `dac8dfc` |
+| 首次推送失败记录（保留） | 2026-10-20 首推 `git push origin HEAD:beta` 返回 128：`fatal: unable to access 'https://github.com/yangguangdijia/xingshu-matrix.git/': Failed to connect to github.com port 443 after 21123 ms: Could not connect to server`；网络恢复后重试即成功，与代码无关 |
+| 仍然没做的 | `git merge --ff-only test` 未执行（`test` 分支停在 `36cca24`，与 `beta` 已分叉，需你确认是否合并）；标签推送本身已完成 |
 
-**补齐方式**（网络恢复后执行，本地提交已就绪）
+**补齐方式**（已完成，仅保留供复核）
 
 ```bash
 # 0) 先确认这台机器能连到 github.com:443
@@ -50,8 +49,9 @@ git push origin v1.16
 git fetch origin && git rev-list --left-right --count origin/beta...HEAD
 ```
 
-> 说明：本地已提交 `a3f30f7`（文档）与 `18c3999`（v1.16 首版），`v1.16` 标签已指向 `a3f30f7`；
-> 唯一缺的动作就是"推上去"。代理可用时应设置 `HTTPS_PROXY` 后重试，不要重复提交。
+> 结果：`HEAD:beta` 与 `v1.16` 均已推送（远端 tag `refs/tags/v1.16` → commit `dac8dfc`）。
+> 剩余可选项：`git merge --ff-only test`——`test` 分支当前在 `36cca24`，`beta` 已领先 4 个提交，
+> 直接 ff-only 会失败，需先决定是否把 `test` 快进到 `beta`（`git checkout test && git merge --ff-only beta && git push origin test`）。
 
 ### A2. 没有做多分辨率浏览器实测
 
@@ -104,10 +104,10 @@ rm -rf "C:/Users/jiangpeng/AppData/Local/go-build"                             #
 | 步骤 | 约定 | 实际 |
 | --- | --- | --- |
 | 1 | 审查并测试改动 | 做了（Go + Node） |
-| 2 | `merge --ff-only test` | **未做**（`test` 分支在 `36cca24`，与当前 beta 有分叉风险） |
+| 2 | `merge --ff-only test` | **未做**（`test` 停在 `36cca24`，比 `beta` 落后 4 个提交；方向应是 `test` 快进到 `beta`） |
 | 3 | 打附注标签 | 做了（`v1.16`） |
-| 4 | 推送 `HEAD:beta` 与标签 | **未做** |
-| 5 | 用 `git rev-list` 校验同步 | **未做** |
+| 4 | 推送 `HEAD:beta` 与标签 | **已做**（`36cca24..dac8dfc` + `[new tag] v1.16`） |
+| 5 | 用 `git rev-list` 校验同步 | **已完成**：`0  0` |
 
 ### A5. 演示数据清理的验收没有继续推进
 
@@ -213,5 +213,5 @@ Prometheus / Loki / Elasticsearch / Alertmanager / Jaeger / Tempo / Jenkins / Ka
 
 ## E. 一句话总结
 
-**已经做完的是"文档与版本对齐 + 一处真实 CI 缺陷修复"；没做完的是"推送与浏览器验收"（你定的完成标准里还差这两步）和"功能缺口"（oncall 后端、8 个演示页、执行器、真实联调）。**
-下一轮如果要收口，最短路径是：先推送 + 四分辨率实测（把 v1.16 真正交付），再按 C4 的顺序补 `oncall` 与堡垒机接线。
+**已经做完的是"文档与版本对齐 + 一处真实 CI 缺陷修复 + 推送到 beta 并打标签"；还没做完的是"四分辨率浏览器实测"（你定的完成标准里就差这一步）和"功能缺口"（oncall 后端、8 个演示页、执行器、真实联调）。**
+下一轮如果要收口，最短路径是：先做四分辨率实测（把 v1.16 真正交付），再按 C4 的顺序补 `oncall` 与堡垒机接线。
