@@ -54,6 +54,13 @@ def add_dir(tf, path, arc):
             tf.addfile(ti, open(full, "rb"))
 
 
+# 构建前校验：前端静态目录必须完整，缺文件会退化成"无 API 客户端"的演示外壳
+public_dir = os.path.join(root, "app", "public")
+if os.path.isdir(public_dir):
+    files = [f for f in os.listdir(public_dir) if os.path.isfile(os.path.join(public_dir, f))]
+    if len(files) < 10 or "xs-api.js" not in files:
+        sys.exit("packimg: app/public 不完整（%d 个文件，缺 xs-api.js？），拒绝打包" % len(files))
+
 layer = out + ".layer.tar"
 with tarfile.open(layer, "w", format=tarfile.PAX_FORMAT) as tf:
     add_dir(tf, root, ".")
