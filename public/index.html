@@ -3532,7 +3532,7 @@
         };
         f.oninput = sync; f.onchange = sync; sync();
         f.elements.build.onchange = () => { $("anPathLab").textContent = f.elements.build.value === "自定义命令" ? "工作目录" : f.elements.build.value === "Buildpacks" ? "源码目录" : "Dockerfile 路径"; sync(); };
-        f.onsubmit = (ev) => {
+        f.onsubmit = async (ev) => {
           ev.preventDefault();
           const err = $("anerr"), bad = (m, x) => { err.textContent = m; err.hidden = false; x && x.focus(); };
           const name = f.elements.name.value.trim().toLowerCase();
@@ -3543,17 +3543,43 @@
           if (!(port > 0 && port < 65536)) return bad("容器端口需在 1–65535 之间", f.elements.port);
           if (!/^\//.test(f.elements.health.value)) return bad("健康检查路径需以 / 开头", f.elements.health);
           const ns = { dev: f.elements.ns_dev.value, 测试环境: f.elements.ns_test.value, 预发: f.elements.ns_pre.value, 生产: f.elements.ns_prod.value };
-          APPS.push({
-            name, owner: f.elements.owner.value, envs: ["dev", "测试环境", "生产"], last: "—",
-            repo: f.elements.repo.value.trim(), build: f.elements.build.value, path: f.elements.path.value.trim(),
-            cmd: f.elements.cmd.value.trim(), ns, health: f.elements.health.value, port,
-            strategy: f.elements.strategy.value, approver: f.elements.approver.value,
-          });
+          const payload = { name, repo_url: f.elements.repo.value.trim(), branch: "main", dockerfile: f.elements.build.value || "Dockerfile",
+            context_dir: f.elements.path.value.trim() || ".", image_repo: "", envs: [] };
+          if (window.XS && XS.mode === "live") {
+            try { await XS.post("/cicd/applications", payload); await loadApps(); }
+            catch (e2) { return bad(e2.message || "创建失败"); }
+          } else {
+            APPS.push({
+              name, owner: f.elements.owner.value, envs: ["dev", "测试环境", "生产"], last: "—",
+              repo: f.elements.repo.value.trim(), build: f.elements.build.value, path: f.elements.path.value.trim(),
+              cmd: f.elements.cmd.value.trim(), ns, health: f.elements.health.value, port,
+              strategy: f.elements.strategy.value, approver: f.elements.approver.value,
+            });
+          }
           closeAll(); renderDelivery(el);
           toast(`应用 ${name} 已创建，可在流水线中关联该仓库`);
         };
       }
+      // 应用交付：应用来自真实 /cicd/applications
+      async function loadApps() {
+        try {
+          const d = await XS.get("/cicd/applications");
+          const items = Array.isArray(d) ? d : ((d && d.items) || []);
+          APPS.length = 0;
+          items.forEach((a) => APPS.push({
+            id: a.id, name: a.name, owner: a.git_username || "—",
+            envs: (a.envs || []).map((e) => e.env || e.name || "").filter(Boolean),
+            last: a.updated_at ? new Date(a.updated_at).toLocaleString("zh-CN") : "—",
+            repo: a.repo_url, build: a.dockerfile || "Dockerfile", path: a.context_dir || ".",
+            ns: {}, health: "/healthz", port: 8080,
+            strategy: "RollingUpdate", approver: "—",
+          }));
+          APPS._loaded = true; APPS._err = "";
+        } catch (e) { APPS._err = e.message || "应用加载失败"; APPS._loaded = true; }
+      }
+
       function renderDelivery(el) {
+        if (window.XS && XS.mode === "live" && !APPS._loaded) { loadApps().then(() => { if (!cd.app) renderDelivery(el); }); }
         const a = APPS.find((x) => x.name === cd.app);
         if (!a) {
           el.innerHTML = phead("应用", "各应用的运行状态与最近发布；点击应用管理实例与部署") +
