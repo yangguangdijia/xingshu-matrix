@@ -119,7 +119,7 @@ jobs:
 | `working-directory` | `server` | 所有 go 命令必须在 `server/` 下执行，否则 `go build ./...` 找不到 `go.mod` |
 | `go build ./...` | — | 编译全部包，包括 `cmd/matrix-server` 与 `cmd/matrix-agent` |
 | `go vet ./...` | — | 静态检查，`printf` 参数、锁拷贝、无用赋值等问题 |
-| `go test ./...` | — | 当前 6 个包有测试（bastion / cicd / cluster / hosts / middleware / observability），其余为 `[no test files]`，不会失败 |
+| `go test ./...` | — | 当前 7 个包有测试（`cmd/matrix-agent` + bastion / cicd / cluster / hosts / middleware / observability），其余为 `[no test files]`，不会失败 |
 | `node --test` | `tests/frontend/xs-api.test.mjs` | Node 18+ 内置测试运行器；该文件零依赖，无需 `npm i` |
 | 去掉 `npm i jsdom@24` | — | 没有任何测试使用 jsdom，安装只会拖慢 CI 并引入供应链风险 |
 
@@ -144,7 +144,7 @@ jobs:
 ```
 cd server && go build ./...        → 无输出，退出码 0
 cd server && go vet ./...          → 无输出，退出码 0
-cd server && go test ./...         → bastion/cicd/cluster/hosts/middleware/observability 六个包 ok
+cd server && go test ./...         → cmd/matrix-agent + bastion/cicd/cluster/hosts/middleware/observability 七个包 ok
 node --test tests/frontend/xs-api.test.mjs
                                    → tests 5 / pass 5 / fail 0
 ```

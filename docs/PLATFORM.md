@@ -156,6 +156,7 @@ matrix-server (Go)
 | [docs/dev-guide.md](dev-guide.md) | 新增模块、迁移、权限、审批、AI 工具的开发规范 |
 | [docs/backend-architecture.md](backend-architecture.md) | 后端接入方案（初版设计说明） |
 | [docs/PROGRESS.md](PROGRESS.md) | 进度报告：逐页接线矩阵、已完成/部分完成/未开始 |
+| [docs/OUTSTANDING.md](OUTSTANDING.md) | 未完成 / 未落实清单：未推送、未做浏览器实测、缓存未迁移、功能缺口 |
 | [docs/deploy-192.168.6.3.md](deploy-192.168.6.3.md) | 真实集群部署与验收记录（7 个真实故障与解法） |
 
 ## 6. 已实现（截至 v1.16）
@@ -171,7 +172,7 @@ matrix-server (Go)
 **前端**
 
 - 登录页、真实 JWT 登录/刷新/改密/退出，独立 API 客户端 `public/xs-api.js`（base 探测、401 单飞刷新、SSE/WS）。
-- 28 个路由中 **20 个已接真实接口**：总览、应用、集群状态、应用状态、流水线、自动化编排、发布单、监控告警、中间件、日志检索、变更审批、运维审计、Coding、项目管理、团队协作、缺陷总览、智能助手、用户与权限、设置、值班故障（接口 404，见 §7）。
+- 28 个路由中 **19 个真实可用**：总览、应用、集群状态、应用状态、流水线、自动化编排、发布单、监控告警、中间件、日志检索、变更审批、运维审计、Coding、项目管理、团队协作、缺陷总览、智能助手、用户与权限、设置；另有 1 个（值班故障）前端已接但**后端缺失**（接口 404，见 §7），8 个仍为演示数据（见 [PROGRESS.md §6](PROGRESS.md)）。
 - 演示模式：`XS.mode === "live"` 才接管渲染器；后端不可用时保留原演示渲染器并显示「演示模式」徽标。
 
 **已完成真实联调**
@@ -256,7 +257,7 @@ v1.16 起约定以**应用版本**为镜像 tag，差异与治理建议见 [PROG
 
 ```bash
 cd server && go build ./... && go vet ./...      # 编译与静态检查
-cd server && go test ./...                       # 单测：6 个模块包
+cd server && go test ./...                       # 单测：7 个包（含 cmd/matrix-agent）
 node --test tests/frontend/xs-api.test.mjs       # 前端 API 客户端 5 条
 node public/xs-live-core.js                      # 核心适配层 48 条断言
 node --check public/xs-live-ops.js               # 语法检查（ops 无 Node 自测，依赖 window）

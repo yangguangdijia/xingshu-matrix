@@ -26,8 +26,10 @@
   自复核命令与实测输出、已知风险、下一版优先级。
 - **重写 `docs/PLATFORM.md`**：版本对齐 v1.16；补 IAM 部门与用户组、`platform` 层（访问域名 / 运行环境 / 公告）、
   告警规则走集群内 `PrometheusRule`、AI 工具表与写操作确认规则；未实现清单逐条复核后重写。
-- **更新 `README.md`**：版本徽章 v1.16；重写「当前状态」（明确 20/28 页面已接真实接口、值班页后端缺失、
+- **更新 `README.md`**：版本徽章 v1.16；重写「当前状态」（明确 19/28 页面真实可用、值班页后端缺失、
   真实集群已验证）；功能一览加 `[真]/[演]/[缺]` 标注；补目录结构、质量门禁、版本与镜像标签说明、路线图。
+- **新增 `docs/OUTSTANDING.md`**：未完成 / 未落实清单（未推送 beta、未做四分辨率浏览器实测、Go 缓存仍在 C 盘、
+  oncall 后端缺失、8 个演示页、执行器等），并纠正首版报告里"20/7/1"的页面计数错误与"6 个测试包"的漏计。
 - **新增本文件**。
 
 ### 校验（实测）
@@ -36,7 +38,7 @@
 | --- | --- |
 | `cd server && go build ./...` | 通过，无输出 |
 | `cd server && go vet ./...` | 通过，无输出 |
-| `cd server && go test ./...` | bastion / cicd / cluster / hosts / middleware / observability 六个包 `ok` |
+| `cd server && go test ./...` | 7 个包 `ok`（`cmd/matrix-agent` + bastion / cicd / cluster / hosts / middleware / observability） |
 | `node --test tests/frontend/xs-api.test.mjs` | 5 通过 / 0 失败 |
 | `node public/xs-live-core.js` | 48 条断言全部通过 |
 | `node --check public/xs-{api,live-core,live-ops}.js` | 三个文件语法均通过 |

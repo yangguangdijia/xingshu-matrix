@@ -2,11 +2,11 @@
 
 > 统一的云原生运维与研发效能平台 —— 一个入口管好集群、主机、应用交付、可观测、堡垒机与研发协作，并在每个功能里直接调用 AI。
 
-![status](https://img.shields.io/badge/version-v1.16-2f6bff) ![deploy](https://img.shields.io/badge/deploy-K8s%20%7C%20Docker%20%7C%20物理机-0b1a33) ![api](https://img.shields.io/badge/API-237%20routes-0b1a33) ![pages](https://img.shields.io/badge/pages-20%2F28%20live-3F8F1F)
+![status](https://img.shields.io/badge/version-v1.16-2f6bff) ![deploy](https://img.shields.io/badge/deploy-K8s%20%7C%20Docker%20%7C%20物理机-0b1a33) ![api](https://img.shields.io/badge/API-237%20routes-0b1a33) ![pages](https://img.shields.io/badge/pages-19%2F28%20live%20%C2%B7%201%20%E7%BC%BA%E5%90%8E%E7%AB%AF-3F8F1F)
 
 > **技术说明文档**：开发语言、架构、背景、接口逻辑、接口文档索引、已实现与未实现清单见 [docs/PLATFORM.md](docs/PLATFORM.md)。后端为 Go 1.23（`server/`），接口文档在 `docs/api/`。
 >
-> **进度与版本**：逐页接线矩阵、已完成/部分完成/未开始清单见 [docs/PROGRESS.md](docs/PROGRESS.md)；版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+> **进度与版本**：逐页接线矩阵、已完成/部分完成/未开始清单见 [docs/PROGRESS.md](docs/PROGRESS.md)；未完成与未落实清单见 [docs/OUTSTANDING.md](docs/OUTSTANDING.md)；版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -100,7 +100,7 @@
 - **后端可编译、可测试**：237 条路由、34 张表、13 个迁移、50 个权限点、7 类审批；`go build ./...`、`go vet ./...` 全部通过，`go test ./...` 中 bastion / cicd / cluster / hosts / middleware / observability 六个模块测试通过。
 - **8 个业务模块全部有真实执行链路**：cluster（client-go 直连）、hosts（WebSocket Agent）、bastion（SSH 代理 + 录像 + 命令审计）、observability（Prometheus/Loki/ES/Jaeger/Tempo/Alertmanager）、cicd（K8s Job + Kaniko + Helm）、middleware（Kafka/RabbitMQ/RocketMQ/SQL/Redis）、automation、devcenter。
 - **AI 嵌到操作里**：12 个 Function Calling 工具，3 个写工具（`k8s_scale_deployment`、`hosts_exec`、`cicd_run_pipeline`）必须用户二次确认，生产环境继续走审批；告警规则、创建工作负载、创建用户、部门/用户组、接入集群等对话框均可 AI 生成。
-- **前端 28 个页面中 20 个已接真实接口**（明细见 [docs/PROGRESS.md](docs/PROGRESS.md) §6）。
+- **前端 28 个页面中 19 个真实可用**，另有 1 个（值班故障）前端已接但后端缺失（明细见 [docs/PROGRESS.md](docs/PROGRESS.md) §6）。
 - **已在真实集群验证**：`192.168.6.3` 三节点，`https://xingshu-matrix.com` 入口，登录 → 强制改密 → 用户/角色/集群/主机/审批/审计接口全部 200（记录见 [docs/deploy-192.168.6.3.md](docs/deploy-192.168.6.3.md)）。
 
 **还没做到的**
@@ -227,7 +227,7 @@ Makefile                 build / test / vet / run / docker / package
 
 ```bash
 cd server && go build ./... && go vet ./...   # 通过
-cd server && go test ./...                    # 6 个模块包 ok（bastion/cicd/cluster/hosts/middleware/observability）
+cd server && go test ./...                    # 7 个包 ok（cmd/matrix-agent + bastion/cicd/cluster/hosts/middleware/observability）
 node --test tests/frontend/xs-api.test.mjs    # 5 通过
 node public/xs-live-core.js                   # 48 条断言全部通过
 ```

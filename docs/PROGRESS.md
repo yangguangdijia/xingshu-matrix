@@ -11,7 +11,7 @@
 
 平台从「前端原型 + 预览版后端」推进到了**可在真实 K8s 集群部署、核心运维链路真实可用的内测版**：
 后端 8 个业务模块 + 核心 10 个包全部可编译、单测通过（`go build`/`go vet`/`go test` 实测全绿），
-前端 28 个页面中 **20 个已接真实接口、8 个仍是演示数据**，
+前端 28 个页面中 **19 个真实可用、1 个前端已接但后端缺失（值班故障）、8 个仍是演示数据**，
 并有 1 个页面（值班故障）**前端已接接口但后端模块不存在**，是本版本最突出的半成品。
 已有真实集群部署（192.168.6.3 三节点）与真实 HTTP 验收记录。
 
@@ -24,8 +24,8 @@
 | 维度 | 完成度 | 判定依据 |
 | --- | --- | --- |
 | 后端 API 与持久化 | **90%** | 237 条路由、34 张表、13 个迁移文件、50 个权限点、7 类审批；全部文件编译通过 |
-| 后端单元测试 | **60%** | 6 个模块有测试（bastion/cicd/cluster/hosts/middleware/observability），core 包（auth/rbac/users/settings/approval/ai/audit）无测试 |
-| 前端页面接线 | **71%（20/28）** | `public/index.html` 的 28 个路由键中 20 个由 `xs-live-core.js`/`xs-live-ops.js` 接管真实接口 |
+| 后端单元测试 | **60%** | 7 个包有测试（`cmd/matrix-agent` + bastion/cicd/cluster/hosts/middleware/observability），core 包（auth/rbac/users/settings/approval/ai/audit）无测试 |
+| 前端页面接线 | **68%（19/28）** | 28 个路由键中 19 个真实可用；另 1 个（oncall）已由 `xs-live-ops.js` 接管但后端缺失 |
 | 前端自动化测试 | **40%** | `xs-api.test.mjs` 5 条用例通过、`xs-live-core.js` 自测 48 条通过；`xs-live-ops.js` 无 Node 自测；浏览器冒烟需手工跑 |
 | 部署交付物 | **85%** | Dockerfile / compose / K8s 清单 / Istio 网关 / 物理机脚本 / 离线镜像包齐备；缺 Helm Chart、缺高可用 |
 | 真实环境联调 | **45%** | 平台自身链路（登录/RBAC/审计/集群/主机）已在 192.168.6.3 验证；Prometheus/Loki/ES/Jenkins/Kafka 只用假服务测过 |
@@ -135,7 +135,7 @@
 | **资源专用接口** | 工作负载四类 + 命名空间 + 节点 + 告警规则 | Service / Ingress / ConfigMap / Secret / PVC / HPA 专用接口缺失，只能走 YAML apply | `modules/cluster/module.go:92-120` |
 | **单点登录** | 登录页有「企业 SSO」入口，调用 `/auth/sso/config` | 后端无 OIDC / LDAP | `public/index.html`（SSO 按钮）；`server/internal/auth/` 无 oidc/ldap |
 | **多副本** | 平台 Deployment 2 副本可跑（K8s 清单） | 权限缓存按副本 15 秒，无失效广播；Agent 连接只在单实例内存；在线会话存内存 | `rbac/principal.go`、`modules/hosts/hub.go` |
-| **测试覆盖** | 6 个模块有单测，core 有前端 5 条 + 自测 48 条 | auth/rbac/users/settings/approval/ai/audit 后端无单测；`xs-live-ops.js` 无 Node 自测 | `find server -name '*_test.go'` |
+| **测试覆盖** | 7 个包有单测（含 `cmd/matrix-agent`），core 有前端 5 条 + 自测 48 条 | auth/rbac/users/settings/approval/ai/audit 后端无单测；`xs-live-ops.js` 无 Node 自测 | `find server -name '*_test.go'` |
 
 ---
 
@@ -187,7 +187,10 @@
 | 27 | `iam` | 用户与权限 | **真实**（用户/角色/部门/用户组/登录日志/会话） | 有 |
 | 28 | `settings` | 设置 | **真实**（含访问域名卡片） | 有 |
 
-**统计：真实 20 / 演示 7 / 真实但后端缺失 1。**
+**统计：真实可用 19 / 前端已接但后端缺失 1（`oncall`） / 纯演示 8。**
+
+> 修正记录：v1.16 首次发布时此处误写为「真实 20 / 演示 7 / 后端缺失 1」——把 `oncall` 同时算进真实与缺失，
+> 且漏算 1 个演示页。当前口径已按 28 个路由键逐条复核，详见 [OUTSTANDING.md](OUTSTANDING.md) §0。
 
 ---
 
@@ -197,7 +200,7 @@
 # 1) 后端编译与静态检查（实测：全部通过，无输出）
 cd server && go build ./... && go vet ./...
 
-# 2) 后端单元测试（实测：bastion/cicd/cluster/hosts/middleware/observability 六个包 ok）
+# 2) 后端单元测试（实测：cmd/matrix-agent + bastion/cicd/cluster/hosts/middleware/observability 七个包 ok）
 cd server && go test ./...
 
 # 3) 前端 API 客户端单测（实测：5 通过 / 0 失败）
@@ -234,6 +237,7 @@ bash scripts/smoke-test.sh http://<服务器IP>:8080
 | `docs/PROGRESS.md` | 新增本报告 | 需要一份可复核的进度口径 |
 | `CHANGELOG.md` | 新增，倒序记录 v1.0 → v1.16 | 之前只有 git log，没有面向使用者的版本说明 |
 | `docs/fix-ci-smoke-script.md` | 新增，按「报错问题 / 原因 / 解决方案 / 如何避免」记录 CI 修复 | 项目既有文档惯例 |
+| `docs/OUTSTANDING.md` | 新增，未完成 / 未落实清单（含未推送、未做浏览器实测、缓存未迁移等） | 需要一份"欠账"口径 |
 
 ---
 
