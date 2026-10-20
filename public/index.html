@@ -9248,7 +9248,16 @@
         nodes: () => `<section class="x-panel">${ndTable(K8.nodes.filter((x) => envOk(clEnvOf(x.c))))}
           ${nav.env !== "全部" ? `<p class="x-frac" style="margin:8px 0 0">已按顶栏环境「${esc(nav.env)}」筛选集群节点。</p>` : ""}
           <p class="x-frac" style="margin:8px 0 0">封锁后节点不再接收新 Pod；驱逐会先封锁节点，再迁出 DaemonSet 之外的 Pod。</p></section>`,
-        workloads: () => { const WL = envRows(K8.wl.map((w, i) => ({ w, i })), (x) => x.w.ns); return `<section class="x-panel">${!WL.length ? `<p class="x-empty">「${esc(nav.env)}」环境下暂无工作负载，切换顶栏环境可查看其它环境。</p>` : k8Table(["名称", "类型", "命名空间", "就绪", "镜像", "状态", "更新", "操作"], WL.map(({ w, i }) => { const [s, c] = wlSt(w); return k8Row(` data-w="${i}" tabindex="0" aria-label="查看 ${w.k} ${w.n} 详情"`, [
+        workloads: () => {
+          const WL = envRows(K8.wl.map((w, i) => ({ w, i })), (x) => x.w.ns);
+          const NSS = [...new Set(K8.wl.map((w) => w.ns))].sort();
+          const curNs = (pbar["wlns"] ||= { ns: "" }).ns;
+          return `<div class="x-tbar" data-wlns><span class="x-frac">命名空间</span>
+            <select class="x-select" id="wlNs" aria-label="按命名空间过滤">
+              <option value="">全部（${NSS.length} 个）</option>
+              ${NSS.map((n) => `<option value="${esc(n)}"${n === curNs ? " selected" : ""}>${esc(n)}</option>`).join("")}
+            </select><span class="x-frac" data-wlns-note></span></div>
+            <section class="x-panel">${!WL.length ? `<p class="x-empty">「${esc(nav.env)}」环境下暂无工作负载，切换顶栏环境可查看其它环境。</p>` : k8Table(["名称", "类型", "命名空间", "就绪", "镜像", "状态", "更新", "操作"], WL.map(({ w, i }) => { const [s, c] = wlSt(w); return k8Row(` data-w="${i}" data-ns="${esc(w.ns)}" tabindex="0" aria-label="查看 ${w.k} ${w.n} 详情"`, [
           `<span class="x-name">${esc(w.n)}</span>`, w.k, w.ns, w.k === "CronJob" ? `<span class="x-mono">${esc(w.cron)}</span>` : `${w.ready[0]}/${w.ready[1]}`,
           `<span class="x-mono">${esc(w.img.replace(KREG, ""))}</span>`, pillTag(s, c), `<span class="x-frac">${w.upd}</span>`,
           `<span class="x-kacts">${k8Act("scale", i, "扩缩容", canScale(w), `${w.k} 不支持扩缩容`)}${k8Act("restart", i, "重启", !["Job", "CronJob"].includes(w.k), `${w.k} 无需重启`)}${k8Act("undo", i, "回滚", canRoll(w) && w.revs.length > 1, canRoll(w) ? "暂无历史版本" : `${w.k} 不支持回滚`)}${k8Act("yaml", i, "编辑 YAML")}${k8Act("shell", i, "Shell", !["Job", "CronJob"].includes(w.k), `${w.k} 没有运行中的容器`)}${k8Act("del", i, "删除")}</span>`]); }), false)}${envNote(WL.length, K8.wl.length, "工作负载")}</section>`; },
@@ -9438,6 +9447,21 @@
             };
         },
         workloads: (el) => {
+          const nsSel = $("wlNs");
+          if (nsSel) {
+            const apply = () => {
+              const v = nsSel.value;
+              (pbar["wlns"] ||= {}).ns = v;
+              el.querySelectorAll("tr[data-w]").forEach((tr) => {
+                const ns = tr.dataset.ns || "";
+                tr.hidden = !!v && ns !== v;
+              });
+              const note = el.querySelector("[data-wlns-note]");
+              if (note) note.textContent = v ? `已按命名空间「${v}」过滤` : "";
+            };
+            nsSel.onchange = apply;
+            if (nsSel.value) apply();
+          }
           el.querySelectorAll("tr[data-w]").forEach((tr) => { tr.onclick = () => k8Drawer(+tr.dataset.w, "概览"); tr.onkeydown = (e) => e.key === "Enter" && e.target === tr && k8Drawer(+tr.dataset.w, "概览"); });
           on(el, "scale", (i) => {
             const w = K8.wl[i];
