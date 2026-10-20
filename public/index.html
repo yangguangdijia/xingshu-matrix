@@ -2591,6 +2591,18 @@
         { k: "obs", t: "可观测性", f: [["prom", "Prometheus 地址", "url"], ["log", "日志地址", "url"]] },
         { k: "notify", t: "消息通知", f: [["channel", "通知渠道", "select", ["飞书", "钉钉", "企业微信"]], ["callback", "审批回调地址", "url"]] },
       ];
+      // 本环境真实默认值（来自集群实测）：API Server、Prometheus、日志、告警、域名
+      const SETUP_DEFAULTS = {
+        basic: { name: "星枢 Matrix", domain: "https://xingshu-matrix.com" },
+        scm: { type: "GitHub Enterprise", url: "https://github.com/yangguangdijia/xingshu-matrix" },
+        registry: { url: "docker.io", user: "" },
+        k8s: { name: "k8s-master", api: "https://192.168.6.3:6443" },
+        obs: {
+          prom: "http://kps-kube-prometheus-stack-prometheus.monitoring.svc:9090",
+          log: "http://loki.observability.svc:3100",
+        },
+        notify: { channel: "飞书" },
+      };
       const STORE = "xs-setup";
       const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch { return {}; } })();
       const cfg = saved.cfg || {};
@@ -2598,6 +2610,7 @@
       const isUrl = (v) => { try { return /^https?:$/.test(new URL(v).protocol); } catch { return false; } };
 
       const fieldsHTML = (sec, vals = {}) => `<div class="x-fields">${sec.f.map(([k, label, kind, opts]) => {
+        if (vals[k] === undefined && SETUP_DEFAULTS[sec.k] && SETUP_DEFAULTS[sec.k][k] !== undefined) vals = { ...vals, [k]: SETUP_DEFAULTS[sec.k][k] };
         const v = esc(vals[k] || ""), a = `class="x-input" name="${k}"`;
         const ctl = kind === "select" ? `<select class="x-select" name="${k}">${opts.map((o) => `<option${o === vals[k] ? " selected" : ""}>${o}</option>`).join("")}</select>`
           : kind === "textarea" ? `<textarea ${a} rows="5" placeholder="${opts || "粘贴 kubeconfig 内容"}">${v}</textarea>`
