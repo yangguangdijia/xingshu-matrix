@@ -4902,6 +4902,11 @@
             n.usage ? n.usage.cpu_percent : 0, n.usage ? n.usage.memory_percent : 0, podCount[n.name] || 0,
             n.ready ? "Ready" : (n.status || "NotReady"), {
               ver: n.kubelet_version || "",
+              os: n.os_image || "", kernel: n.kernel_version || "",
+              cri: (n.container_runtime || "").replace(/^\w+:\/\//, ""), arch: n.architecture || "",
+              capCpu: (n.capacity && n.capacity.cpu) || "", capMem: (n.capacity && n.capacity.memory) || "",
+              capDisk: (n.capacity && n.capacity["ephemeral-storage"]) || "", capPods: (n.capacity && n.capacity.pods) || "",
+              ipIn: n.internal_ip || "",
               labels: n.labels || {},
               taints: (n.taints || []).map((t) => t.key + (t.value ? "=" + t.value : "") + ":" + t.effect),
               cordon: !!n.unschedulable,
@@ -9549,11 +9554,27 @@
       // 节点演示数据：按节点名稳定生成规格、Pod、条件与事件
       const ndNs = (c) => (c.startsWith("prod") ? "prod" : c.startsWith("test") ? "test" : "dev");
       const ndSfx = (s) => (obN(s).toString(36) + "k2m9x").slice(1, 6);
+      // 内存/磁盘容量：k8s 给的是 "5058324Ki" / "36674052Ki" 这种字符串
+      function capGi(v) {
+        if (!v) return null;
+        const m = String(v).match(/^([\d.]+)(Ki|Mi|Gi|Ti|K|M|G|T)?$/);
+        if (!m) return null;
+        const n = parseFloat(m[1]), u = m[2] || "";
+        const toGi = { Ki: 1 / 1048576, Mi: 1 / 1024, Gi: 1, Ti: 1024, K: 1 / 1048576, M: 1 / 1024, G: 1, T: 1024, "": 1 / 1073741824 }[u];
+        return toGi ? +(n * toGi).toFixed(1) : null;
+      }
       function ndInfo(x) {
         const h = obN(x.n), m = x.role === "master", arm = x.c.startsWith("dev"), cores = m ? 8 : x.c.startsWith("prod") ? 32 : 16;
-        return { ipOut: x.c.startsWith("prod") ? `47.95.${20 + (h % 200)}.${1 + ((h >> 8) % 250)}` : "—", os: "Ubuntu 22.04.4 LTS", kernel: "5.15.0-105-generic", arch: arm ? "arm64" : "amd64", cri: "containerd 1.7.13",
-          cpuM: arm ? "HUAWEI Kunpeng 920 @ 2.60GHz" : m ? "Intel Xeon Gold 6248R @ 3.00GHz" : "Intel Xeon Platinum 8369B @ 2.70GHz", cores, mem: cores * 4, disk: m ? 200 : 500,
-          diskPct: x.n === "test-sh-node-01" ? 82 : 28 + (h % 40), created: `2024-${pad(3 + (h % 7))}-${pad(1 + ((h >> 3) % 27))} ${pad(9 + (h % 10))}:${pad((h >> 5) % 60)}`,
+        // 真实值优先；拿不到就显示 —，绝不编造
+        const live = window.XS && window.XS.mode === "live";
+        const memGi = capGi(x.capMem), diskGi = capGi(x.capDisk);
+        return { ipOut: "—", os: live ? (x.os || "—") : "Ubuntu 22.04.4 LTS", kernel: live ? (x.kernel || "—") : "5.15.0-105-generic", arch: live ? (x.arch || "—") : (arm ? "arm64" : "amd64"), cri: live ? (x.cri || "—") : "containerd 1.7.13",
+          cpuM: live ? "—" : arm ? "HUAWEI Kunpeng 920 @ 2.60GHz" : m ? "Intel Xeon Gold 6248R @ 3.00GHz" : "Intel Xeon Platinum 8369B @ 2.70GHz",
+          cores: live ? (parseInt(x.capCpu, 10) || null) : cores,
+          mem: live ? memGi : cores * 4,
+          disk: live ? diskGi : (m ? 200 : 500),
+          diskPct: live ? null : (x.n === "test-sh-node-01" ? 82 : 28 + (h % 40)),
+          created: live ? (x.created || "—") : `2024-${pad(3 + (h % 7))}-${pad(1 + ((h >> 3) % 27))} ${pad(9 + (h % 10))}:${pad((h >> 5) % 60)}`,
           pool: m ? "control-plane" : x.labels["node.xingshu.com/pool"] || "general" };
       }
       const ND_APPS = [["api-gateway"], ["order-service"], ["user-center"], ["payment-service"], ["inventory-service"], ["prometheus", "monitoring"], ["notify-service"], ["search-service"], ["ingress-nginx-controller", "ingress-nginx"], ["cart-service"], ["grafana", "monitoring"], ["redis"], ["report-api"], ["mysql"]];
@@ -9608,7 +9629,9 @@
         const body = {
           基本信息: () => `<h3 class="x-h2">基本信息</h3>${dl([["名称", mono(x.n)], ["角色", x.role === "master" ? "master（control-plane）" : "worker"], ["集群", `<a class="x-tlink" href="${clHash(x.c)}">${x.c}</a>`], ["节点池", inf.pool], ["内网 IP", mono(x.ip)], ["外网 IP", mono(inf.ipOut)], ["创建时间", inf.created]])}
             <h3 class="x-h2">系统</h3>${dl([["操作系统", inf.os], ["内核", mono(inf.kernel)], ["架构", inf.arch], ["容器运行时", mono(inf.cri)], ["kubelet", mono(x.ver)], ["kube-proxy", mono(x.ver)]])}
-            <h3 class="x-h2">资源</h3>${dl([["CPU", `${inf.cpuM} · ${inf.cores} 核`], ["内存", `${inf.mem} GiB`], ["磁盘", `${inf.disk} GiB · 已用 ${inf.diskPct}%`], ["Pod 容量", `${x.pods} / 110`]])}`,
+            <h3 class="x-h2">资源</h3>${dl([["CPU", inf.cores ? (inf.cpuM && inf.cpuM !== "—" ? `${inf.cpuM} · ${inf.cores} 核` : `${inf.cores} 核`) : "—"],
+              ["内存", inf.mem ? `${inf.mem} GiB` : "—"],
+              ["磁盘", inf.disk ? `${inf.disk} GiB${inf.diskPct == null ? "（容量；使用率未采集）" : ` · 已用 ${inf.diskPct}%`}` : "—"], ["Pod 容量", `${x.pods} / 110`]])}`,
           监控: () => !demo ? ndOff("监控数据") : `<div class="x-ndhd"><span class="x-frac">当前 CPU ${x.cpu}% · 内存 ${x.mem}% · 磁盘 ${inf.diskPct}%</span><span style="display:inline-flex;gap:6px" role="group" aria-label="时间范围">${["1h", "6h", "24h"].map((r) => `<button class="x-seg" data-ndrg="${r}" aria-pressed="${r === ND.rg}">${r}</button>`).join("")}</span></div>
             <div class="x-ndgrid">${M.map(([k, t, u, sets]) => { const all = sets.flatMap((s) => s[1]); return `<section class="x-panel"><h3 class="x-h2" style="margin:0 0 8px">${t}</h3><div class="x-ochart"><canvas id="ndc-${k}" role="img" aria-label="${t}近 ${ND.rg} 在 ${Math.min(...all)} 到 ${Math.max(...all)}${u ? " " + u : ""} 之间"></canvas></div></section>`; }).join("")}</div>`,
           Pod: () => !demo ? ndOff("Pod 数据") : `<p class="x-frac" style="margin:0 0 8px">${pods.length} 个 Pod · CPU 请求合计 ${(pods.reduce((s, p) => s + p.c, 0) / 1000).toFixed(2)} / ${inf.cores} 核 · 内存请求合计 ${(pods.reduce((s, p) => s + p.m, 0) / 1024).toFixed(1)} / ${inf.mem} GiB</p>`
