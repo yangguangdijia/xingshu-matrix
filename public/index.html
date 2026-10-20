@@ -11563,6 +11563,8 @@
       }
 
       function renderNetpol(el) {
+        // live 模式：策略与拓扑需来自集群 NetworkPolicy/Calico，未接入前不展示演示数据
+        if (window.XS && window.XS.mode === "live") { np.pol = []; np.nodes = []; np.edges = []; }
         const pg = npCur(), key = npHash(pg);
         el.innerHTML = `<div id="npw">${phead(pg.t, pg.sub)}${pg.bar ? bar(key, pg.bar) : ""}${NP_BODY[pg.k]()}</div>`;
         if (pg.bar) bindBar(el, key);
