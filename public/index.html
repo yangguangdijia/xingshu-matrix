@@ -1257,6 +1257,17 @@
       .x-bstat-rec.off { color: var(--x-sub); font-weight: 400; }
       .x-bwrap:fullscreen .x-bstat { background: #161b22; border-color: #30363d; color: #8b949e; }
       .x-bwrap:fullscreen .x-bstat b { color: #c9d1d9; }
+      /* 访问工作台 + 真实 SSH 终端 */
+      .x-bconns { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 12px; }
+      .x-bconn { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--x-line); border-radius: 10px; background: #fff; min-width: 0; }
+      .x-bconn > span:first-child { font-weight: 600; color: var(--x-text); font-size: 13px; }
+      .x-bconn small { color: var(--x-sub); font-size: 12px; line-height: 1.5; word-break: break-word; }
+      .x-bconn em { font-style: normal; color: #8a94a6; font-size: 11px; word-break: break-all; }
+      .x-lterm-out { margin: 10px 0 0; padding: 12px 14px; height: min(56vh, 520px); overflow: auto; border-radius: 8px; background: #0d1117; color: #c9d1d9; font: 13px/1.5 "Geist Mono", ui-monospace, monospace; white-space: pre; tab-size: 8; }
+      .x-lterm-out:focus-visible { outline: 2px solid var(--x-blue); outline-offset: 2px; }
+      .x-lterm-in { width: 100%; height: 40px; margin-top: 8px; padding: 0 12px; border: 1px solid var(--x-line); border-radius: 8px; font: 13px "Geist Mono", ui-monospace, monospace; box-sizing: border-box; }
+      .x-lterm-in:focus { border-color: var(--x-blue); box-shadow: 0 0 0 3px rgba(37, 99, 235, .14); outline: none; }
+      @media (max-width: 600px) { .x-bconns { grid-template-columns: 1fr; } .x-lterm-out { height: 48vh; font-size: 12px; } .x-bwtable th:nth-child(6), .x-bwtable td:nth-child(6) { display: none; } .x-bwtable .x-btn, .x-bwtable .x-act { white-space: nowrap; } }
       .x-desk { position: relative; margin: 0 auto; width: min(100%, calc(66vh * var(--aw) / var(--ah))); aspect-ratio: var(--aw) / var(--ah); border-radius: 8px; overflow: hidden; border: 1px solid #30363d; font-size: 12px; color: #1d2129; user-select: none; }
       .x-desk--win { background: radial-gradient(120% 90% at 70% 30%, #4aa3ff 0%, #1460c9 45%, #0a2f6e 100%); }
       .x-desk--lin { background: linear-gradient(135deg, #3b1d4a, #7a2f5a 55%, #d0573a); }
@@ -1634,7 +1645,7 @@
       @media (max-height: 820px) { .x-ashell { padding-top: 84px; padding-bottom: 6px; } .x-formp { padding: 26px 36px 20px; } .x-ashell { align-content: center; } .x-bcopy { margin-top: 10px; } .x-bhead { font-size: clamp(32px, 3.1vw, 44px); } .x-bpos { margin-top: 18px; font-size: 15px; } .x-feats { margin-top: 30px; } .x-aform > p { margin-bottom: 20px; } .x-aor { margin: 16px 0; } }
       @media (max-width: 1180px) { .x-ashell { grid-template-columns: minmax(0, 1fr) 460px; gap: 40px; padding: 112px 40px 88px; } .x-atop { left: 40px; right: 40px; }  .x-aside { display: none; } }
       @media (max-width: 900px) { .x-ashell { grid-template-columns: minmax(0, 1fr); gap: 40px; padding: 40px 32px 72px; min-height: auto; } .x-formp { justify-self: stretch; max-width: none; } .x-bhead { font-size: 44px; } .x-bpos { font-size: 16px; } .x-bcopy { margin: 20px 0 0; align-self: center; text-align: center; } .x-atop { position: relative; top: auto; left: auto; right: auto; padding: 26px 32px 0; } .x-aslogan { display: none; } }
-      @media (max-width: 600px) { .x-ashell { padding: 22px 18px 40px; } .x-atop { display: flex; padding: 16px 18px 0; } .x-feats { grid-template-columns: 1fr; gap: 14px; max-width: none; } .x-bhead { font-size: 36px; gap: 12px; } .x-bline { width: 40px; height: 3px; margin-top: 8px; } .x-eyebrow { font-size: 14px; letter-spacing: .26em; } .x-feats { margin-top: 30px; gap: 16px; } .x-feats svg { width: 40px; height: 40px; padding: 9px; } .x-formp { padding: 28px 22px 24px; border-radius: 16px; } .x-aform h1 { font-size: 26px; } .x-bcopy { margin-top: 22px; } }
+      @media (max-width: 600px) { .x-ashell { padding: 22px 18px 40px; } .x-atop { display: flex; padding: 16px 18px 0; } .x-feats { grid-template-columns: 1fr; gap: 14px; max-width: none; } .x-bhead { font-size: 36px; gap: 12px; } .x-bline { width: 40px; height: 3px; margin-top: 8px; } .x-eyebrow { font-size: 14px; letter-spacing: .26em; } .x-feats { margin-top: 30px; gap: 16px; } .x-feats svg { width: 40px; height: 40px; padding: 9px; } .x-formp { padding: 28px 22px 24px; border-radius: 16px; } .x-aform h1 { font-size: 26px; } .x-bcopy { margin-top: 22px; } .x-auth .x-arow a, .x-auth .x-arow label { min-height: 44px; } .x-eye { width: 44px; height: 44px; right: 2px; } .x-aerr { line-height: 1.5; } }
       @media (prefers-reduced-motion: reduce) { .x-auth *, .x-auth *::before, .x-auth *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
     </style>
   </head>
@@ -1933,8 +1944,8 @@
           card.innerHTML = `<h1>欢迎登录</h1><p>开启高效的研发运维之旅</p>
             <form class="x-af" id="lf" novalidate aria-describedby="lerr">
               <p class="x-aerr" id="lerr" role="alert" aria-live="polite" hidden></p>
-              <label><span>账号</span><span class="x-ifield"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M4.5 20a7.5 7.5 0 0 1 15 0" /></svg><input class="x-input" name="u" autocomplete="username" placeholder="请输入账号" value="${esc(mem)}" /></span></label>
-              <label><span>密码</span><span class="x-ifield"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg><input class="x-input" name="p" type="password" autocomplete="current-password" placeholder="请输入密码" /><button class="x-eye" type="button" id="leye" aria-label="显示密码" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg></button></span></label>
+              <label for="lu"><span>账号</span><span class="x-ifield"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M4.5 20a7.5 7.5 0 0 1 15 0" /></svg><input class="x-input" id="lu" name="u" autocomplete="username" placeholder="请输入账号" aria-required="true" value="${esc(mem)}" /></span></label>
+              <label for="lp"><span>密码</span><span class="x-ifield"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg><input class="x-input" id="lp" name="p" type="password" autocomplete="current-password" placeholder="请输入密码" aria-required="true" /><button class="x-eye" type="button" id="leye" aria-label="显示密码" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg></button></span></label>
               <div class="x-arow"><label><input type="checkbox" name="r"${mem ? " checked" : ""} />记住我</label><a href="#/login" id="lforgot">忘记密码</a></div>
               <button class="x-btn x-btn--pri" type="submit">登录 <span aria-hidden="true">→</span></button>
             </form>
@@ -1960,9 +1971,14 @@
             } catch (x) { toast((x && x.message) || "企业 SSO 尚未配置，请联系平台管理员"); }
           };
           (mem ? el.p : el.u).focus();
+          [el.u, el.p].forEach((i) => i.addEventListener("input", () => i.removeAttribute("aria-invalid")));
           f.addEventListener("submit", async (e) => {
             e.preventDefault();
-            const bad = (m) => { err.textContent = m; err.hidden = false; el.p.value = ""; el.p.focus(); };
+            const bad = (m) => {
+              err.textContent = m; err.hidden = false;
+              [el.u, el.p].forEach((i) => i.setAttribute("aria-invalid", "true"));
+              el.p.value = ""; el.p.focus();
+            };
             const btn = f.querySelector('button[type="submit"]');
             try {
               const u = el.u.value.trim(), p = el.p.value;
@@ -1999,14 +2015,14 @@
         } else {
           card.innerHTML = `<div class="x-ahead"><svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg-brand" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#2563eb" /><stop offset="1" stop-color="#06b6d4" /></linearGradient></defs><rect width="32" height="32" rx="8" fill="url(#lg-brand)" /><circle cx="16" cy="16" r="10.25" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width=".9" /><circle cx="23.25" cy="8.75" r="1.7" fill="#fff" /><circle cx="8.75" cy="23.25" r="1.25" fill="#fff" fill-opacity=".85" /><path d="M16 7.5Q17.1 14.9 24.5 16Q17.1 17.1 16 24.5Q14.9 17.1 7.5 16Q14.9 14.9 16 7.5Z" fill="#fff" /></svg><b>星枢 Matrix</b></div>
             <h1>修改密码</h1><p>首次登录，请先修改初始密码后再使用平台。</p>
-            <form class="x-af" id="cf" novalidate>
-              <p class="x-aerr" id="cerr" role="alert" hidden></p>
-              <label><span>当前密码</span><input class="x-input" name="cur" type="password" autocomplete="current-password" /></label>
-              <label><span>新密码</span><input class="x-input" name="np" type="password" autocomplete="new-password" aria-describedby="pwrules" />
+            <form class="x-af" id="cf" novalidate aria-describedby="pwrules">
+              <p class="x-aerr" id="cerr" role="alert" aria-live="polite" hidden></p>
+              <label for="cu"><span>当前密码</span><input class="x-input" id="cu" name="cur" type="password" autocomplete="current-password" aria-required="true" /></label>
+              <label for="cn"><span>新密码</span><input class="x-input" id="cn" name="np" type="password" autocomplete="new-password" aria-describedby="pwrules" aria-required="true" />
                 <span class="x-meter" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
                 <span class="x-mlab"><span>密码强度</span><b id="pwlv" aria-live="polite">—</b></span>
                 <ul class="x-rules" id="pwrules">${PW_RULES.map((r) => `<li>${r[0]}</li>`).join("")}<li>不能与初始密码相同</li></ul></label>
-              <label><span>确认新密码</span><input class="x-input" name="cp" type="password" autocomplete="new-password" /></label>
+              <label for="cc"><span>确认新密码</span><input class="x-input" id="cc" name="cp" type="password" autocomplete="new-password" aria-required="true" /></label>
               <button class="x-btn x-btn--pri" type="submit">确认修改</button>
               <div class="x-arow"><span>当前账号：${esc(session ? session.name : "admin")} · ${esc(session ? session.role : ROLE)}</span><a href="#/login" id="cback">返回登录</a></div>
             </form>`;
@@ -2020,9 +2036,10 @@
             lis[PW_RULES.length].classList.toggle("ok", !!p && p !== INIT_PW);
           };
           $("cback").onclick = (e) => { e.preventDefault(); logout(); };
+          [el.cur, el.np, el.cp].forEach((i) => i.addEventListener("input", () => i.removeAttribute("aria-invalid")));
           f.addEventListener("submit", async (e) => {
             e.preventDefault();
-            const bad = (m, x) => { err.textContent = m; err.hidden = false; if (x) x.focus(); };
+            const bad = (m, x) => { err.textContent = m; err.hidden = false; if (x) { x.setAttribute("aria-invalid", "true"); x.focus(); } };
             const btn = f.querySelector('button[type="submit"]');
             try {
               const p = el.np.value;
@@ -2147,7 +2164,10 @@
         const r = routes[current()], on = curLeaf(), t = on ? on.t : r.label;
         // Home (#/, #/sre or no hash) shows the bare brand; every other page is 「<页面名> · 星枢 Matrix」
         document.title = /^#?\/?(sre)?$/.test(location.hash) ? "星枢 Matrix" : t + " · 星枢 Matrix";
-        if (on && on.w.k === "ops" && !on.free && !opsOn() && !(window.XS && XS.mode === "live")) return renderNoCluster($("view"), t, (on && on.s) || r.soon);
+        // 堡垒机页面自带连接器状态（可用/未配置/未授权/未连接），不依赖集群是否已接入，
+        // 否则「访问工作台」在未接集群的环境里永远看不到，也无法如实展示未连接原因。
+        const basPage = current() === "bastion";
+        if (on && on.w.k === "ops" && !on.free && !basPage && !opsOn() && !(window.XS && XS.mode === "live")) return renderNoCluster($("view"), t, (on && on.s) || r.soon);
         if (r.render) {
           if (current() === "cluster" && window.XS && XS.mode === "live" && !k8Synced) {
             syncClusterLive().then(() => render()).catch((err) => { console.warn("sync cluster", err); render(); });
@@ -5850,14 +5870,23 @@
         el.querySelectorAll("[data-sh]").forEach((b) => (b.onclick = () => navGo(b.dataset.sh)));
         secBody(el.lastElementChild, s);
       }
+      // 未接入后端的堡垒机子页：live 模式明确标注为静态示例，避免把演示数据当成生产状态
+      const BAS_UNWIRED = ["accounts", "policy", "cmd", "audit", "mask", "db"];
+      const basStaticNote = (s) => (!basIsLive() || current() !== "bastion" || !BAS_UNWIRED.includes(s.k) ? ""
+        : `<p class="x-frac" style="margin:0 0 10px;padding:8px 12px;border:1px solid #ffe0a3;border-radius:8px;background:#fffaf0">静态示例数据：${esc(s.t)} 尚未接入后端接口，本轮只展示交互，不代表真实生产状态。</p>`);
       function secBody(el, s) {
-        if (s.view) return s.view(el);
+        if (s.view) {
+          s.view(el);
+          const note = basStaticNote(s);
+          if (note && el.firstElementChild) el.firstElementChild.insertAdjacentHTML("afterend", note);
+          return;
+        }
         const d = s.d, key = secHash(s), ci = d.columns.indexOf(s.fc);
         // 资产: 连接 button by protocol (SSH rows also get SFTP)
         const det = (r, j) => (s.k !== "assets" ? "" : `<button class="x-act" data-basdet="${j}">详情</button>`);
         const conn = (r, j) => s.k !== "assets" ? "" : [r[3], ...(r[3] === "SSH" ? ["SFTP"] : [])].map((p, n) =>
           `<button class="x-btn${n ? "" : " x-btn--pri"}" data-conn="${j}" data-proto="${esc(p)}"${r[4] === "在线" ? "" : ' disabled title="资产离线，无法连接"'}>${n ? p : "连接 " + esc(p)}</button>`).join("");
-        el.innerHTML = phead(s.t, s.sub) + bar(key, { q: s.q, fl: s.fc, fo: [...new Set(d.rows.map((r) => r[ci]))], fc: ci, act: s.act, id: "secAct" }) +
+        el.innerHTML = phead(s.t, s.sub) + basStaticNote(s) + bar(key, { q: s.q, fl: s.fc, fo: [...new Set(d.rows.map((r) => r[ci]))], fc: ci, act: s.act, id: "secAct" }) +
           `<div class="x-panel">${tbl([...d.columns, "操作"], d.rows.map((r, j) => [...cells(d.columns, r), `<span class="x-bops">${det(r, j)}${conn(r, j)}<button class="x-btn" data-del="${j}">删除</button></span>`]))}</div>`;
         el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => { d.rows.splice(+b.dataset.del, 1); secBody(el, s); toast("已删除"); }));
         el.querySelectorAll("[data-conn]").forEach((b) => (b.onclick = () => basConnect(d.rows[+b.dataset.conn], b.dataset.proto)));
@@ -5967,6 +5996,14 @@
       }
       // 协议感知的资产录入：不同协议展示不同字段；凭据只提交后端，不写入浏览器存储
       const BAS_META = {};
+      // 资产来源：本轮只有「手动」能真实写入后端；其余来源需要外部集成，登记时按手动写入并记录来源标签
+      const BAS_SRC_HINT = {
+        "手动": "本次登记直接写入 bastion_assets，凭据由后端加密保存。",
+        "Agent 自动发现": "需要 matrix-agent 上报接口（本轮未联调）；登记时按手动写入，并在 options.source 记录来源。",
+        "K8s 同步": "需要集群 Kubernetes API 同步（本轮未联调）；登记时按手动写入，并在 options.source 记录来源。",
+        "云同步": "需要云厂商 API（本轮未联调）；登记时按手动写入，并在 options.source 记录来源。",
+        "批量导入": "需要 CSV 导入接口（本轮未实现）；登记时按手动写入，并在 options.source 记录来源。",
+      };
       const BAS_PROTO = {
         SSH: { port: 22, os: "Linux", extra: "ssh" },
         RDP: { port: 3389, os: "Windows", extra: "rdp" },
@@ -6416,7 +6453,7 @@
         return out;
       }
       function basNewAsset(done) {
-        const st = { proto: "SSH", ai: "" };
+        const st = { proto: "SSH", src: "手动", ai: "" };
         dlg("登记资产", '<form class="x-form" id="baf" novalidate><div id="babody"></div></form>',
           '<button class="x-btn" data-close>取消</button><button class="x-btn" type="button" id="baTest">连接测试</button><button class="x-btn x-btn--pri" type="submit" form="baf">登记资产</button>');
         const draw = () => {
@@ -6428,8 +6465,10 @@
               <label><span class="x-req">主机 / IP</span><input class="x-input x-mono" name="host" autocomplete="off" placeholder="10.0.1.60" /></label></div>
             <div class="x-row2"><label><span class="x-req">端口</span><input class="x-input" name="port" inputmode="numeric" value="${P.port}" /></label>
               <label><span>环境</span><select class="x-select" name="env">${opt(ENV_TAGS.map((t) => t[0]), "生产")}</select></label></div>
-            <div class="x-row2"><label><span>资产组</span><input class="x-input" name="group" list="bagroup" placeholder="如 Web 集群" autocomplete="off" /><datalist id="bagroup">${[...new Set(adm("资产").rows.map((r) => basMeta(r).g))].map((g) => `<option value="${esc(g)}"></option>`).join("")}</datalist></label>
-              <label><span>标签（key=value，空格分隔）</span><input class="x-input x-mono" name="lbl" placeholder="team=infra region=sh" autocomplete="off" /></label></div>
+            <div class="x-row2"><label><span>资产来源</span><select class="x-select" name="source">${opt(["手动", "Agent 自动发现", "K8s 同步", "云同步", "批量导入"], st.src || "手动")}</select>
+                <span class="x-frac" id="basrchint" style="display:block;margin-top:4px">${esc(BAS_SRC_HINT[st.src || "手动"])}</span></label>
+              <label><span>资产组</span><input class="x-input" name="group" list="bagroup" placeholder="如 Web 集群" autocomplete="off" /><datalist id="bagroup">${[...new Set(adm("资产").rows.map((r) => basMeta(r).g))].map((g) => `<option value="${esc(g)}"></option>`).join("")}</datalist></label></div>
+            <label><span>标签（key=value，空格分隔）</span><input class="x-input x-mono" name="lbl" placeholder="team=infra region=sh" autocomplete="off" /></label>
             ${st.proto === "SSH" ? `<label><span>主机指纹（留空则首次连接信任，TOFU）</span><input class="x-input x-mono" name="fingerprint" placeholder="ssh-ed25519 AAAAC3Nz..." autocomplete="off" /></label>
               <div class="x-row2"><label><span>跳转网关（选填）</span><input class="x-input" name="gateway" placeholder="bastion.internal:22" autocomplete="off" /></label>
                 <label class="x-switch" style="align-self:end"><input type="checkbox" role="switch" name="sftp" checked /> 允许 SFTP 文件传输</label></div>` : ""}
@@ -6448,6 +6487,11 @@
           const f = $("baf"), err = $("baerr");
           f.onchange = (e) => {
             if (e.target.name === "proto") { st.proto = e.target.value; draw(); }
+            if (e.target.name === "source") {
+              st.src = e.target.value;
+              const h = $("basrchint");
+              if (h) h.textContent = BAS_SRC_HINT[st.src] || "";
+            }
             if (e.target.name === "auth") {
               const sec = f.elements.secret;
               sec.type = e.target.value === "私钥" ? "file" : "password";
@@ -6472,7 +6516,7 @@
               ? `<p class="x-frac" style="margin:8px 0 0">连接测试：将按 ${esc(st.proto)} 连接 <b>${esc(host)}:${esc(port)}</b>。当前环境未接入真实资产网络，测试仅校验参数格式，不做真实探测。</p>`
               : `<p class="x-err" style="margin:8px 0 0">先填写主机与端口再测试。</p>`;
           };
-          $("baf").onsubmit = (e) => {
+          $("baf").onsubmit = async (e) => {
             e.preventDefault();
             const g = (k) => (f.elements[k] ? f.elements[k].value.trim() : "");
             const bad = (m, el) => { err.textContent = m; err.hidden = false; el && el.focus(); };
@@ -6484,20 +6528,53 @@
             if ((st.proto === "MySQL" || st.proto === "PostgreSQL") && !g("database")) return bad("数据库协议需要填写库名", f.elements.database);
             if (!g("user")) return bad("请填写登录用户名", f.elements.user);
             if (!g("secret")) return bad("请填写凭据，或选择私钥文件", f.elements.secret);
-            if (adm("资产").rows.some((r) => r[0] === name || r[1] === host)) return bad("同名资产或相同地址已存在", f.elements.name);
+            if (!basIsLive() && adm("资产").rows.some((r) => r[0] === name || r[1] === host)) return bad("同名资产或相同地址已存在", f.elements.name);
             const secret = f.elements.secret.value;
-            BAS_META[name] = {
-              group: g("group") || "未分组", env: g("env"), labels: g("lbl"),
-              fingerprint: g("fingerprint"), gateway: g("gateway"), sftp: !!(f.elements.sftp && f.elements.sftp.checked),
+            const optsIn = {
+              source: st.src, group: g("group"), labels: g("lbl"),
+              gateway: g("gateway"), sftp: !!(f.elements.sftp && f.elements.sftp.checked),
               domain: g("domain"), security: g("security"), res: g("res"),
               depth: g("depth"), readonly: !!(f.elements.readonly && f.elements.readonly.checked),
               database: g("database"), tls: g("tls"),
-              user: g("user"), auth: g("auth"), secretMask: secret ? "******" : "",
             };
-            const row = [name, host, BAS_PROTO[st.proto].os, st.proto, "在线"];
+            Object.keys(optsIn).forEach((k) => { if (optsIn[k] === "" || optsIn[k] === false) delete optsIn[k]; });
+            BAS_META[name] = { ...optsIn, env: g("env"), user: g("user"), auth: g("auth"), secretMask: secret ? "******" : "" };
+            const submit = f.querySelector('button[type="submit"]');
+            if (basIsLive()) {
+              if (submit) { submit.disabled = true; submit.textContent = "提交中…"; }
+              try {
+                const protoKey = st.proto === "PostgreSQL" ? "postgres" : st.proto.toLowerCase();
+                const envKey = { "生产": "prod", "预发": "pre", "测试": "test", "开发": "dev" }[g("env")] || "dev";
+                const created = await XS.post("/bastion/assets", {
+                  name, host, port,
+                  protocol: protoKey,
+                  env: envKey,
+                  description: [g("group"), g("lbl")].filter(Boolean).join(" · "),
+                  host_key: st.proto === "SSH" ? g("fingerprint") : "",
+                  options: optsIn,
+                });
+                await XS.post("/bastion/accounts", {
+                  asset_id: created.id,
+                  name: (g("user") || "default") + "@" + name,
+                  username: g("user"),
+                  auth_type: g("auth") === "私钥" ? "private_key" : "password",
+                  secret,
+                });
+                await basLiveAssets(true);
+                closeAll();
+                toast(`已登记 ${st.proto} 资产 ${name}：资产与账号已写入后端，凭据由后端加密保存`);
+                done && done();
+              } catch (x) {
+                if (submit) { submit.disabled = false; submit.textContent = "登记资产"; }
+                console.warn(x);
+                return bad((x && x.message) || "后端拒绝了这次登记", f.elements.name);
+              }
+              return;
+            }
+            const row = [name, host, BAS_PROTO[st.proto].os, st.proto, st.src === "手动" ? "在线" : "待探测"];
             adm("资产").rows.push(row);
             closeAll();
-            toast(`已登记 ${st.proto} 资产 ${name}（凭据已提交后端，前端不保留）`);
+            toast(`已登记 ${st.proto} 资产 ${name}（静态预览：未提交后端）`);
             done && done();
           };
         };
@@ -6526,24 +6603,171 @@
         if (!out.name && ip) { out.name = "host-" + ip[1].replace(/\./g, "-"); hit.push("名称 host-" + ip[1].replace(/\./g, "-")); }
         return { ...out, hit: hit.join("、") };
       }
-      // 连接器状态：SSH 需要后端 WebSocket，RDP/VNC 需要 guacd；前端没有对应通道时为 false
-      const BAS_CONN = () => ({ ssh: false, sftp: false, rdp: false, vnc: false, mysql: false, postgresql: false, redis: false });
+      // 连接器状态：只有后端真实响应才标记「可用」；静态预览、未部署、无权限分别如实显示，不伪造成功
+      const BAS_CONN_STATE = {
+        ssh: ["未探测", "尚未探测后端 bastion 模块"],
+        guacd: ["未探测", "尚未探测 guacd 协议代理"],
+        db: ["未配置", "MySQL / PostgreSQL 代理尚未实现，仅可登记资产"],
+        at: "", live: false,
+      };
+      const BAS_PILL = { 可用: "x-green", 未配置: "x-grey", 未授权: "x-orange", 未连接: "x-grey", 无法确认: "x-orange", 未探测: "x-grey" };
+      const basIsLive = () => !!(window.XS && window.XS.mode === "live");
+      // live 数据缓存：授权资产（Grants）与已登记资产，避免每次重绘都打后端
+      const BAS_LIVE = { assets: null, grants: null, at: 0, err: "", loading: null };
+      async function basProbeConnectors() {
+        const live = basIsLive();
+        BAS_CONN_STATE.live = live;
+        BAS_CONN_STATE.db = ["未配置", "MySQL / PostgreSQL 代理尚未实现，仅可登记资产"];
+        if (!live) {
+          BAS_CONN_STATE.ssh = ["未连接", "静态预览未探测后端；接入 /api/v1 后自动探测"];
+          BAS_CONN_STATE.guacd = ["未连接", "静态预览未探测 guacd；接入后端后自动探测"];
+          BAS_CONN_STATE.at = basNow();
+          return BAS_CONN_STATE;
+        }
+        try {
+          const list = await XS.get("/bastion/my/assets");
+          BAS_LIVE.grants = Array.isArray(list) ? list : [];
+          BAS_LIVE.at = Date.now();
+          BAS_CONN_STATE.ssh = BAS_LIVE.grants.length
+            ? ["可用", `WebSocket /bastion/sessions/ssh/ws · 已授权 ${BAS_LIVE.grants.length} 条资产/账号`]
+            : ["可用", "后端通道已就绪，但当前账号没有生效的授权规则"];
+        } catch (x) {
+          BAS_LIVE.grants = null;
+          const denied = x && (x.status === 401 || x.status === 403);
+          BAS_CONN_STATE.ssh = denied
+            ? ["未授权", "当前账号缺少 bastion:connect 或会话已失效"]
+            : ["未连接", (x && x.message) || "后端不可达"];
+        }
+        try {
+          const h = await XS.get("/bastion/guacd/health");
+          BAS_CONN_STATE.guacd = h && h.reachable
+            ? ["可用", `guacd ${h.addr || ""} · ${h.latency_ms || 0} ms`]
+            : ["未配置", `guacd 不可达：${(h && h.addr) || "地址未知"}`];
+        } catch (x) {
+          BAS_CONN_STATE.guacd = ["无法确认", (x && x.message) || "guacd 健康检查失败"];
+        }
+        BAS_CONN_STATE.at = basNow();
+        return BAS_CONN_STATE;
+      }
+      async function basLiveAssets(force) {
+        if (!basIsLive()) { BAS_LIVE.assets = null; return null; }
+        if (!force && BAS_LIVE.assets) return BAS_LIVE.assets;
+        try {
+          const p = await XS.get("/bastion/assets", { size: 200 });
+          BAS_LIVE.assets = (p && p.items) || [];
+          BAS_LIVE.err = "";
+        } catch (x) {
+          BAS_LIVE.assets = null;
+          BAS_LIVE.err = (x && x.message) || "资产列表读取失败";
+        }
+        return BAS_LIVE.assets;
+      }
+      const BAS_CONN = () => ({
+        ssh: BAS_CONN_STATE.ssh[0] === "可用",
+        // 后端 bastion 只提供 SSH WebSocket，SFTP 文件传输接口本轮未实现
+        sftp: false,
+        rdp: BAS_CONN_STATE.guacd[0] === "可用",
+        vnc: BAS_CONN_STATE.guacd[0] === "可用",
+        mysql: false, postgresql: false, redis: false,
+      });
       function basNoConnector(host, proto) {
-        const need = { RDP: "guacd 协议代理（远程桌面）", VNC: "guacd 协议代理（VNC）", SFTP: "后端 bastion 模块 + WebSocket 通道", SSH: "后端 bastion 模块 + WebSocket 通道" }[proto] || "对应协议代理";
+        const need = { RDP: "guacd 协议代理（远程桌面）", VNC: "guacd 协议代理（VNC）", SFTP: "后端 SFTP 文件传输接口（本轮未实现）", SSH: "后端 bastion 模块 + WebSocket 通道", MySQL: "MySQL 协议代理", PostgreSQL: "PostgreSQL 协议代理" }[proto] || "对应协议代理";
+        const st = /RDP|VNC/.test(proto) ? BAS_CONN_STATE.guacd : /MySQL|PostgreSQL/.test(proto) ? BAS_CONN_STATE.db : BAS_CONN_STATE.ssh;
         dlg(`无法连接 ${esc(host)} · ${esc(proto)}`, `<div class="x-form">
-          <p class="x-aerr" role="alert">连接器未配置：${esc(need)} 未部署，本次没有建立会话，也没有写入审计。</p>
-          <dl class="x-sum"><dt>需要组件</dt><dd>${esc(need)}</dd><dt>后端路径</dt><dd class="x-mono">/api/v1/bastion/connect</dd><dt>当前状态</dt><dd>未连接</dd></dl>
-          <p class="x-frac" style="margin:0"></p></div>`,
+          <p class="x-aerr" role="alert">连接器未就绪：${esc(need)} 当前状态为「${esc(st[0])}」，本次没有建立会话，也没有写入审计。</p>
+          <dl class="x-sum"><dt>需要组件</dt><dd>${esc(need)}</dd><dt>连接器状态</dt><dd>${pillTag(st[0], BAS_PILL[st[0]] || "x-grey")} ${esc(st[1])}</dd><dt>后端路径</dt><dd class="x-mono">/api/v1/bastion/sessions/ssh/ws</dd><dt>探测时间</dt><dd>${esc(BAS_CONN_STATE.at || "—")}</dd></dl>
+          <p class="x-frac" style="margin:0">RDP / VNC 需要先部署 guacd 并把 MATRIX_GUACD_ADDR 指向它；MySQL / PostgreSQL 的协议代理本轮未实现。</p></div>`,
           '<button class="x-btn" data-close>知道了</button>');
       }
       function basConnect(r, proto) {
-        if (!demo && !BAS_CONN()[proto.toLowerCase()]) return basNoConnector(r[0], proto);
+        const live = basIsLive();
+        if (!BAS_CONN()[proto.toLowerCase()]) return basNoConnector(r[0], proto);
+        if (live) return basLiveConnect(r, proto);
         if (r[4] !== "在线") return toast(`${r[0]} 离线，无法连接`);
         const accs = basAccts(r), go = (u) => govGate(r, u, () => { closeAll(); proto === "SFTP" ? basSftp(r[0], u) : basOpen(r, u, proto); });
         if (accs.length < 2) return go(accs[0][0]);
         dlg(`连接 ${esc(r[0])} · ${esc(proto)}`, `<form class="x-form" id="bacf"><p class="x-frac" style="margin:0">选择登录账号（${esc(r[1])}）</p>${accs.map((a, i) => `<label class="x-bacc"><input type="radio" name="acct" value="${esc(a[0])}"${i ? "" : " checked"} /> <b>${esc(a[0])}</b>${pillTag(a[2], PILL[a[2]] || "x-grey")}</label>`).join("")}</form>`,
           '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="bacf">连接</button>');
         $("bacf").onsubmit = (e) => { e.preventDefault(); go($("bacf").elements.acct.value); };
+      }
+      // live：授权来自 GET /bastion/my/assets（asset_id + account_id），直接建立真实 WebSocket 会话
+      function basLiveConnect(r, proto) {
+        if (proto !== "SSH") return basNoConnector(r[0], proto);
+        const grants = (BAS_LIVE.grants || []).filter((g) => g.asset_name === r[0]);
+        if (!grants.length) {
+          dlg(`未授权 ${esc(r[0])}`, `<div class="x-form"><p class="x-aerr" role="alert">当前账号在「授权规则」里没有 ${esc(r[0])} 的生效授权，本次不会建立会话。</p><dl class="x-sum"><dt>资产</dt><dd>${esc(r[0])} · ${esc(r[1])}</dd><dt>所需条件</dt><dd>bastion:connect 权限 + 生效的授权规则 + 环境范围允许</dd><dt>授权来源</dt><dd class="x-mono">GET /api/v1/bastion/my/assets</dd></dl></div>`, '<button class="x-btn" data-close>知道了</button>');
+          return;
+        }
+        const go = (g) => { closeAll(); basLiveSSH(g); };
+        if (grants.length < 2) return go(grants[0]);
+        dlg(`连接 ${esc(r[0])} · SSH`, `<form class="x-form" id="bacf"><p class="x-frac" style="margin:0">选择登录账号（授权来自后端，凭据由后端解密后交给 SSH 客户端）</p>${grants.map((g, i) => `<label class="x-bacc"><input type="radio" name="acct" value="${i}"${i ? "" : " checked"} /> <b>${esc(g.account_name || g.username)}</b><span class="x-frac">${esc(g.username)} · ${esc(g.env || "env 未标注")}</span></label>`).join("")}</form>`,
+          '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="bacf">连接</button>');
+        $("bacf").onsubmit = (e) => { e.preventDefault(); go(grants[+$("bacf").elements.acct.value]); };
+      }
+      // 轻量终端屏幕模型：处理 \r 覆盖、\b 退格与整屏清除，剥离 ANSI 转义；不引入 xterm 运行时依赖
+      const basStripAnsi = (t) => t
+        .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+        .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+        .replace(/\x1b[@-Z\\-_]/g, "");
+      function basTermFeed(s, chunk) {
+        if (/\x1b\[[23]J/.test(chunk)) { s.screen = [[]]; s.cx = 0; s.cy = 0; }
+        for (const ch of basStripAnsi(chunk)) {
+          if (ch === "\n") { s.cy++; s.cx = 0; if (!s.screen[s.cy]) s.screen[s.cy] = []; }
+          else if (ch === "\r") s.cx = 0;
+          else if (ch === "\b") s.cx = Math.max(0, s.cx - 1);
+          else if (ch === "\t") s.cx += 8 - (s.cx % 8);
+          else if (ch < " ") continue;
+          else {
+            const line = (s.screen[s.cy] = s.screen[s.cy] || []);
+            while (line.length < s.cx) line.push(" ");
+            line[s.cx] = ch; s.cx++;
+          }
+        }
+        if (s.screen.length > 400) s.screen = s.screen.slice(-300);
+      }
+      const basTermText = (s) => s.screen.map((l) => (l || []).join("").replace(/\s+$/, "")).join("\n");
+      function basTermPaint(s) {
+        const pre = document.querySelector(`[data-lterm="${s.id}"]`);
+        if (!pre) return;
+        pre.textContent = basTermText(s);
+        pre.scrollTop = pre.scrollHeight;
+      }
+      // 真实 SSH 会话：契约 {type:input|resize} ↔ {type:output|error|closed}；失败时如实显示原因，不渲染成功态
+      function basLiveSSH(g) {
+        const s = {
+          live: true, demo: false, id: ++BAS.seq, host: g.asset_name, ip: g.host, proto: "SSH", acct: g.username,
+          os: g.env ? "环境 " + g.env : "SSH", open: true, conn: "connecting", err: "", t0: Date.now(),
+          screen: [[]], cx: 0, cy: 0, ws: null, cols: 120, rows: 32,
+        };
+        BAS.tabs.push(s); BAS.cur = BAS.tabs.length - 1;
+        try {
+          const ws = XS.ws("/bastion/sessions/ssh/ws", { asset: g.asset_id, account: g.account_id, cols: 120, rows: 32 });
+          s.ws = ws;
+          ws.onopen = () => { s.conn = "open"; s.open = true; basTermPaint(s); renderTerm($("view")); };
+          ws.onmessage = (ev) => {
+            let m = null;
+            try { m = JSON.parse(ev.data); } catch (e) { return; }
+            if (m.type === "output" && m.data) basTermFeed(s, m.data);
+            else if (m.type === "error") { s.err = m.data || "会话出错"; basTermFeed(s, "\r\n[错误] " + s.err); }
+            else if (m.type === "closed") { s.open = false; s.conn = "closed"; basTermFeed(s, "\r\n[会话结束] " + (m.data || "")); }
+            basTermPaint(s);
+          };
+          ws.onerror = () => {
+            s.err = s.err || "WebSocket 连接失败：确认后端 /api/v1/bastion/sessions/ssh/ws 可达，且 access_token 有效";
+            s.conn = "failed"; s.open = false;
+            basTermPaint(s); if (location.hash === "#/bastion/term") renderTerm($("view"));
+          };
+          ws.onclose = (e) => {
+            s.open = false;
+            if (s.conn !== "failed") s.conn = "closed";
+            basTermFeed(s, `\r\n[连接已关闭 code=${e.code}]`);
+            basTermPaint(s); if (location.hash === "#/bastion/term") renderTerm($("view"));
+          };
+        } catch (x) {
+          s.conn = "failed"; s.err = (x && x.message) || "无法创建 WebSocket";
+        }
+        if (location.hash === "#/bastion/term") renderTerm($("view")); else location.hash = "#/bastion/term";
+        return s;
       }
       function basOpen(r, acct, proto, quiet) {
         const m = basMeta(r), s = { demo: !!demo, id: ++BAS.seq, host: r[0], ip: r[1], os: m.os, win: r[2] === "Windows", proto, acct, lines: [], hist: [], hi: 0, inp: "", res: "1600×900", open: true, wins: proto === "SSH" ? [] : ["main"], cad: false, clip: "", t0: Date.now(), start: basNow(), user: gMe(), rec: [], wait: null };
@@ -6556,10 +6780,17 @@
         return s;
       }
       function basClose(s, why) {
+        if (!s) return;
+        if (s.ws) { try { s.ws.close(); } catch (e) {} s.ws = null; }
+        const i = BAS.tabs.indexOf(s);
+        if (i >= 0) { BAS.tabs.splice(i, 1); if (i < BAS.cur) BAS.cur--; }
+        if (s.live) {
+          // 真实会话的审计与录像由后端 bastion_sessions / bastion_commands 记录，前端不补写演示行
+          toast(why || `已断开 ${s.acct}@${s.host}（审计由后端记录）`);
+          return;
+        }
         govEnd(s);
         basAudit(s.host, `会话结束 · ${s.proto}（${s.acct}）`);
-        const i = BAS.tabs.indexOf(s);
-        BAS.tabs.splice(i, 1); if (i < BAS.cur) BAS.cur--;
         toast(why || `已断开 ${s.acct}@${s.host}`);
       }
       // 远程桌面: a mock Windows (RDP) or Linux (VNC) desktop
@@ -6622,17 +6853,146 @@
         };
       }
       const basDur = (ms) => { const x = Math.max(0, Math.floor(ms / 1000)), z = (n) => String(n).padStart(2, "0"); return `${z(Math.floor(x / 3600))}:${z(Math.floor(x / 60) % 60)}:${z(x % 60)}`; };
+      // 访问工作台：没有会话时展示连接器状态、可访问资产与最近会话；未连接就如实显示，不用演示数据冒充生产
+      function basWorkbench(el, head) {
+        const live = basIsLive(), C = BAS_CONN_STATE;
+        const conns = [
+          ["SSH 终端", C.ssh, "/bastion/sessions/ssh/ws"],
+          ["远程桌面 RDP", C.guacd, "guacd 协议代理"],
+          ["VNC", C.guacd, "guacd 协议代理"],
+          ["SFTP 文件传输", ["未配置", "后端 SFTP 接口本轮未实现"], "—"],
+          ["SQL 代理", C.db, "—"],
+        ];
+        const protoName = basProtoName;
+        const assets = live
+          ? (BAS_LIVE.assets || []).map((a) => [a.name, a.host, protoName(a.protocol), a.env || "—", "已登记"])
+          : BAS_A.map((x) => [x.n, x.ip, protoName(x.proto[0]), x.env, x.st]);
+        const acctOf = (name) => {
+          if (live) {
+            const g = (BAS_LIVE.grants || []).filter((x) => x.asset_name === name).map((x) => x.username);
+            return g.length ? [...new Set(g)].join(" / ") : "无授权";
+          }
+          const a = BAS_A.find((x) => x.n === name);
+          return a ? a.proto.join(" / ") : "—";
+        };
+        el.innerHTML = head + `
+          <section class="x-panel">
+            <div class="x-btool"><b>连接器状态</b><span class="x-frac">只有「可用」的协议才会真正建立会话；其余状态不产生会话，也不写入审计</span><button class="x-btn" id="bwProbe" style="margin-left:auto">重新探测</button></div>
+            <div class="x-bconns">${conns.map(([n, st, hint]) => `<div class="x-bconn"><span>${esc(n)}</span><div>${pillTag(st[0], BAS_PILL[st[0]] || "x-grey")}</div><small>${esc(st[1])}</small><em>${esc(hint)}</em></div>`).join("")}</div>
+            <p class="x-frac" style="margin:12px 0 0">探测时间：${esc(C.at || "尚未探测")}${live ? ` · 授权条目：${(BAS_LIVE.grants || []).length}` : " · 当前为静态预览，未连接后端"}</p>
+          </section>
+          <section class="x-panel">
+            <div class="x-btool"><b>可访问资产</b><span class="x-frac">${live ? "来自 GET /bastion/my/assets 的生效授权" : "静态预览数据，未连接后端"}</span></div>
+            ${assets.length
+              ? `<div class="x-bwtable">${tbl(["资产", "地址", "协议", "环境", "状态", "授权账号", "操作"], assets.map((r) => [esc(r[0]), `<span class="x-mono">${esc(r[1])}</span>`, esc(r[2]), esc(r[3]), live ? pillTag("已登记", "x-blue") : pillTag(r[4], r[4] === "在线" ? "x-green" : "x-grey"), `<span class="x-mono">${esc(acctOf(r[0]))}</span>`, `<span class="x-bops"><button class="x-btn x-btn--pri" data-bwconn="${esc(r[0])}" data-proto="${esc(r[2])}">连接</button><button class="x-btn" data-bwdet="${esc(r[0])}">详情</button></span>`]))}</div>`
+              : '<p class="x-frac" style="margin:8px 0 0">后端还没有登记资产。先到「资产」页登记，或由管理员导入。</p>'}
+          </section>
+          <section class="x-panel"><div class="x-btool"><b>最近会话</b><span class="x-frac">${live ? "来自 GET /bastion/sessions，需要 bastion:audit" : "静态预览数据"}</span></div><div id="bwSess"><p class="x-frac" style="margin:8px 0 0">加载中…</p></div></section>`;
+        el.querySelectorAll("[data-bwconn]").forEach((b) => (b.onclick = () => {
+          const r = assets.find((x) => x[0] === b.dataset.bwconn);
+          if (r) basConnect(r, b.dataset.proto);
+        }));
+        el.querySelectorAll("[data-bwdet]").forEach((b) => (b.onclick = () => {
+          if (live) {
+            const a = (BAS_LIVE.assets || []).find((x) => x.name === b.dataset.bwdet);
+            if (a) return basLiveAssetDlg(a);
+          }
+          basAssetDrawer(b.dataset.bwdet, () => renderTerm($("view")));
+        }));
+        $("bwProbe").onclick = async () => {
+          $("bwProbe").disabled = true;
+          try { await basProbeConnectors(); await basLiveAssets(true); } catch (e) { console.warn(e); }
+          $("bwProbe").disabled = false;
+          renderTerm($("view")); toast("连接器状态已刷新");
+        };
+        if (!C.at) {
+          basProbeConnectors().then(() => basLiveAssets()).then(() => { if ($("bwProbe")) renderTerm($("view")); }).catch((e) => console.warn(e));
+        }
+        basWorkbenchSessions(live);
+      }
+      async function basWorkbenchSessions(live) {
+        const box = $("bwSess");
+        if (!box) return;
+        if (!live) {
+          const rows = SEC[0].d.rows.slice(0, 6);
+          box.innerHTML = rows.length ? tbl(["时间", "用户", "资产", "命令", "结果"], rows.map((r) => r.map((c) => esc(c)))) : '<p class="x-frac" style="margin:8px 0 0">还没有会话。</p>';
+          return;
+        }
+        try {
+          const p = await XS.get("/bastion/sessions", { size: 6 });
+          const items = (p && p.items) || [];
+          box.innerHTML = items.length
+            ? tbl(["开始时间", "用户", "资产", "账号", "协议", "状态", "录像"], items.map((s) => [esc(String(s.started_at || "").slice(0, 19).replace("T", " ")), esc(s.username), esc(s.asset_name), esc(s.account_user), esc(s.protocol), pillTag(s.status, s.status === "active" ? "x-green" : s.status === "failed" ? "x-red" : "x-grey"), s.has_recording ? "有" : "—"]))
+            : '<p class="x-frac" style="margin:8px 0 0">后端还没有会话记录。</p>';
+        } catch (x) {
+          box.innerHTML = `<p class="x-frac" style="margin:8px 0 0">无法读取会话列表：${esc((x && x.message) || "请求失败")}${x && x.status === 403 ? "（当前账号缺少 bastion:audit）" : ""}</p>`;
+        }
+      }
+      // 真实会话标签：输出由 WebSocket 推送，输入逐键发回后端
+      function basLiveTerm(el, s, head, T) {
+        const st = { connecting: ["连接中", "x-orange"], open: ["已连接", "x-green"], closed: ["已关闭", "x-grey"], failed: ["连接失败", "x-red"] }[s.conn] || ["未知", "x-grey"];
+        el.innerHTML = head + `<section class="x-panel"><div class="x-btabs" role="tablist">${T.map((t, i) => `<div class="x-btab${i === BAS.cur ? " on" : ""}"><button role="tab" aria-selected="${i === BAS.cur}" data-btab="${i}"><i class="${t.open ? "" : "off"}"></i>${esc(t.host)} · ${t.proto}</button><button data-bx="${i}" aria-label="关闭会话 ${esc(t.host)}">×</button></div>`).join("")}</div>
+          <div class="x-bwrap"><div class="x-btool">${pillTag(st[0], st[1])}<span class="x-frac">真实 WebSocket 通道：命令由后端「命令过滤」拦截，会话与录像写入 bastion_sessions</span><button class="x-btn" data-lt="clear" style="margin-left:auto">清屏</button><button class="x-btn x-bdanger" data-lt="off">断开</button></div>
+          <pre class="x-lterm-out" data-lterm="${s.id}" tabindex="0" aria-label="${esc(s.acct)}@${esc(s.host)} 终端输出">${esc(basTermText(s))}</pre>
+          ${s.err ? `<p class="x-aerr" role="alert" style="margin:8px 0 0">${esc(s.err)}</p>` : ""}
+          <input class="x-lterm-in" aria-label="${esc(s.host)} 终端输入" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="点这里输入，Enter 发送，Ctrl+C 中断" />
+          <div class="x-bstat" role="group" aria-label="会话状态"><span>资产<b>${esc(s.host)}</b></span><span>账号<b>${esc(s.acct)}</b></span><span>协议<b>SSH</b></span><span>IP<b>${esc(s.ip || "—")}</b></span><span>时长<b data-bdur="${s.t0}">${basDur((s.open ? Date.now() : (s.t1 ||= Date.now())) - s.t0)}</b></span><span class="x-bstat-rec${s.open ? "" : " off"}">${s.open ? "● 会话录像中" : "● 会话已结束"}</span></div></div></section>`;
+        const out = el.querySelector(".x-lterm-out"), inp = el.querySelector(".x-lterm-in");
+        out.scrollTop = out.scrollHeight;
+        const send = (d) => { if (s.ws && s.ws.readyState === 1) { s.ws.send(JSON.stringify({ type: "input", data: d })); return true; } return false; };
+        inp.onkeydown = (e) => {
+          if (e.isComposing || e.keyCode === 229) return;
+          const k = e.key, ctl = e.ctrlKey && !e.altKey && !e.metaKey;
+          let d = "";
+          if (ctl && k.length === 1) {
+            const c = k.toUpperCase().charCodeAt(0);
+            if (k.toLowerCase() === "c" && getSelection().toString()) return; // 允许复制选中文本
+            if (c >= 64 && c <= 95) d = String.fromCharCode(c - 64);
+          } else if (k === "Enter") d = "\r";
+          else if (k === "Backspace") d = "\x7f";
+          else if (k === "Tab") d = "\t";
+          else if (k === "Escape") d = "\x1b";
+          else if (k === "ArrowUp") d = "\x1b[A";
+          else if (k === "ArrowDown") d = "\x1b[B";
+          else if (k === "ArrowRight") d = "\x1b[C";
+          else if (k === "ArrowLeft") d = "\x1b[D";
+          else if (k === "Home") d = "\x1b[H";
+          else if (k === "End") d = "\x1b[F";
+          else if (k === "Delete") d = "\x1b[3~";
+          else if (k.length === 1 && !e.altKey && !e.metaKey) d = k;
+          if (!d) return;
+          e.preventDefault();
+          if (!send(d)) toast("会话未连接，无法发送");
+        };
+        inp.onpaste = (e) => {
+          const t = (e.clipboardData || window.clipboardData).getData("text");
+          if (!t) return;
+          e.preventDefault();
+          send(t.replace(/\r?\n/g, "\r"));
+        };
+        el.querySelectorAll("[data-lt]").forEach((b) => (b.onclick = () => {
+          if (b.dataset.lt === "clear") { s.screen = [[]]; s.cx = 0; s.cy = 0; basTermPaint(s); out.scrollTop = 0; return; }
+          basClose(s); renderTerm(el);
+        }));
+        el.querySelectorAll("[data-btab]").forEach((b) => (b.onclick = () => { BAS.cur = +b.dataset.btab; renderTerm(el); }));
+        el.querySelectorAll("[data-bx]").forEach((b) => (b.onclick = () => { basClose(T[+b.dataset.bx]); renderTerm(el); }));
+        // 按可视宽度同步 PTY 尺寸，避免长行错位
+        requestAnimationFrame(() => {
+          if (!s.ws || s.ws.readyState !== 1) return;
+          const cols = Math.max(40, Math.min(220, Math.floor(out.clientWidth / 7.8)));
+          const rows = Math.max(12, Math.min(60, Math.floor(out.clientHeight / 19.5)));
+          if (cols !== s.cols || rows !== s.rows) { s.cols = cols; s.rows = rows; s.ws.send(JSON.stringify({ type: "resize", cols, rows })); }
+        });
+      }
       function renderTerm(el) {
         const T = BAS.tabs;
         BAS.tick ||= setInterval(() => document.querySelectorAll("[data-bdur]").forEach((b) => (b.textContent = basDur(Date.now() - +b.dataset.bdur))), 1000);
         if (BAS.cur >= T.length) BAS.cur = Math.max(0, T.length - 1);
-        const s = T[BAS.cur], head = phead("Web 终端", "经堡垒机打开的 SSH 与远程桌面会话，命令按「命令过滤」实时拦截，每个会话记入运维审计", (T[BAS.cur] && T[BAS.cur].demo ? '<span class="x-tag x-orange x-tag--s">演示会话</span>' : "") + '<a class="x-btn x-bfile" href="#/bastion/assets">从资产连接</a>');
-        if (!s) {
-          const on = BAS_A.filter((x) => x.st === "在线" && x.proto.some((q) => ["SSH", "RDP", "VNC"].includes(q))).map((x) => [x.n, x.ip, x.os, x.proto.find((q) => ["SSH", "RDP", "VNC"].includes(q)), x.st]);
-          el.innerHTML = head + `<section class="x-panel"><p class="x-frac" style="margin:0 0 12px">还没有会话。在「资产」中点「连接」，或直接打开：</p><div class="x-btool">${on.map((r) => `<button class="x-btn" data-qc="${esc(r[1])}">${esc(r[0])} · ${esc(r[3])}</button>`).join("")}</div></section>`;
-          el.querySelectorAll("[data-qc]").forEach((b) => (b.onclick = () => { const r = on.find((x) => x[1] === b.dataset.qc); basConnect(r, r[3]); }));
-          return;
-        }
+        const cur = T[BAS.cur];
+        const tag = !cur ? "" : cur.live ? '<span class="x-tag x-green x-tag--s">真实会话</span>' : cur.demo ? '<span class="x-tag x-orange x-tag--s">演示会话</span>' : "";
+        const s = cur, head = phead("Web 终端", "经堡垒机打开的 SSH 与远程桌面会话，命令按「命令过滤」实时拦截，每个会话记入运维审计", tag + '<a class="x-btn x-bfile" href="#/bastion/assets">从资产连接</a>');
+        if (!s) return basWorkbench(el, head);
+        if (s.live) return basLiveTerm(el, s, head, T);
         const ssh = s.proto === "SSH", alt = ssh && BAS.split ? T.find((t) => t.id === BAS.altId && t !== s && t.proto === "SSH") : null, panes = alt ? [s, alt] : [s];
         if (!panes.some((p) => p.id === BAS.fid)) BAS.fid = s.id;
         const act = () => panes.find((p) => p.id === BAS.fid) || s;
@@ -6962,7 +7322,58 @@
           closeAll(); done && done(); toast(isNew ? `已添加资产 ${n}` : `已保存资产 ${n}`);
         };
       }
+      // live 资产详情：只展示后端已持久化字段，不用前端缓存冒充
+      const basProtoName = (p) => ({ ssh: "SSH", rdp: "RDP", vnc: "VNC", mysql: "MySQL", postgres: "PostgreSQL" })[String(p).toLowerCase()] || String(p).toUpperCase();
+      const basEnvName = (e) => ({ prod: "生产", pre: "预发", test: "测试", dev: "开发" })[e] || e || "—";
+      function basLiveAssetDlg(a) {
+        const o = a.options || {};
+        const optRows = Object.keys(o).filter((k) => k !== "source").map((k) => `<dt>${esc(k)}</dt><dd>${esc(String(o[k]))}</dd>`).join("");
+        dlg(`资产 · ${esc(a.name)}`, `<div class="x-form"><dl class="x-sum"><dt>地址</dt><dd class="x-mono">${esc(a.host)}:${esc(String(a.port))}</dd><dt>协议</dt><dd>${esc(basProtoName(a.protocol))}</dd><dt>环境</dt><dd>${esc(basEnvName(a.env))}</dd><dt>说明</dt><dd>${esc(a.description || "—")}</dd><dt>来源</dt><dd>${esc(o.source || "手动")}</dd><dt>主机指纹</dt><dd class="x-mono">${a.host_key ? esc(String(a.host_key).slice(0, 40)) + "…" : "首次连接信任（TOFU）"}</dd><dt>创建时间</dt><dd>${esc(String(a.created_at || "").slice(0, 19).replace("T", " "))}</dd></dl>
+          <h3 class="x-h2">协议参数（options）</h3>${optRows ? `<dl class="x-sum">${optRows}</dl>` : '<p class="x-frac" style="margin:0">该资产没有登记协议专属参数。</p>'}
+          <p class="x-frac" style="margin:12px 0 0">options 只存非敏感配置；密码、私钥、passphrase、kubeconfig 与 token 由后端拒绝写入。</p></div>`, '<button class="x-btn" data-close>关闭</button>');
+      }
+      // live 资产页：数据来自 bastion_assets，状态列不伪造「在线」，只显示「已登记」
+      function basRenderLiveAssets(el) {
+        const items = BAS_LIVE.assets || [];
+        const list = nav.env === "全部" ? items : items.filter((a) => basEnvName(a.env) === nav.env);
+        const rows = list.map((a) => {
+          const proto = basProtoName(a.protocol);
+          return [
+            `<span class="x-name">${esc(a.name)}</span><div class="x-frac x-mono" style="margin-top:2px">${esc(a.host)}:${esc(String(a.port))}</div>`,
+            envTag(basEnvName(a.env)),
+            esc(a.description || "—"),
+            `<span class="x-tags"><span class="x-tag x-grey x-tag--s">${esc(proto)}</span></span>`,
+            "后端登记",
+            pillTag("已登记", "x-blue"),
+            `<span class="x-kacts"><button class="x-btn x-btn--pri" data-liveconn="${esc(a.name)}" data-proto="${esc(proto)}"${proto === "SSH" ? "" : ' disabled title="该协议本轮没有可用连接器"'}>连接</button><button class="x-act" data-liveopen="${esc(a.name)}">详情</button></span>`,
+          ];
+        });
+        el.innerHTML = phead("资产", "来自后端 bastion_assets；凭据由后端加密托管，页面不保存明文") +
+          `<div class="x-panel">${bar("#/bastion/assets", { q: "搜索名称 / IP", fl: "环境", fo: ["生产", "预发", "测试", "开发"], act: "+ 添加资产", id: "basNewA" })}
+          ${!rows.length ? `<p class="x-empty">${items.length ? `「${esc(nav.env)}」环境下暂无资产，切换顶栏环境查看全部。` : "后端还没有登记资产。点「+ 添加资产」登记，或由管理员导入。"}</p>` : tbl(["资产", "环境", "说明", "协议", "来源", "状态", "操作"], rows)}
+          <p class="x-frac" style="margin:8px 0 0">连接器状态：SSH ${esc(BAS_CONN_STATE.ssh[0])} · RDP/VNC ${esc(BAS_CONN_STATE.guacd[0])} · 探测于 ${esc(BAS_CONN_STATE.at || "尚未探测")}。RDP / VNC 需要 guacd 代理；SFTP 与 SQL 代理本轮未实现。</p></div>`;
+        $("basNewA").onclick = () => basNewAsset(() => basLiveAssets(true).then(() => renderBasAssets(el)));
+        el.querySelectorAll("[data-liveconn]").forEach((b) => (b.onclick = () => {
+          const a = items.find((x) => x.name === b.dataset.liveconn);
+          if (a) basConnect([a.name, a.host, "", b.dataset.proto, "已登记"], b.dataset.proto);
+        }));
+        el.querySelectorAll("[data-liveopen]").forEach((b) => (b.onclick = () => {
+          const a = items.find((x) => x.name === b.dataset.liveopen);
+          if (a) basLiveAssetDlg(a);
+        }));
+        if (!BAS_CONN_STATE.at) {
+          basProbeConnectors().then(() => { if (current() === "bastion" && $("basNewA")) renderBasAssets(el); }).catch((e) => console.warn(e));
+        }
+      }
       function renderBasAssets(el) {
+        if (basIsLive()) {
+          if (BAS_LIVE.assets === null) {
+            el.innerHTML = phead("资产", "按环境、资产组与协议纳管主机；凭据由后端托管，页面不保存明文") + `<div class="x-panel"><p class="x-frac" style="margin:0">正在读取后端资产…</p></div>`;
+            basLiveAssets().then(() => renderBasAssets(el)).catch((e) => console.warn(e));
+            return;
+          }
+          return basRenderLiveAssets(el);
+        }
         const all = BAS_A, list = basAEnv();
         const rows = list.map(({ x, i }) => {
           const canConn = ["SSH", "SFTP", "RDP", "VNC"].some((q) => x.proto.includes(q));
@@ -6981,8 +7392,8 @@
           ${!list.length ? `<p class="x-empty">「${esc(nav.env)}」环境下暂无资产，切换顶栏环境或添加资产。</p>` : tbl(["资产", "环境", "资产组", "协议", "来源", "状态", "操作"], rows)}
           ${envNote(list.length, all.length, "资产")}
           <p class="x-frac" style="margin:8px 0 0">SSH 使用后端 WebSocket 通道；RDP / VNC 需要 guacd 代理。</p>
-          <p class="x-frac" style="margin:4px 0 0">连接器状态：${demo ? "演示模式（会话为演示，标注「演示」）" : "SSH 未配置 · RDP/VNC 未配置（guacd）"}</p></div>`;
-        $("basNewA").onclick = () => basAssetForm(-1, () => renderBasAssets(el));
+          <p class="x-frac" style="margin:4px 0 0">连接器状态：静态预览未连接后端；接入 /api/v1 后自动探测 SSH WebSocket 与 guacd。</p></div>`;
+        $("basNewA").onclick = () => basNewAsset(() => renderBasAssets(el));
         const pick = (a, fn) => el.querySelectorAll(`[data-ba${a}]`).forEach((b) => (b.onclick = () => fn(+b.dataset[`ba${a}`])));
         pick("test", (i) => basAssetTest(i, el));
         pick("edit", (i) => basAssetForm(i, () => renderBasAssets(el)));

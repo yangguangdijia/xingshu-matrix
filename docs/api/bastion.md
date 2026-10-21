@@ -21,9 +21,11 @@
 | `MATRIX_RECORD_DIR` | `./data/recordings` | asciicast v2 录像本地目录（Start 时自动创建） |
 | `MATRIX_GUACD_ADDR` | `127.0.0.1:4822` | guacd 地址，仅用于健康检查 |
 
-## 数据表（迁移 `0001_init.up.sql`）
+## 数据表（迁移 `0001_init.up.sql`、`0002_asset_options.up.sql`）
 
-`bastion_assets`、`bastion_accounts`（`secret_enc`/`passphrase_enc` 用 `d.Crypto` AES-256-GCM 加密）、`bastion_rules`、`bastion_filters`、`bastion_sessions`、`bastion_commands`。
+`bastion_assets`（含 `options JSONB`）、`bastion_accounts`（`secret_enc`/`passphrase_enc` 用 `d.Crypto` AES-256-GCM 加密）、`bastion_rules`、`bastion_filters`、`bastion_sessions`、`bastion_commands`。
+
+`0002_asset_options.up.sql` 用 `ADD COLUMN IF NOT EXISTS` 增加 `options JSONB NOT NULL DEFAULT '{}'::jsonb`，对已有数据向后兼容：老行读出 `{}`，写回时整对象覆盖。
 
 ---
 
@@ -32,16 +34,38 @@
 ### GET /bastion/assets — `bastion:read`
 查询参数：`q`（名称/主机模糊）、`protocol`、`env`、`page`、`size`。
 ```json
-{"items":[{"id":1,"name":"web-01","host":"10.0.0.11","port":22,"protocol":"ssh","env":"prod","description":"","host_key":"ssh-ed25519 AAAA...","created_at":"...","updated_at":"..."}],"total":1,"page":1,"size":20}
+{"items":[{"id":1,"name":"web-01","host":"10.0.0.11","port":22,"protocol":"ssh","env":"prod","description":"","host_key":"ssh-ed25519 AAAA...","options":{"group":"Web 集群","labels":"team=infra","source":"手动","sftp":true},"created_at":"...","updated_at":"..."}],"total":1,"page":1,"size":20}
 ```
 
 ### GET /bastion/assets/:id — `bastion:read`
 
 ### POST /bastion/assets — `bastion:manage`
 ```json
-{"name":"web-01","host":"10.0.0.11","port":22,"protocol":"ssh","env":"prod","description":"web","host_key":""}
+{"name":"web-01","host":"10.0.0.11","port":22,"protocol":"ssh","env":"prod","description":"Web 集群 · team=infra","host_key":"","options":{"group":"Web 集群","labels":"team=infra","source":"手动","gateway":"bastion.internal:22","sftp":true}}
 ```
 `protocol` ∈ `ssh|rdp|vnc|mysql|postgres`；`env` 默认 `dev`。`host_key` 为 authorized_keys 格式；留空则**首次连接时信任并保存**（TOFU），之后不一致即拒绝连接（防中间人）。返回 201 + 资产对象。
+
+`options` 规则（`assetIn.check`）：
+
+| 规则 | 行为 |
+|---|---|
+| 缺省或 `null` | 归一化为 `{}`，不会写成 SQL NULL |
+| 序列化后大于 4096 字节 | 400 `options is too large (max 4096 bytes)` |
+| 键名（大小写不敏感）命中 `secret` / `password` / `passphrase` / `private_key` / `privatekey` / `token` / `kubeconfig` / `credential` | 400 `options must not contain credentials: <key>` |
+
+常见协议字段（全部为非敏感配置）：`group`、`labels`、`source`、`gateway`、`sftp`、`domain`、`security`、`res`、`depth`、`readonly`、`database`、`tls`。凭据只能通过 `POST /bastion/accounts` 的 `secret` 字段提交，由后端加密写入 `secret_enc`。
+
+### 资产来源（`options.source`）
+
+| 来源 | 本轮状态 |
+|---|---|
+| `手动` | 前端登记表单真实调用 `POST /bastion/assets` + `POST /bastion/accounts` |
+| `Agent 自动发现` | 需要 matrix-agent 上报接口，**本轮未联调**；登记时按手动写入并把来源记录在 `options.source` |
+| `K8s 同步` | 需要 Kubernetes API 同步，**本轮未联调** |
+| `云同步` | 需要云厂商 API，**本轮未联调** |
+| `批量导入` | CSV 导入接口**本轮未实现** |
+
+来源只影响登记入口与展示，不改变资产表结构：后端始终按手动路径写入 `bastion_assets`。
 
 ### PUT /bastion/assets/:id — `bastion:manage`（请求体同 POST，全量更新）
 ### DELETE /bastion/assets/:id — `bastion:manage`（级联删除其系统账号）
@@ -176,3 +200,36 @@ WebSocket（gorilla/websocket）。
 - 生产环境连接未接入审批（`d.Approval.Gate`）；可后续增加"连接申请"工单类型。
 - 未提供 SFTP 文件传输、会话实时监看（旁观）。
 - `?token=` / `Sec-WebSocket-Protocol` 传 token 未实现，见上文，请用 `access_token`。
+
+## 前端连接器状态（`public/index.html`）
+
+访问工作台（`#/bastion/term` 无会话时）与资产页都按下列探测结果显示真实状态，未连接时不建立会话、不写审计：
+
+| 探测 | 接口 | 状态判定 |
+|---|---|---|
+| SSH / SFTP 通道 | `GET /bastion/my/assets` | 200 → `可用`；401/403 → `未授权`；其他 → `未连接` |
+| RDP / VNC | `GET /bastion/guacd/health` | `reachable:true` → `可用`；`false` → `未配置`；请求失败 → `无法确认` |
+| SQL 代理 | 无 | 固定 `未配置`（未实现） |
+| 静态预览（未接入 `/api/v1`） | 不探测 | 固定 `未连接` |
+
+SSH 会话使用 `XS.ws("/bastion/sessions/ssh/ws", {asset, account, cols, rows})`，消息契约为：
+
+| 方向 | 消息 |
+|---|---|
+| 浏览器 → 服务端 | `{"type":"input","data":"ls"}`、`{"type":"resize","cols":120,"rows":32}` |
+| 服务端 → 浏览器 | `{"type":"output","data":"..."}`、`{"type":"error","data":"..."}`、`{"type":"closed","data":"killed\|session ended"}` |
+
+前端用轻量屏幕模型渲染（剥离 ANSI、处理 `` 覆盖 / `` 退格 / 整屏清除），不引入 xterm 运行时依赖；颜色与光标寻址不还原。
+
+## 本轮验证边界（重要）
+
+以下项目**本轮未验证**，文档与界面都不得声称已联调：
+
+- 真实 PostgreSQL 上的 `0002_asset_options` 迁移、资产/授权/审计 SQL 查询；
+- 真实 SSH 目标主机的连接、TOFU 主机指纹校验与命令过滤；
+- 真实 guacd 的 RDP / VNC 代理；
+- Prometheus、日志、链路、Jenkins、Kafka 与真实 SSO。
+
+已在本轮验证：`go test ./...`、`go vet ./...`、前端脚本解析、`git diff --check`、静态预览下的登录/改密/资产表单/终端空态交互。
+
+界面约束：未接入后端时，资产与审计页显示"静态示例数据"提示；`live` 模式下未接入后端的子页（账号、授权策略、命令过滤、审计、脱敏、数据库）同样标注，避免把演示数据当成生产状态。

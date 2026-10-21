@@ -5,3 +5,4 @@ data/
 *.cast
 .cache/
 .build/
+.evox-cache/

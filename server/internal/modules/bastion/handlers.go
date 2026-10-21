@@ -2,6 +2,7 @@ package bastion
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -23,16 +24,17 @@ var ok = httpx.OK
 // ---------- models ----------
 
 type Asset struct {
-	ID          int64     `db:"id" json:"id"`
-	Name        string    `db:"name" json:"name"`
-	Host        string    `db:"host" json:"host"`
-	Port        int       `db:"port" json:"port"`
-	Protocol    string    `db:"protocol" json:"protocol"`
-	Env         string    `db:"env" json:"env"`
-	Description string    `db:"description" json:"description"`
-	HostKey     string    `db:"host_key" json:"host_key"`
-	CreatedAt   time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
+	ID          int64          `db:"id" json:"id"`
+	Name        string         `db:"name" json:"name"`
+	Host        string         `db:"host" json:"host"`
+	Port        int            `db:"port" json:"port"`
+	Protocol    string         `db:"protocol" json:"protocol"`
+	Env         string         `db:"env" json:"env"`
+	Description string         `db:"description" json:"description"`
+	HostKey     string         `db:"host_key" json:"host_key"`
+	Options     map[string]any `db:"options" json:"options"` // 协议专属非敏感参数
+	CreatedAt   time.Time      `db:"created_at" json:"created_at"`
+	UpdatedAt   time.Time      `db:"updated_at" json:"updated_at"`
 }
 
 type Account struct {
@@ -144,14 +146,18 @@ func mapPgErr(err error) error {
 // ---------- assets ----------
 
 type assetIn struct {
-	Name        string `json:"name" binding:"required"`
-	Host        string `json:"host" binding:"required"`
-	Port        int    `json:"port" binding:"required,min=1,max=65535"`
-	Protocol    string `json:"protocol" binding:"required"`
-	Env         string `json:"env"`
-	Description string `json:"description"`
-	HostKey     string `json:"host_key"`
+	Name        string         `json:"name" binding:"required"`
+	Host        string         `json:"host" binding:"required"`
+	Port        int            `json:"port" binding:"required,min=1,max=65535"`
+	Protocol    string         `json:"protocol" binding:"required"`
+	Env         string         `json:"env"`
+	Description string         `json:"description"`
+	HostKey     string         `json:"host_key"`
+	Options     map[string]any `json:"options"`
 }
+
+// sensitiveOptKeys 是绝不能进入 options 凭据字段的关键字（大小写不敏感的子串匹配）。
+var sensitiveOptKeys = []string{"secret", "password", "passphrase", "private_key", "privatekey", "token", "kubeconfig", "credential"}
 
 func (in *assetIn) check() error {
 	in.Protocol = strings.ToLower(in.Protocol)
@@ -160,6 +166,24 @@ func (in *assetIn) check() error {
 	}
 	if in.Env == "" {
 		in.Env = "dev"
+	}
+	if in.Options == nil {
+		in.Options = map[string]any{}
+	}
+	for k := range in.Options {
+		lk := strings.ToLower(k)
+		for _, s := range sensitiveOptKeys {
+			if strings.Contains(lk, s) {
+				return httpx.Validation("options must not contain credentials: " + k)
+			}
+		}
+	}
+	b, err := json.Marshal(in.Options)
+	if err != nil {
+		return httpx.Validation("options must be a JSON object")
+	}
+	if len(b) > 4096 {
+		return httpx.Validation("options is too large (max 4096 bytes)")
 	}
 	return nil
 }
@@ -200,8 +224,8 @@ func (m *Module) createAsset(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	a, err := queryOne[Asset](c, m, `INSERT INTO bastion_assets (name,host,port,protocol,env,description,host_key)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`, in.Name, in.Host, in.Port, in.Protocol, in.Env, in.Description, strings.TrimSpace(in.HostKey))
+	a, err := queryOne[Asset](c, m, `INSERT INTO bastion_assets (name,host,port,protocol,env,description,host_key,options)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`, in.Name, in.Host, in.Port, in.Protocol, in.Env, in.Description, strings.TrimSpace(in.HostKey), in.Options)
 	if err != nil {
 		httpx.Fail(c, mapPgErr(err))
 		return
@@ -223,8 +247,8 @@ func (m *Module) updateAsset(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	a, err := queryOne[Asset](c, m, `UPDATE bastion_assets SET name=$2,host=$3,port=$4,protocol=$5,env=$6,description=$7,host_key=$8,updated_at=now()
-		WHERE id=$1 RETURNING *`, id, in.Name, in.Host, in.Port, in.Protocol, in.Env, in.Description, strings.TrimSpace(in.HostKey))
+	a, err := queryOne[Asset](c, m, `UPDATE bastion_assets SET name=$2,host=$3,port=$4,protocol=$5,env=$6,description=$7,host_key=$8,options=$9,updated_at=now()
+		WHERE id=$1 RETURNING *`, id, in.Name, in.Host, in.Port, in.Protocol, in.Env, in.Description, strings.TrimSpace(in.HostKey), in.Options)
 	if err != nil {
 		httpx.Fail(c, mapPgErr(err))
 		return
