@@ -231,3 +231,7 @@ while ((m = re.exec(html))) {
 | 敏感信息扫描 | `git diff --cached` 人工复查 | 无密码/私钥/kubeconfig/token |
 
 未验证（本轮明确不做）：真实 PostgreSQL、Kubernetes、Prometheus、日志、链路、Jenkins、Kafka、真实 SSO、真实 SSH 目标机、guacd RDP/VNC 代理。
+
+部署侧的问题（集群仍跑 v1.62、Argo `Synced` 但清单指向旧 tag、kubeconfig 证书不匹配、scratch 镜像无 shell、
+`last-applied-configuration` 漂移到 v1.57）单独记录在
+[deploy-v1.63-bastion-workbench.md](deploy-v1.63-bastion-workbench.md)，本文不重复。

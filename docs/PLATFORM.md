@@ -1,7 +1,7 @@
 # 星枢 Matrix 平台技术说明
 
 > 本文回答：用什么语言开发、整体架构、项目背景、业务逻辑与接口如何实现、接口文档在哪、哪些已经实现、哪些还没实现以及怎么实现。
-> 状态以仓库当前提交为准。**当前版本 v1.16（内测版）**：平台自身链路已在真实集群验证；真实外部依赖（Prometheus/Loki/ES/Jenkins/Kafka）尚未生产级联调，**请勿直接用于生产**。
+> 状态以仓库当前提交为准。**当前版本 v1.17（内测版）**：平台自身链路已在真实集群验证；真实外部依赖（Prometheus/Loki/ES/Jenkins/Kafka）尚未生产级联调，**请勿直接用于生产**。
 > 逐页接线矩阵与缺口清单见 [docs/PROGRESS.md](PROGRESS.md)；版本变更见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ---
@@ -34,7 +34,7 @@
 | 前端适配层 | `public/xs-api.js` + `xs-live-core.js` + `xs-live-ops.js` | API 客户端与实时渲染接管，后端不可用时回退演示渲染 |
 | 部署 | Docker 多阶段镜像、docker-compose、K8s 清单、Istio 网关、物理机脚本 | 见 `Dockerfile`、`docker-compose.yml`、`deploy/` |
 
-规模基线（v1.16）：后端 86 个 `.go` 文件、**237 条 HTTP 路由**、**50 个权限点**、**7 类审批**、**12 个 AI 工具**；前端 28 个路由键。
+规模基线（v1.17）：后端 86 个 `.go` 文件、**237 条 HTTP 路由**、**50 个权限点**、**7 类审批**、**12 个 AI 工具**；前端 28 个路由键。
 
 ## 3. 总体架构
 
@@ -158,9 +158,12 @@ matrix-server (Go)
 | [docs/PROGRESS.md](PROGRESS.md) | 进度报告：逐页接线矩阵、已完成/部分完成/未开始 |
 | [docs/OUTSTANDING.md](OUTSTANDING.md) | 未完成 / 未落实清单：未做浏览器实测、缓存未迁移、功能缺口（推送已完成） |
 | [docs/fix-stale-image-uncommitted-code.md](fix-stale-image-uncommitted-code.md) | 集群镜像混入未提交代码的排查与重建（v1.61 → v1.62） |
+| [docs/bastion-product-patterns.md](bastion-product-patterns.md) | 堡垒机产品模式与实现边界（资产来源、协议字段、SSH 契约、未验证清单） |
+| [docs/bastion-round-fix-notes.md](bastion-round-fix-notes.md) | 堡垒机与登录页 5 个问题的四段式复盘 |
+| [docs/deploy-v1.63-bastion-workbench.md](deploy-v1.63-bastion-workbench.md) | v1.63 镜像构建、三节点分发、滚动与回滚记录 |
 | [docs/deploy-192.168.6.3.md](deploy-192.168.6.3.md) | 真实集群部署与验收记录（7 个真实故障与解法） |
 
-## 6. 已实现（截至 v1.16）
+## 6. 已实现（截至 v1.17）
 
 **后端（真实代码，可编译、单测通过）**
 
@@ -241,18 +244,19 @@ matrix-agent -server https://matrix.example.com -token mxe_xxx
 
 ```bash
 # 1) 打标签（应用版本）
-git tag -a v1.16 -m "v1.16" && git push origin v1.16
+git tag -a v1.17 -m "v1.17" && git push origin v1.17
 
 # 2) 构建镜像（版本号写入二进制，GET /api/v1/version 可见）
-docker build --build-arg VERSION=v1.16 --build-arg COMMIT=$(git rev-parse --short HEAD) \
-  -t xingshu/matrix-server:v1.16 .
+docker build --build-arg VERSION=v1.17 --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  -t xingshu/matrix-server:v1.17 .
 
 # 3) 离线环境：导出 OCI tar
-ctr -n k8s.io images export matrix-server-v1.16.tar.gz docker.io/xingshu/matrix-server:v1.16
+ctr -n k8s.io images export matrix-server-v1.17.tar.gz docker.io/xingshu/matrix-server:v1.17
 ```
 
-镜像 tag 有三套历史口径（`v1.62` 集群实际运行 / `v1.3` 脚本默认 / `v40` 离线包），
-v1.16 起约定以**应用版本**为镜像 tag，差异与治理建议见 [PROGRESS.md §9.1](PROGRESS.md)。
+镜像 tag 有多套历史口径（当前集群 `v1.63` / 脚本默认 `v1.3` / 离线包 `v40`），
+v1.16 起约定以**应用版本**为镜像 tag，但现网仍用构建序号，差异与治理建议见 [PROGRESS.md §9.1](PROGRESS.md)。
+当前对应关系：应用版本 `v1.17` ↔ 镜像 `v1.63` ↔ commit `f9cd41e`（`GET /api/v1/version` 可复核）。
 
 ## 9. 质量门禁
 
@@ -271,6 +275,7 @@ push `main` / 打 `v*` / 手工触发；通过后推送 `ghcr.io/<owner>/xingshu
 
 | 版本 | 时间 | 主题 |
 | --- | --- | --- |
+| v1.17 | 2026-10-21 | 堡垒机访问工作台与真实 SSH 会话；资产协议参数持久化；登录可访问性；镜像 v1.63 |
 | v1.16 | 2026-10-20 | 文档与版本对齐；修复 CI 引用不存在脚本；新增 PROGRESS / CHANGELOG |
 | v1.11–v1.15 | 2026-10-19/20 | IAM 部门与用户组、AI 对话框全覆盖、告警规则走 PrometheusRule、Istio 网关、镜像对齐 v1.34 |
 | v1.4–v1.10 | 2026-10-18 | 可视化编辑器、堡垒机编辑类页面、集群/主机向导、登录页视觉收敛 |

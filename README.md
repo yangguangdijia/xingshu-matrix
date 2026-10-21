@@ -2,7 +2,7 @@
 
 > 统一的云原生运维与研发效能平台 —— 一个入口管好集群、主机、应用交付、可观测、堡垒机与研发协作，并在每个功能里直接调用 AI。
 
-![status](https://img.shields.io/badge/version-v1.16-2f6bff) ![deploy](https://img.shields.io/badge/deploy-K8s%20%7C%20Docker%20%7C%20物理机-0b1a33) ![api](https://img.shields.io/badge/API-237%20routes-0b1a33) ![pages](https://img.shields.io/badge/pages-19%2F28%20live%20%C2%B7%201%20%E7%BC%BA%E5%90%8E%E7%AB%AF-3F8F1F)
+![status](https://img.shields.io/badge/version-v1.17-2f6bff) ![deploy](https://img.shields.io/badge/deploy-K8s%20%7C%20Docker%20%7C%20物理机-0b1a33) ![api](https://img.shields.io/badge/API-237%20routes-0b1a33) ![pages](https://img.shields.io/badge/pages-19%2F28%20live%20%C2%B7%201%20%E7%BC%BA%E5%90%8E%E7%AB%AF-3F8F1F)
 
 > **技术说明文档**：开发语言、架构、背景、接口逻辑、接口文档索引、已实现与未实现清单见 [docs/PLATFORM.md](docs/PLATFORM.md)。后端为 Go 1.23（`server/`），接口文档在 `docs/api/`。
 >
@@ -93,7 +93,7 @@
 
 ## 当前状态（务必阅读）
 
-当前版本 **v1.16**，定位是**可在真实集群部署的内测版**，不是生产版。
+当前版本 **v1.17**，定位是**可在真实集群部署的内测版**，不是生产版。
 
 **已经做到的**
 
@@ -130,24 +130,24 @@
 
 | 概念 | 当前值 | 说明 |
 | --- | --- | --- |
-| 应用版本 | `v1.16` | 取自 git tag，写入二进制 `Version` 字段，`GET /api/v1/version` 可见 |
-| 集群内镜像 tag | `docker.io/xingshu/matrix-server:v1.62` | 构建序号，与上面**不是同一个号**；对应 commit `ac63d0f`（`GET /api/v1/version` 返回 `version=v1.16`） |
+| 应用版本 | `v1.17` | 取自 git tag / `-ldflags`，写入二进制 `Version` 字段，`GET /api/v1/version` 可见 |
+| 集群内镜像 tag | `docker.io/xingshu/matrix-server:v1.63` | 构建序号，与上面**不是同一个号**；对应 commit `f9cd41e`（`GET /api/v1/version` 返回 `version=v1.17`） |
 | 离线包 | `deploy/images/matrix-server-v40.tar.gz` | 包里 tag 为 `v40`，`image.sh` 会自动补目标 tag 别名 |
 | CI 产物 | `ghcr.io/<owner>/xingshu-matrix:latest` | 目前只推 `latest`，无版本 tag（待治理，见 docs/PROGRESS.md §9.1） |
 
 构建时务必带上版本号，否则 `/api/v1/version` 只会显示 `dev`：
 
 ```bash
-docker build --build-arg VERSION=v1.16 --build-arg COMMIT=$(git rev-parse --short HEAD) \
-  -t <你的仓库>/xingshu-matrix:v1.16 .
+docker build --build-arg VERSION=v1.17 --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  -t <你的仓库>/xingshu-matrix:v1.17 .
 ```
 
 ### 方式一：Kubernetes
 
 ```bash
 # 1. 构建并推送镜像（或使用你自己的镜像仓库）
-docker build --build-arg VERSION=v1.16 -t <你的仓库>/xingshu-matrix:v1.16 .
-docker push <你的仓库>/xingshu-matrix:v1.16
+docker build --build-arg VERSION=v1.17 -t <你的仓库>/xingshu-matrix:v1.17 .
+docker push <你的仓库>/xingshu-matrix:v1.17
 
 # 2. 修改 deploy/k8s/xingshu-matrix.yaml 中的 image 与 Ingress host
 kubectl apply -f deploy/k8s/xingshu-matrix.yaml
@@ -183,8 +183,8 @@ sudo bash deploy/baremetal/install.sh --port 8080 --dir /opt/xingshu-matrix
 **离线环境**：在有网机器上打包，拷贝到目标机安装：
 
 ```bash
-bash scripts/package.sh v1.16                  # 生成 dist/xingshu-matrix-v1.16.tar.gz
-sudo bash deploy/baremetal/install.sh --offline xingshu-matrix-v1.16.tar.gz
+bash scripts/package.sh v1.17                  # 生成 dist/xingshu-matrix-v1.17.tar.gz
+sudo bash deploy/baremetal/install.sh --offline xingshu-matrix-v1.17.tar.gz
 ```
 
 卸载：`sudo bash deploy/baremetal/uninstall.sh /opt/xingshu-matrix`
@@ -223,11 +223,11 @@ Makefile                 build / test / vet / run / docker / package
 
 ## 质量门禁
 
-本地可复现的全部检查（v1.16 实测结果）：
+本地可复现的全部检查（v1.17 实测结果）：
 
 ```bash
 cd server && go build ./... && go vet ./...   # 通过
-cd server && go test ./...                    # 7 个包 ok（cmd/matrix-agent + bastion/cicd/cluster/hosts/middleware/observability）
+cd server && go test ./...                    # 7 个包 ok（bastion 12 个用例，v1.17 新增 7 个）
 node --test tests/frontend/xs-api.test.mjs    # 5 通过
 node public/xs-live-core.js                   # 48 条断言全部通过
 ```

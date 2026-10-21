@@ -1,9 +1,27 @@
-# 星枢 Matrix 项目进度报告（v1.16）
+# 星枢 Matrix 项目进度报告（v1.17）
 
-> 报告生成时间：2026-10-20
-> 代码基线：`05cfcf1`（`chore(deploy): 清单镜像对齐到 v1.34，供 Argo CD 接管`），上一个版本标签 `v1.15`
-> 版本口径：应用版本 **v1.16**；集群内镜像 tag 为构建序号 **v1.62**（两者不同，见 §9.1）
+> 报告生成时间：2026-10-21（v1.17 增量）；逐页矩阵的统计基线仍是 2026-10-20（`05cfcf1`）
+> 代码基线：`f9cd41e`（`feat(bastion): 访问工作台与真实 SSH 会话，登录可访问性补齐`），上一个版本标签 `v1.16`
+> 版本口径：应用版本 **v1.17**；集群内镜像 tag 为构建序号 **v1.63**（两者不同，见 §9.1）
 > 判定原则：**只写能在仓库里找到证据的状态**。每条结论附文件路径或命令输出；无法验证的标「未核实」。
+
+---
+
+## 0. v1.17 增量（2026-10-21）
+
+这一版只动堡垒机与登录页，没有改集群模块、监控、CI/CD 或外部集成。逐页矩阵里的其它统计仍是 2026-10-20 的口径。
+
+| 项 | v1.16 | v1.17 | 证据 |
+| --- | --- | --- | --- |
+| 堡垒机前端 | 纯演示（`SEC` 内置数据） | **部分接线**：资产、Web 终端、访问工作台接真实后端 | `public/index.html` 的 `basProbeConnectors` / `basLiveSSH` / `basWorkbench` / `basRenderLiveAssets` |
+| 堡垒机 SSH | 无 | **真实 WebSocket**（`/bastion/sessions/ssh/ws`） | `basLiveSSH` 的消息契约与 `ssh.go` 的 `wsMsg` 一致 |
+| 堡垒机协议参数 | 只在前端内存 | **持久化到 `bastion_assets.options`** | `0002_asset_options.up.sql`、`assetIn.check` |
+| 堡垒机仍为演示的子页 | 全部 | 账号、授权策略、命令过滤、审计、脱敏、数据库（live 下 UI 标注"静态示例数据"） | `BAS_UNWIRED` 与 `basStaticNote` |
+| 登录/改密可访问性 | 隐式 label、无 `aria-invalid` | `for`/`id`、`aria-live`、`aria-invalid`、移动端 44px | `public/index.html` 的 `#lu` / `#lp` / `#cu` / `#cn` / `#cc` / `#cerr` |
+| 集群内镜像 | `v1.62`（`ac63d0f`） | `v1.63`（`f9cd41e`，`version=v1.17`） | `deploy/k8s/xingshu-matrix-dev.yaml`、`GET /api/v1/version` |
+| 堡垒机测试 | 5 个用例 | **12 个用例**（新增 7 个） | `server/internal/modules/bastion/bastion_test.go` |
+
+页面计数口径不变但含义变化：堡垒机不再计入"纯演示 8 个"，改为"部分接线 1 个"；完全真实的页面仍是 19 个。
 
 ---
 
@@ -248,14 +266,15 @@ bash scripts/smoke-test.sh http://<服务器IP>:8080
 
 | 位置 | tag | 说明 |
 | --- | --- | --- |
-| `deploy/k8s/xingshu-matrix-dev.yaml:196` | `docker.io/xingshu/matrix-server:v1.62` | 已对齐集群实际运行（commit `ac63d0f`，干净构建） |
-| Argo CD（application `xingshu-matrix`，target `test1`） | `docker.io/xingshu/matrix-server:v1.57` | 落后于集群实际，且 Argo 与 beta 清单不同源 |
+| `deploy/k8s/xingshu-matrix-dev.yaml:198` | `docker.io/xingshu/matrix-server:v1.63` | 与集群实际运行一致（commit `f9cd41e`，干净构建，`version=v1.17`） |
+| Argo CD（application `xingshu-matrix`，source.path `deploy/k8s`，target `beta`） | 跟随清单 `v1.63` | v1.17 起 Argo 与 beta 同源；此前文档误写为 `test1`，已按 `kubectl get application` 实测更正 |
 | `deploy/scripts/image.sh` 默认 `IMAGE` | `docker.io/xingshu/matrix-server:v1.3` | 脚本默认值滞后 |
 | `deploy/images/README.md` | 离线包内 tag `v40`，标注「对应代码版本 v1.3」 | 离线包与文档不同步 |
 | `.github/workflows/docker.yml` | 只推 `:latest` | 无版本 tag，无法回滚定位 |
 
-**建议**：统一以应用版本（`v1.16`）作为镜像 tag，构建序号另存为 label，例如
-`matrix-server:v1.16` + `org.opencontainers.image.revision=05cfcf1`。
+**建议**：统一以应用版本（`v1.17`）作为镜像 tag，构建序号另存为 label，例如
+`matrix-server:v1.17` + `org.opencontainers.image.revision=f9cd41e`。
+在改口径之前，每次发布必须把「应用版本 ↔ 镜像 tag ↔ commit」写在同一处（当前：`v1.17 ↔ v1.63 ↔ f9cd41e`）。
 
 ### 9.2 前端超前于后端
 

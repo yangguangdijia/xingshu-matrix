@@ -3,6 +3,9 @@
 > 目标集群：`192.168.6.3`（k8s-master，同集群还有 k8s-node1 / k8s-node2）
 > 部署时间：2026-10-19
 > 镜像：`docker.io/xingshu/matrix-server:v8`（离线自建，见 §3.2）
+> **最新镜像（v1.17 / 2026-10-21）**：`docker.io/xingshu/matrix-server:v1.63`（commit `f9cd41e`），
+> 构建、三节点分发、滚动与回滚记录见 [deploy-v1.63-bastion-workbench.md](deploy-v1.63-bastion-workbench.md)。
+> 本文其余章节保留 2026-10-19 首次部署的历史记录，其中的 v8 镜像与故障已不代表当前环境。
 > 访问入口：**`https://xingshu-matrix.com`**（标准 443，Ingress + 自签证书；需在客户端 hosts 里加 `192.168.6.3 xingshu-matrix.com`）
 > 备用入口：`http://192.168.6.3:30080`（NodePort，无域名/无 Ingress 时使用）
 > 说明：**代码未提交 git**（按用户要求），改动都在工作区。

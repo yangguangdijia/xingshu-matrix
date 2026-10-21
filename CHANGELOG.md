@@ -3,7 +3,69 @@
 本文件记录面向使用者与运维者的版本变更。更细的逐页状态见 [docs/PROGRESS.md](docs/PROGRESS.md)。
 
 版本规则：应用版本取 `vMAJOR.MINOR`（如 `v1.16`），通过 `git tag` 与 `--build-arg VERSION` 写入二进制；
-集群内镜像 tag 使用构建序号（当前 `v1.62`，commit `ac63d0f`），两者不通用。
+集群内镜像 tag 使用构建序号（当前 `v1.63`，commit `f9cd41e`），两者不通用。
+
+---
+
+## v1.17 — 2026-10-21
+
+主题：**堡垒机从演示页变成访问工作台，SSH 接真实 WebSocket，登录页补齐可访问性**。
+
+### 新增
+
+- **堡垒机访问工作台**（`#/bastion/term` 无会话时）：连接器状态卡片（SSH / RDP / VNC / SFTP / SQL）、
+  可访问资产表（含授权账号）、最近会话表。状态只认后端探测：`可用 / 未配置 / 未授权 / 未连接 / 无法确认`。
+- **真实 SSH 会话**：live 模式通过 `GET /bastion/sessions/ssh/ws` 建立 WebSocket，
+  消息契约 `{type:input,data}` / `{type:resize,cols,rows}` ↔ `{type:output}` / `{type:error}` / `{type:closed}`。
+  前端用轻量屏幕模型渲染（剥离 ANSI、处理 `\r` 覆盖与 `\b` 退格、`\x1b[2J` 清屏），不引入 xterm 运行时依赖。
+- **资产协议参数持久化**：迁移 `0002_asset_options.up.sql` 新增 `options JSONB NOT NULL DEFAULT '{}'::jsonb`，
+  保存资产组、标签、来源、跳板、域、TLS、库名、只读、分辨率等非敏感配置。
+- **资产来源选择**：手动 / Agent 自动发现 / K8s 同步 / 云同步 / 批量导入；只有"手动"本轮真实写入后端，其余在 UI 上标注未联调。
+
+### 修复
+
+- **`BAS_CONN()` 硬编码全 `false`**：导致即使后端可用，任何协议都被判"连接器未配置"，SSH 永远走不到 WebSocket。
+  现改为 `basProbeConnectors()` 真实探测 `/bastion/my/assets` 与 `/bastion/guacd/health`。
+- **堡垒机被"未接集群"网关拦住**：`#/bastion/term` 在未接集群时只显示 `renderNoCluster`，
+  访问工作台不可达。现对 `current() === "bastion"` 豁免，集群页逻辑未改。
+- **资产页 live 模式仍读演示数组**：现读 `GET /bastion/assets?size=200`，状态列显示「已登记」而不是伪造的「在线」。
+- **登录/改密可访问性**：账号/密码/三个改密输入框补 `for`/`id`，`#cerr` 补 `aria-live="polite"`，
+  错误时设置 `aria-invalid` 并在输入时清除，移动端可点区域提升到 44px。
+
+### 安全
+
+- `assetIn.check` 拒绝 `options` 中出现 `secret` / `password` / `passphrase` / `private_key` / `privatekey` /
+  `token` / `kubeconfig` / `credential`（大小写不敏感子串），上限 4096 字节；凭据只能走 `POST /bastion/accounts` 的 `secret`。
+- live 会话的审计与录像由后端 `bastion_sessions` / `bastion_commands` 记录，前端不再补写演示审计行。
+
+### 测试
+
+- 堡垒机新增 7 个用例：`assetIn` 校验与凭据拒绝、`options` 大小限制、guacd 不可达、401/403 权限门、
+  凭据脱敏、会话强制断开、env scope 过滤。`go test ./...` 与 `go vet ./...` 通过。
+
+### 文档
+
+- 更新 `docs/api/bastion.md`（options、资产来源、连接器状态、SSH 消息契约、验证边界）。
+- 新增 `docs/bastion-product-patterns.md`（产品模式与实现边界）。
+- 新增 `docs/bastion-round-fix-notes.md`（本轮 5 个问题的四段式复盘）。
+- 新增 `docs/deploy-v1.63-bastion-workbench.md`（v1.63 镜像构建、分发、滚动与回滚记录）。
+
+### 部署
+
+- 镜像 `docker.io/xingshu/matrix-server:v1.63`（commit `f9cd41e`，`GET /api/v1/version` → `version=v1.17`）。
+- 构建方式：`.build/mk_oci_v163.py` 复用 v1.62 基础层 + 追加应用层（USTAR），产物 `oci-v1.63.tar` 38,748,160 字节。
+- 三节点 `ctr -n k8s.io images import` 后 digest 一致：`sha256:ec081a8d7b009353f14232129e2f19cce9344deee18044f759a0905f34e31422`。
+- 清单 `deploy/k8s/xingshu-matrix-dev.yaml` 镜像指向 `v1.63`，由 Argo CD（Application `xingshu-matrix`，path `deploy/k8s`，targetRevision `beta`，automated sync）同步；
+  推送后手动 refresh 一次以立即生效。
+- 滚动结果：2 个 Pod 均为 `v1.63` 且 `READY`；`GET /api/v1/version` → `version=v1.17`；首页 HTML sha256 与本地 `public/index.html` 一致（`9aa0a2aa…`）；
+  `bastion_assets.options` 已为 `jsonb NOT NULL DEFAULT '{}'`。完整参数见 `docs/deploy-v1.63-bastion-workbench.md`。
+
+### 未验证
+
+- 真实 PostgreSQL 上的 `0002_asset_options` 迁移与资产/授权/审计 SQL；
+- 真实 SSH 目标机（TOFU、PTY 尺寸、命令过滤命中、录像落盘）；
+- guacd 的 RDP / VNC 代理（本轮仍未实现）；
+- Kubernetes、Prometheus、日志、链路、Jenkins、Kafka、真实 SSO。
 
 ---
 

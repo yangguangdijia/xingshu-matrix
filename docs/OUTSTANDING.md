@@ -1,13 +1,27 @@
-# 未完成 / 未落实清单（v1.16）
+# 未完成 / 未落实清单（v1.17）
 
-> 生成时间：2026-10-20　基线：`18c3999`（tag `v1.16`）
+> 生成时间：2026-10-20（基线 `18c3999`，tag `v1.16`）；v1.17 更新于 2026-10-21（基线 `f9cd41e`）
 > 本文只记录**没做完的部分**：你明确要求但我没执行的、项目功能本身缺的、以及我提了但你没拍板的。
 > 已完成项见 [PROGRESS.md](PROGRESS.md)；每页状态见 PROGRESS 的接线矩阵。
 > 判定原则：每条都附**可复核的证据**（命令输出 / 文件行号 / 远端引用），不确定的标「未核实」。
 
 ---
 
-## 0. 先纠正上一版报告里的两处错误
+## 0. v1.17 变更摘要
+
+本清单的原始条目保留（作为历史记录），下面只写 v1.17 改变了的结论：
+
+| 条目 | v1.16 | v1.17 | 证据 |
+| --- | --- | --- | --- |
+| B2 堡垒机 | 纯演示 | **部分接线**（资产 / Web 终端 / 访问工作台真实，其余子页标注静态示例） | `basWorkbench` / `basLiveSSH` / `basRenderLiveAssets` / `basStaticNote` |
+| B8 SSH | 未接 | **已接真实 WebSocket**；RDP / VNC / SQL 仍未实现 | `basLiveSSH` 与 `ssh.go` 的 `wsMsg` |
+| B7 堡垒机测试 | 5 个用例 | **12 个用例**（+7） | `bastion_test.go` |
+| A2 浏览器实测 | 0 个视口 | 补测 1366×800 与 600×800；**1440×900 / 1680×900 / 390×844 仍未测** | 本轮浏览器会话记录 |
+| 新增未验证项 | — | 真实 PostgreSQL 迁移、真实 SSH 目标机、guacd 代理 | `docs/deploy-v1.63-bastion-workbench.md` §4 |
+
+---
+
+## 0.1 先纠正上一版报告里的两处错误
 
 写这份清单时复核数字，发现上一版报告有两处错误，已在 PROGRESS / README / PLATFORM 中同步修正：
 
@@ -61,6 +75,7 @@ git fetch origin && git rev-list --left-right --count origin/beta...HEAD
 | 实际做了什么 | 只做了 Node 层（`node --test` 5 条、`xs-live-core.js` 自测 48 条、`node --check` 3 个文件）与 Go 层（build / vet / test）验证 |
 | 实际没做什么 | 没有启动浏览器、没有截图、没有检查控制台错误、没有验证 4 个视口的布局 |
 | 本轮文档改动的风险 | 文档改动本身不影响渲染，但**没有实测就等于没有验收**，不能算完成 |
+| v1.17 补测 | 已实测 **1366×800**（登录、错误登录、首次改密、访问工作台）与 **600×800**（工作台窄屏），控制台无新增错误；**1440×900、1680×900、390×844 仍未测** |
 
 **补齐方式**
 
@@ -132,7 +147,7 @@ rm -rf "C:/Users/jiangpeng/AppData/Local/go-build"                             #
 
 **补齐方式**：新增 `internal/modules/oncall`，表 `oncall_schedules` / `oncall_layers` / `oncall_overrides` / `oncall_incidents` / `oncall_timeline` / `oncall_slos`，权限 `oncall:read|manage`，注册审批类型 `oncall.change`。
 
-### B2. 8 个页面仍是演示数据
+### B2. 7 个页面仍是演示数据，另 1 个（堡垒机）部分接线
 
 | 页面 | 路由 | 现状 | 后端是否就绪 |
 | --- | --- | --- | --- |
@@ -140,7 +155,7 @@ rm -rf "C:/Users/jiangpeng/AppData/Local/go-build"                             #
 | 流量治理 | `#/traffic` | 演示（`renderTraffic`） | 无接口 |
 | 网络策略 | `#/netpol` | 演示（`renderNetpol`） | 无接口 |
 | 链路追踪 | `#/trace` | 演示（`renderTrace`） | **有接口**（`/observability/traces/*`），前端未接 |
-| 堡垒机 | `#/bastion/*` | 演示（`renderSec` 内置 `SEC` 数据） | **有 25 条路由**，前端未接 |
+| 堡垒机 | `#/bastion/*` | **部分接线**：资产 / Web 终端 / 访问工作台接真实后端；账号、授权策略、命令过滤、审计、脱敏、数据库仍为静态示例（live 下 UI 标注） | **有 25 条路由**，已接资产与 SSH 会话 |
 | 工作台 | `#/workbench` | 演示（本地 `state.reqs`） | 部分（devcenter） |
 | 需求管理 | `#/requirements` | 演示（本地 `state.reqs`） | 部分（devcenter） |
 | 测试管理 | `#/testing` | 演示（本地 `PLANS`） | 部分（devcenter） |
@@ -169,7 +184,9 @@ Prometheus / Loki / Elasticsearch / Alertmanager / Jaeger / Tempo / Jenkins / Ka
 
 ### B8. 堡垒机 RDP / VNC / 数据库协议代理未实现
 
-只有资产登记与 guacd 健康检查（`GET /bastion/guacd/health`），没有 Guacamole 协议隧道。
+SSH 已在 v1.17 接通真实 WebSocket（`GET /bastion/sessions/ssh/ws`，消息契约 `input/resize` ↔ `output/error/closed`）。
+RDP / VNC 仍只有 guacd 健康检查（`GET /bastion/guacd/health`），没有 Guacamole 协议隧道；
+MySQL / PostgreSQL 仍只能登记资产，没有协议代理。前端对这三类如实显示"未配置"，不会伪造会话。
 
 ### B9. 集群侧遗留问题（来自真实部署记录）
 
