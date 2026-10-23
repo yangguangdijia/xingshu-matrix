@@ -111,6 +111,8 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.DELETE("/:id/namespaces/:ns", rbac.RequirePerm(PermNSWrite), m.change("ns_delete"))
 
 	g.GET("/:id/events", rbac.RequirePerm(PermWorkloadRead), m.listEvents)
+	g.GET("/:id/network/services", rbac.RequirePerm(PermWorkloadRead), m.listNetworkServices)
+	g.GET("/:id/network/policies", rbac.RequirePerm(PermWorkloadRead), m.listNetworkPolicies)
 	g.GET("/:id/workloads/:kind", rbac.RequirePerm(PermWorkloadRead), m.listWorkloads)
 	g.GET("/:id/namespaces/:ns/:kind/:name", rbac.RequirePerm(PermWorkloadRead), m.getWorkloadYAML)
 	g.POST("/:id/namespaces/:ns/:kind/:name/scale", rbac.RequirePerm(PermWorkloadWrite), m.change("scale"))

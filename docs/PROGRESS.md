@@ -1,13 +1,24 @@
-# 星枢 Matrix 项目进度报告（v1.17）
+# 星枢 Matrix 项目进度报告（v1.18）
 
-> 报告生成时间：2026-10-21（v1.17 增量）；逐页矩阵的统计基线仍是 2026-10-20（`05cfcf1`）
-> 代码基线：`f9cd41e`（`feat(bastion): 访问工作台与真实 SSH 会话，登录可访问性补齐`），上一个版本标签 `v1.16`
-> 版本口径：应用版本 **v1.17**；集群内镜像 tag 为构建序号 **v1.63**（两者不同，见 §9.1）
+> 报告生成时间：2026-10-24（v1.18 增量）；本文后续未更新的历史统计仍以各节注明的旧基线为准。
+> 代码基线：beta 分支当前工作树；应用版本 **v1.18**。本次尚未部署，集群历史镜像记录不能代表 v1.18。
 > 判定原则：**只写能在仓库里找到证据的状态**。每条结论附文件路径或命令输出；无法验证的标「未核实」。
 
 ---
 
-## 0. v1.17 增量（2026-10-21）
+## 0. v1.18 增量（2026-10-24）
+
+| 项 | v1.17 | v1.18 | 证据 |
+| --- | --- | --- | --- |
+| 链路追踪 | 后端已有、页面演示 | 前端接入 Jaeger/Tempo 服务、检索、详情与资源标签归一化 | `public/xs-observability.js`、`public/index.html` |
+| 集群网络视图 | Service / NetworkPolicy 页面为演示 | 新增只读查询接口和真实数据视图；不提供策略写入或流量治理配置下发 | `cluster/network.go`、`docs/api/cluster.md` |
+| 应用运行清单 | 无专用接口 | 新增 CICD 应用 inventory 汇总接口 | `cicd/inventory.go`、`docs/api/cicd.md` |
+| 环境与告警 | 环境维度及资源定位存在边界 | 统一环境筛选、集群加载状态、告警资源归属与通知配置展示 | `docs/observability-data-scope.md`、`docs/fix-environment-metrics-notification.md` |
+| 验证 | v1.17 历史结果 | Node 前端 API/可观测性测试 14 项及 JS 语法检查通过；Go 测试结果见 CHANGELOG | `CHANGELOG.md` |
+
+v1.17 的历史记录保留如下；逐页矩阵与未完成清单在 v1.18 有局部更新，未覆盖的统计仍是 v1.17 基线，不能视为本版重新盘点。
+
+## 0.1 v1.17 增量（2026-10-21）
 
 这一版只动堡垒机与登录页，没有改集群模块、监控、CI/CD 或外部集成。逐页矩阵里的其它统计仍是 2026-10-20 的口径。
 
@@ -21,7 +32,7 @@
 | 集群内镜像 | `v1.62`（`ac63d0f`） | `v1.63`（`f9cd41e`，`version=v1.17`） | `deploy/k8s/xingshu-matrix-dev.yaml`、`GET /api/v1/version` |
 | 堡垒机测试 | 5 个用例 | **12 个用例**（新增 7 个） | `server/internal/modules/bastion/bastion_test.go` |
 
-页面计数口径不变但含义变化：堡垒机不再计入"纯演示 8 个"，改为"部分接线 1 个"；完全真实的页面仍是 19 个。
+页面计数口径为 v1.17 历史统计：堡垒机不再计入"纯演示 8 个"，改为"部分接线 1 个"；完全真实的页面仍是 19 个。
 
 ---
 
@@ -29,11 +40,11 @@
 
 平台从「前端原型 + 预览版后端」推进到了**可在真实 K8s 集群部署、核心运维链路真实可用的内测版**：
 后端 8 个业务模块 + 核心 10 个包全部可编译、单测通过（`go build`/`go vet`/`go test` 实测全绿），
-前端 28 个页面中 **19 个真实可用、1 个前端已接但后端缺失（值班故障）、8 个仍是演示数据**，
-并有 1 个页面（值班故障）**前端已接接口但后端模块不存在**，是本版本最突出的半成品。
-已有真实集群部署（192.168.6.3 三节点）与真实 HTTP 验收记录。
+v1.17 历史统计为前端 28 个页面中 **19 个真实可用、1 个前端已接但后端缺失、8 个演示**；
+v1.18 已改进其中的 trace、network 视图与应用 inventory 接线，但没有重新计算整页百分比。
+已有真实集群部署（192.168.6.3 三节点）与真实 HTTP 验收记录，该记录不覆盖本版。
 
-**距离「生产可用」还差三件事**：值班/SLO 后端模块、堡垒机控制台前端接线、以及真实外部依赖（Prometheus/Loki/ES/Jenkins/Kafka）的端到端联调。
+**距离「生产可用」仍有多项工作**：值班/SLO 后端、堡垒机其余子页、网络写入能力，以及真实外部依赖的端到端联调。
 
 ---
 
@@ -124,7 +135,7 @@
 | 自签证书 | `gen-tls-cert.sh` 生成并写入 TLS Secret | `deploy/scripts/gen-tls-cert.sh` |
 | 冒烟脚本 | `scripts/smoke-test.sh`：`/healthz`、首页含「星枢」、`hark.css`/`hark.js`/`chart.js` | `scripts/smoke-test.sh` |
 
-### 3.6 真实环境（已发生的部署事实）
+### 3.6 真实环境（历史部署事实；非 v1.18 验收）
 
 | 项 | 事实 | 证据 |
 | --- | --- | --- |
@@ -141,9 +152,9 @@
 | 项 | 已完成的部分 | 缺什么 | 证据 |
 | --- | --- | --- | --- |
 | **值班故障 / SLO** | 前端四个子页（排班 / 故障 / 复盘 / SLO）已按真实接口写完，调用 `/oncall/overview`、`/oncall/schedules`、`/oncall/incidents`、`/oncall/overrides`、`/oncall/slos` | **后端没有 oncall 模块**，这些请求会 404；页面会显示「值班概览加载失败」横幅 | `public/xs-live-ops.js:1983-2060`；`server/internal/modules/` 下无 oncall |
-| **堡垒机** | 后端完整（资产、账号加密、授权、命令过滤、SSH 终端、录像、命令审计、强制断开） | 前端 `#/bastion/*` 仍用内置 `SEC` 演示数据渲染，未接 `/bastion/*` | `public/index.html:5845-5870` |
-| **链路追踪** | 后端 `/observability/traces/*` 已实现（Jaeger/Tempo 归一化） | 前端 `#/trace` 仍为演示数据 | `public/index.html:10910` |
-| **流量治理 / 网络策略** | 前端页面与可视化编辑器已完成 | 无后端接口（`/traffic`、`/netpol` 在代码中不存在），纯演示 | `public/index.html:9837`、`11378`；后端模块目录无对应模块 |
+| **堡垒机** | 后端完整（资产、账号加密、授权、命令过滤、SSH 终端、录像、命令审计、强制断开） | v1.17 起部分接入；账号、授权、过滤、审计等子页仍未接真实接口 | `public/index.html`、`public/xs-live-ops.js` |
+| **链路追踪** | Jaeger/Tempo 后端归一化 | v1.18 前端已接服务、检索、详情与资源标签 | `public/xs-observability.js` |
+| **流量治理 / 网络策略** | 页面与可视化编辑器已存在 | v1.18 拓扑和策略视图部分接入真实 Service、NetworkPolicy 与 trace；配置写入未实现 | `public/index.html`、`cluster/network.go` |
 | **多集群** | 前端 `#/ops/multicluster` 页面存在 | 无后端聚合接口，演示数据 | `public/index.html:12654` |
 | **研发中心** | `coding`/`project`/`bugs` 三页已接 `/devcenter/*`（真实 POST/PATCH） | `requirements`（需求管理）与 `workbench`（工作台）仍读前端本地 `state.reqs`；`testing`（测试管理）读本地 `PLANS`；devcenter 无状态机、无评论、无 Git/流水线关联 | `public/index.html:2215-2245`、`5663-5700`；`modules/devcenter/module.go:30-35` |
 | **自动化编排** | 流程/版本/触发/运行记录全链路落库，页面可触发运行 | `trigger` 只写 `queued`，**没有执行器 worker**，流程不会真的跑步骤 | `modules/automation/module.go:39-46` |
@@ -153,7 +164,7 @@
 | **资源专用接口** | 工作负载四类 + 命名空间 + 节点 + 告警规则 | Service / Ingress / ConfigMap / Secret / PVC / HPA 专用接口缺失，只能走 YAML apply | `modules/cluster/module.go:92-120` |
 | **单点登录** | 登录页有「企业 SSO」入口，调用 `/auth/sso/config` | 后端无 OIDC / LDAP | `public/index.html`（SSO 按钮）；`server/internal/auth/` 无 oidc/ldap |
 | **多副本** | 平台 Deployment 2 副本可跑（K8s 清单） | 权限缓存按副本 15 秒，无失效广播；Agent 连接只在单实例内存；在线会话存内存 | `rbac/principal.go`、`modules/hosts/hub.go` |
-| **测试覆盖** | 7 个包有单测（含 `cmd/matrix-agent`），core 有前端 5 条 + 自测 48 条 | auth/rbac/users/settings/approval/ai/audit 后端无单测；`xs-live-ops.js` 无 Node 自测 | `find server -name '*_test.go'` |
+| **测试覆盖** | v1.18 `go test ./...` 有测试的包通过（见 CHANGELOG）；新增前端 API 与 observability 测试 | auth/rbac/users/settings/approval/ai/audit 后端无单测；`xs-live-ops.js` 无 Node 自测 | `go test ./...`、`tests/frontend/xs-observability.test.mjs` |
 
 ---
 
@@ -170,9 +181,9 @@
 
 ---
 
-## 6. 页面级接线矩阵（28 个路由，唯一权威口径）
+## 6. 页面级接线矩阵（28 个路由）
 
-数据来源：`public/index.html:1824-1852` 的 `routes` 对象 + `xs-live-core.js:2522-2527` + `xs-live-ops.js:2520-2527` 的接管清单。
+数据来源：`public/index.html` 的 `routes` 对象与 inline renderer、`xs-live-core.js`、`xs-live-ops.js`、`xs-observability.js` 的实时接管清单。以下为 v1.18 定性状态，不再使用 v1.17 的 19/1/8 汇总数。
 
 | # | 路由键 | 页面 | 数据来源 | 后端支撑 |
 | --- | --- | --- | --- | --- |
@@ -184,53 +195,54 @@
 | 6 | `cicd` | 流水线 | **真实**（含 SSE 日志） | 有 |
 | 7 | `automation` | 自动化编排 | **真实**（但只有触发，无执行器） | 部分 |
 | 8 | `release` | 发布单 | **真实** | 有 |
-| 9 | `traffic` | 流量治理 | 演示 | 无 |
-| 10 | `netpol` | 网络策略 | 演示 | 无 |
+| 9 | `traffic` | 流量治理 | **部分真实**：拓扑子页读取集群 Service 与检索到的 trace 样本；配置页未接入 | 部分 |
+| 10 | `netpol` | 网络策略 | **只读真实数据**：Service / NetworkPolicy 列表；策略编辑、下发未实现 | 部分 |
 | 11 | `observe` | 监控告警 | **真实**（PromQL/规则/认领/静默/渠道） | 有 |
 | 12 | `middleware` | 中间件 | **真实**（Kafka/RabbitMQ/RocketMQ/SQL/Redis） | 有 |
-| 13 | `trace` | 链路追踪 | 演示 | 后端有，前端未接 |
+| 13 | `trace` | 链路追踪 | **真实**：服务、检索、详情与资源标签 | 有 |
 | 14 | `logs` | 日志检索 | **真实**（Loki/ES） | 有 |
 | 15 | `approvals` | 变更审批 | **真实**（待办/我的/全部，通过/驳回/取消） | 有 |
 | 16 | `oncall` | 值班故障 | **真实接口但后端缺失** | **无（404）** |
 | 17 | `audit` | 运维审计 | **真实** `/audit-logs`（筛选/分页/详情/CSV） | 有 |
-| 18 | `bastion` | 堡垒机运维 | 演示 | 后端有，前端未接 |
-| 19 | `workbench` | 工作台 | 演示（本地 `state.reqs`） | 部分 |
-| 20 | `requirements` | 需求管理 | 演示（本地 `state.reqs`） | 有 devcenter，未接 |
+| 18 | `bastion` | 堡垒机运维 | **部分接线**，沿用 v1.17 状态 | 部分 |
+| 19 | `workbench` | 工作台 | 演示模式有本地样例；live 模式无数据渲染器时显示未接入空态 | 部分 |
+| 20 | `requirements` | 需求管理 | 演示模式有本地样例；live 模式无数据渲染器时显示未接入空态 | 部分 |
 | 21 | `coding` | Coding | **真实** `/devcenter/requirements` | 有 |
 | 22 | `project` | 项目管理 | **真实** `/devcenter/iterations` | 有 |
 | 23 | `team` | 团队协作 | **真实** `/users` + `/audit-logs` + `/devcenter/requirements` | 有 |
 | 24 | `bugs` | 缺陷总览 | **真实** `/devcenter/bugs` | 有 |
-| 25 | `testing` | 测试管理 | 演示（本地 `PLANS`） | 有 devcenter，未接 |
+| 25 | `testing` | 测试管理 | 演示模式有本地样例；live 模式无数据渲染器时显示未接入空态 | 部分 |
 | 26 | `ai` | 智能助手 | **真实**（模型/提示词/对话） | 有 |
 | 27 | `iam` | 用户与权限 | **真实**（用户/角色/部门/用户组/登录日志/会话） | 有 |
 | 28 | `settings` | 设置 | **真实**（含访问域名卡片） | 有 |
 
-**统计：真实可用 19 / 前端已接但后端缺失 1（`oncall`） / 纯演示 8。**
+**统计：19 / 1 / 8 是 v1.17 历史统计，不再代表 v1.18 的接线状态。** v1.18 新增真实 trace 与网络只读视图；traffic 与 netpol 仍是部分接线，oncall 后端仍缺失。
 
 > 修正记录：v1.16 首次发布时此处误写为「真实 20 / 演示 7 / 后端缺失 1」——把 `oncall` 同时算进真实与缺失，
 > 且漏算 1 个演示页。当前口径已按 28 个路由键逐条复核，详见 [OUTSTANDING.md](OUTSTANDING.md) §0。
 
 ---
 
-## 7. 如何自己复核（本轮实测输出）
+## 7. 如何自己复核（v1.18 验证范围）
 
 ```bash
-# 1) 后端编译与静态检查（实测：全部通过，无输出）
+# 1) 后端编译与静态检查
 cd server && go build ./... && go vet ./...
 
-# 2) 后端单元测试（实测：cmd/matrix-agent + bastion/cicd/cluster/hosts/middleware/observability 七个包 ok）
+# 2) 后端单元测试（v1.18 使用隔离工作区缓存；结果见 CHANGELOG）
 cd server && go test ./...
 
-# 3) 前端 API 客户端单测（实测：5 通过 / 0 失败）
-node --test tests/frontend/xs-api.test.mjs
+# 3) 前端 API 与可观测性单测（14 项通过）
+node --test tests/frontend/xs-api.test.mjs tests/frontend/xs-observability.test.mjs
 
-# 4) 前端核心适配层纯函数自测（实测：48 条断言全部通过）
+# 4) 前端核心适配层纯函数自测（历史覆盖：48 条断言）
 node public/xs-live-core.js
 
-# 5) 语法检查（实测：三个文件均通过）
+# 5) 语法检查
 node --check public/xs-api.js
 node --check public/xs-live-core.js
 node --check public/xs-live-ops.js
+node --check public/xs-observability.js
 
 # 6) 浏览器冒烟（需本机 Chrome；实测未在本轮运行）
 node tests/frontend/mock-server.mjs &            # 默认端口 18080
@@ -245,7 +257,7 @@ bash scripts/smoke-test.sh http://<服务器IP>:8080
 
 ---
 
-## 8. 本轮 v1.16 的代码改动
+## 8. v1.16 历史代码改动
 
 | 文件 | 改动 | 原因 |
 | --- | --- | --- |
@@ -255,7 +267,7 @@ bash scripts/smoke-test.sh http://<服务器IP>:8080
 | `docs/PROGRESS.md` | 新增本报告 | 需要一份可复核的进度口径 |
 | `CHANGELOG.md` | 新增，倒序记录 v1.0 → v1.16 | 之前只有 git log，没有面向使用者的版本说明 |
 | `docs/fix-ci-smoke-script.md` | 新增，按「报错问题 / 原因 / 解决方案 / 如何避免」记录 CI 修复 | 项目既有文档惯例 |
-| `docs/OUTSTANDING.md` | 新增，未完成 / 未落实清单（含未做浏览器实测、缓存未迁移、功能缺口；beta 推送已于本日完成） | 需要一份"欠账"口径 |
+| `docs/OUTSTANDING.md` | 新增，未完成 / 未落实清单 | 需要一份"欠账"口径 |
 | `docs/fix-stale-image-uncommitted-code.md` | 新增，四段式记录集群镜像混入未提交代码的排查与重建（v1.61→v1.62） | 镜像内容无法用 version 接口证明 |
 
 ---
@@ -289,7 +301,7 @@ bash scripts/smoke-test.sh http://<服务器IP>:8080
 
 ---
 
-## 10. 下一版（v1.17）建议优先级
+## 10. 后续版本建议优先级
 
 | 优先级 | 事项 | 理由 |
 | --- | --- | --- |

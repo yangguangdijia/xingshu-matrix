@@ -5,7 +5,7 @@
  *       自动化编排（window.XSLiveOpsAutomation，供 Lead 加路由/菜单）。
  * 引入方式：index.html 主内联脚本之后追加 <script src="xs-live-ops.js"></script>。
  * 只有 window.XS 探测到后端（XS.mode === "live"）时才接管 routes.<key>.render；
- * 后端不可用时完全保留原演示渲染器，仅显示“演示模式”徽标。不修改 index.html。
+ * 后端不可用时保留原页面结构，并显示后端连接状态。
  * 依赖主脚本的全局绑定：routes / render / navGo / phead / tbl / opt / toast / $ / esc /
  * dlg / closeAll / k8Confirm / aiBtn（均为 classic script 的全局词法绑定或 window 函数）。
  */
@@ -218,7 +218,7 @@
     var onOps = ROUTE_KEYS.indexOf(opsHash()) >= 0 || opsHash() === "automation";
     if (MODE === "demo" && onOps) {
       b.style.display = "inline-flex";
-      b.innerHTML = "<b>演示模式</b> · 未连接后端，以下为演示数据";
+      b.innerHTML = "<b>后端未连接</b> · 当前页面未读取实时数据";
     } else {
       b.style.display = "none";
       b.textContent = "";
@@ -346,7 +346,16 @@
 
   function obPage() {
     var seg = (location.hash || "").split("/")[2] || "metrics";
+    if (seg === "alerts") return "events";
     return ["metrics", "rules", "events", "channels"].indexOf(seg) >= 0 ? seg : "metrics";
+  }
+  function alertDeepLink() {
+    var parts = (location.hash || "").split("?")[0].split("/");
+    if ((parts[2] !== "alerts" && parts[2] !== "events") || !parts[3]) return "";
+    var id;
+    try { id = decodeURIComponent(parts[3]); } catch (e) { id = parts[3]; }
+    history.replaceState(null, "", "#/observe/events");
+    return id;
   }
   var OBS_TABS = [
     { t: "指标监控", h: "#/observe" },
@@ -359,7 +368,7 @@
   function renderObserveLive(el) {
     var pg = obPage();
     if (pg === "rules") return obsRules(el);
-    if (pg === "events") return obsEvents(el);
+    if (pg === "events") return obsEvents(el, alertDeepLink());
     if (pg === "channels") return obsChannels(el);
     return obsMetrics(el);
   }
@@ -566,13 +575,23 @@
   // 告警路径 key：优先数字 id（同一 fingerprint 可能存在于多个 Alertmanager 数据源，
   // 用 id 可避免 ?datasource 消歧 409）；claim/close/timeline 都接受 id 或 fingerprint。
   function alertKey(a) { return String(a && a.id != null && a.id !== "" ? a.id : ((a && (a.fingerprint || a.key)) || "")); }
+  document.addEventListener("click", function (event) {
+    var target = event.target && event.target.nodeType === 1 ? event.target : event.target && event.target.parentElement;
+    var link = target && target.closest ? target.closest("[data-alert-open]") : null;
+    if (!link) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    var id = link.getAttribute("data-alert-open");
+    if (id && typeof window.XSOpenAlertDetail === "function") window.XSOpenAlertDetail(id);
+    else toast("告警详情暂不可用，请刷新页面重试");
+  }, true);
   function claimPayload(a, comment, duration, silence) {
     var body = { comment: comment || "", duration: duration || "2h", silence: silence !== false };
     if (a && a.datasource_id) body.datasource_id = a.datasource_id;
     return body;
   }
 
-  function obsEvents(el) {
+  function obsEvents(el, openAlertId) {
     var p = livePage(el, "告警事件", "Alertmanager 告警的认领、关闭与静默", '<button class="x-btn" type="button" data-refresh>刷新</button>', tabsHTML(OBS_TABS, "#/observe/events"));
     var F = { status: "", handle: "", severity: "", q: "" };
     var AMS = [];
@@ -591,6 +610,12 @@
         AMS = rs[1].ok ? (Array.isArray(rs[1].value) ? rs[1].value : asArray(rs[1].value, ["items"])) : [];
         if (!p.paint(t, evHTML(items, data))) return;
         bindEvents(items);
+        if (openAlertId) {
+          var id = openAlertId;
+          openAlertId = "";
+          if (typeof window.XSOpenAlertDetail === "function") window.XSOpenAlertDetail(id);
+          else toast("告警详情暂不可用，请刷新页面重试");
+        }
       }).catch(function (err) { p.error(t, err); });
     }
     p.retry = load;
@@ -607,7 +632,7 @@
         var labels = a.labels || {}, anno = a.annotations || {};
         var summary = anno.summary || anno.description || a.message || "";
         var closed = String(a.handle_status) === "closed";
-        return [stTag(a.status), sevTag(a.severity || labels.severity), E(a.alertname || labels.alertname || "—"),
+        return [stTag(a.status), sevTag(a.severity || labels.severity), '<button class="x-tlink x-alert-open" type="button" data-alert-open="' + E(alertKey(a)) + '">' + E(a.alertname || labels.alertname || "—") + "</button>",
           E(a.env || "—"), code(summary, 90), fmtMin(a.starts_at || a.startsAt), stTag(a.handle_status || "open"),
           E(a.acked_by || a.closed_by || "—"),
           '<span class="ops-nowrap"><button class="x-btn" type="button" data-claim="' + i + '"' + (closed ? " disabled" : "") + ">认领</button>" +
@@ -754,7 +779,10 @@
       GET("/observability/channels").then(function (data) {
         var list = Array.isArray(data) ? data : asArray(data, ["items", "channels"]);
         var rows = list.map(function (c) {
-          return [E(c.name || "—"), tag(c.type || "—", "x-blue"), c.enabled ? tag("启用", "x-green") : tag("停用", "x-grey"),
+          var type = String(c.type || "").toLowerCase();
+          var logo = { feishu: "/assets/channels/feishu.svg", lark: "/assets/channels/feishu.svg", dingtalk: "/assets/channels/dingtalk.svg", dingding: "/assets/channels/dingtalk.svg", wecom: "/assets/channels/wecom.png", wechatwork: "/assets/channels/wecom.png", wxwork: "/assets/channels/wecom.png" }[type];
+          var name = (logo ? '<img src="' + logo + '" alt="" aria-hidden="true" style="width:24px;height:24px;object-fit:contain;vertical-align:middle;margin-right:8px" />' : "") + E(c.name || "—");
+          return [name, tag(c.type || "—", "x-blue"), c.enabled ? tag("启用", "x-green") : tag("停用", "x-grey"),
             E((c.severities || []).join(", ") || "全部"), E((c.envs || []).join(", ") || "全部"),
             fmtMin(c.updated_at), '<span class="ops-nowrap"><button class="x-btn" type="button" data-chtest="' + E(c.id) + '">测试</button>' +
             '<button class="x-btn" type="button" data-chtoggle="' + E(c.id) + '">' + (c.enabled ? "停用" : "启用") + "</button>" +
@@ -1228,9 +1256,10 @@
   /* ---------------------------------------------------------------- delivery 应用 */
 
   function renderDeliveryLive(el) {
-    var seg = (location.hash || "").split("/")[2] || "";
+    var parts = (location.hash || "").split("/");
+    var seg = parts[2] || "";
     var name = seg && seg !== "apps" ? decodeURIComponent(seg) : "";
-    if (name) return deliveryDetail(el, name);
+    if (name) return deliveryWorkspace(el, name, parts[3] ? decodeURIComponent(parts[3]) : "");
     return deliveryList(el);
   }
 
@@ -1291,7 +1320,7 @@
   function deliveryDetail(el, name) {
     var p = livePage(el, "应用 · " + name, "环境部署与发布记录", '<button class="x-btn" type="button" data-refresh>刷新</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { deliveryDetail(el, name); };
-    var APP = null, RELS = [], RELENV = "";
+    var APP = null, RELS = [], RUNS = [], PIPES = [], RELENV = "";
     var back = '<p style="margin:0 0 12px"><a class="x-tlink" href="#/delivery/apps">← 返回应用列表</a></p>';
     function load() {
       var t = p.newToken();
@@ -1304,8 +1333,14 @@
     }
     p.retry = load;
     function loadReleases(env, t) {
-      return GET("/cicd/applications/" + encodeURIComponent(APP.id) + "/releases", env ? { env: env } : undefined).then(function (data) {
-        RELS = Array.isArray(data) ? data : asArray(data, ["items", "releases"]);
+      return Promise.all([
+        GET("/cicd/applications/" + encodeURIComponent(APP.id) + "/releases", env ? { env: env } : undefined),
+        GET("/cicd/runs", { page: 1, page_size: 100, app_id: APP.id }),
+        GET("/cicd/pipelines", { app_id: APP.id })
+      ]).then(function (data) {
+        RELS = Array.isArray(data[0]) ? data[0] : asArray(data[0], ["items", "releases"]);
+        RUNS = asArray(data[1], ["items", "runs"]);
+        PIPES = Array.isArray(data[2]) ? data[2] : asArray(data[2], ["items", "pipelines"]);
         if (!p.paint(t, bodyHTML())) return;
         bind();
       });
@@ -1322,12 +1357,23 @@
           stTag(r.status), E(r.created_by || "—"), fmtMin(r.created_at), fmtMin(r.finished_at),
           '<span class="ops-nowrap">' + (r.kind === "rollback" || !r.image ? "" : '<button class="x-btn" type="button" data-relrb="' + E(r.id) + '" data-relenv2="' + E(r.env) + '">回滚到此</button>') + "</span>"];
       });
+      var runRows = RUNS.map(function (r) {
+        var pipe = PIPES.filter(function (x) { return String(x.id) === String(r.pipeline_id); })[0];
+        return [mono("#" + r.id), E(pipe ? pipe.name : "#" + r.pipeline_id), stTag(r.status), code(r.branch || "—", 20), code(r.image_tag || "—", 28), fmtMin(r.started_at || r.created_at),
+          '<span class="ops-nowrap"><button class="x-btn" type="button" data-apprun="' + E(r.id) + '">详情</button><button class="x-btn" type="button" data-applog="' + E(r.id) + '">日志</button></span>'];
+      });
+      var pipeRows = PIPES.map(function (pl) {
+        return [mono("#" + pl.id), E(pl.name || "—"), E("#" + pl.runner_target_id), pl.on_push ? tag("代码推送", "x-blue") : tag("手动", "x-grey"), E((pl.stages || []).length + " 阶段"), fmtMin(pl.updated_at),
+          '<span class="ops-nowrap"><button class="x-btn" type="button" data-apppl="' + E(pl.id) + '">详情</button><button class="x-btn" type="button" data-appplrun="' + E(pl.id) + '">运行</button></span>'];
+      });
       return '<p style="margin:0 0 12px"><a class="x-tlink" href="#/delivery/apps">← 返回应用列表</a>' +
         '<span style="float:right" class="ops-nowrap"><button class="x-btn" type="button" data-deploy2>部署</button><button class="x-btn" type="button" data-rotate>轮换 Webhook 密钥</button></span></p>' +
         '<dl class="x-sum">' + [["ID", mono(a.id)], ["代码仓库", code(a.repo_url, 70)], ["分支", E(a.branch || "—")], ["Dockerfile", code(a.dockerfile || "Dockerfile", 40)],
           ["上下文目录", code(a.context_dir || ".", 40)], ["镜像仓库", code(a.image_repo, 60)], ["创建", fmtMin(a.created_at)]]
           .map(function (kv) { return "<dt>" + kv[0] + "</dt><dd>" + kv[1] + "</dd>"; }).join("") + "</dl>" +
         panelHTML("环境", envRows.length ? tbl(["环境", "部署对象", "命名空间", "执行集群", "操作"], envRows) : emptyHTML("该应用未配置环境")) +
+        panelHTML("流水线", pipeRows.length ? tbl(["ID", "名称", "执行集群", "触发方式", "阶段", "更新时间", "操作"], pipeRows) : emptyHTML("该应用尚未配置流水线。可在「应用交付 › 流水线」创建并关联此应用。")) +
+        panelHTML("构建记录", runRows.length ? tbl(["运行", "流水线", "状态", "分支", "镜像标签", "开始时间", "操作"], runRows) : emptyHTML("该应用暂无构建运行记录。")) +
         panelHTML("发布记录", barHTML([envSel, '<span class="x-frac" style="margin-left:auto">共 ' + RELS.length + " 条</span>"]) + (RELS.length ? tbl(["ID", "环境", "类型", "镜像", "上一镜像", "状态", "操作人", "创建", "完成", "操作"], rows) : emptyHTML("暂无发布记录")));
     }
     function bind() {
@@ -1335,6 +1381,14 @@
       if (envSel) envSel.onchange = function () { RELENV = envSel.value; var t = p.newToken(); loadReleases(RELENV || null, t).catch(function (err) { p.error(t, err); }); };
       var d2 = p.box.querySelector("[data-deploy2]");
       if (d2) d2.onclick = function () { deployModal(APP, "", function () { deliveryDetail(el, name); }); };
+      [].slice.call(p.box.querySelectorAll("[data-apprun]")).forEach(function (b) { b.onclick = function () { runDetailModal(b.getAttribute("data-apprun")); }; });
+      [].slice.call(p.box.querySelectorAll("[data-applog]")).forEach(function (b) { b.onclick = function () { openRunLog(b.getAttribute("data-applog")); }; });
+      [].slice.call(p.box.querySelectorAll("[data-apppl]")).forEach(function (b) {
+        b.onclick = function () { var pl = PIPES.filter(function (x) { return String(x.id) === String(b.getAttribute("data-apppl")); })[0]; if (pl) infoModal("流水线 · " + (pl.name || pl.id), preBlock(pl)); };
+      });
+      [].slice.call(p.box.querySelectorAll("[data-appplrun]")).forEach(function (b) {
+        b.onclick = function () { var pl = PIPES.filter(function (x) { return String(x.id) === String(b.getAttribute("data-appplrun")); })[0]; if (pl) runPipelineModal(function () { deliveryDetail(el, name); }, [pl]); };
+      });
       [].slice.call(p.box.querySelectorAll("[data-deploy]")).forEach(function (b) {
         b.onclick = function () { deployModal(APP, b.getAttribute("data-deploy"), function () { deliveryDetail(el, name); }); };
       });
@@ -1382,6 +1436,200 @@
     load();
   }
   function isProd(env) { return /prod|生产/i.test(String(env || "")); }
+
+  var DELIVERY_MENU = ["导览", "服务列表", "实例列表", "部署编排", "监控告警", "应用成员", "操作记录", "流程中心"];
+  function deliveryWorkspace(el, name, initialPane) {
+    var pane = DELIVERY_MENU.indexOf(initialPane) >= 0 ? initialPane : "导览";
+    var app = null, selectedEnv = "", inventory = null, alerts = [], appClusters = [], appDatasources = [], auditRows = [], releases = [], runs = [], pipes = [];
+    var p = livePage(el, "应用 · " + name, "应用服务、实例、发布与运行记录", '<button class="x-btn" type="button" data-refresh>刷新</button>', "");
+    el.querySelector("[data-refresh]").onclick = load;
+    p.retry = load;
+
+    function envConfig() {
+      var envs = app && Array.isArray(app.envs) ? app.envs : [];
+      return envs.filter(function (e) { return e.name === selectedEnv; })[0] || envs[0] || null;
+    }
+    function load() {
+      var token = p.newToken();
+      appsLoad().then(function (items) {
+        app = items.filter(function (a) { return a.name === name; })[0] || null;
+        if (!app) { p.paint(token, '<p class="x-crumb">应用交付<i>/</i>应用</p>' + emptyHTML("应用「" + name + "」不存在或已被删除。")); return; }
+        var envs = Array.isArray(app.envs) ? app.envs : [];
+        if (!envs.some(function (e) { return e.name === selectedEnv; })) selectedEnv = envs.length ? envs[0].name : "";
+        return loadPane(token);
+      }).catch(function (err) { p.error(token, err); });
+    }
+    function loadPane(token) {
+      token = token == null ? p.newToken() : token;
+      var env = envConfig(), base = "/cicd/applications/" + encodeURIComponent(app.id);
+      var needReleases = pane === "导览" || pane === "部署编排";
+      var needFlow = pane === "导览" || pane === "流程中心";
+      var requests = [
+        needReleases && env ? GET(base + "/releases", { env: env.name }) : Promise.resolve([]),
+        needFlow ? GET("/cicd/runs", { page: 1, page_size: 100, app_id: app.id }) : Promise.resolve([]),
+        needFlow ? GET("/cicd/pipelines", { app_id: app.id }) : Promise.resolve([]),
+        ["导览", "服务列表", "实例列表", "监控告警"].indexOf(pane) >= 0 && env ? GET(base + "/inventory", { env: env.name }) : Promise.resolve(null),
+        pane === "监控告警" ? GET("/observability/alerts", { page: 1, page_size: 500 }) : Promise.resolve([]),
+        pane === "操作记录" ? GET("/audit-logs", { page: 1, page_size: 100, resource: "cicd_application", q: String(app.id) }) : Promise.resolve([]),
+        pane === "监控告警" ? GET("/clusters", { page_size: 500 }) : Promise.resolve([]),
+        pane === "监控告警" ? GET("/observability/datasources", { page_size: 500 }) : Promise.resolve([])
+      ];
+      Promise.all(requests).then(function (data) {
+        if (token !== p.token) return;
+        releases = Array.isArray(data[0]) ? data[0] : asArray(data[0], ["items", "releases"]);
+        runs = asArray(data[1], ["items", "runs"]);
+        pipes = Array.isArray(data[2]) ? data[2] : asArray(data[2], ["items", "pipelines"]);
+        inventory = data[3];
+        alerts = asArray(data[4], ["items", "alerts"]);
+        auditRows = asArray(data[5], ["items"]);
+        appClusters = asArray(data[6], ["items", "clusters"]);
+        appDatasources = asArray(data[7], ["items", "datasources"]);
+        if (!p.paint(token, workspaceHTML())) return;
+        bindWorkspace();
+      }).catch(function (err) { p.error(token, err); });
+    }
+    function envBar() {
+      var envs = app.envs || [];
+      if (!envs.length) return '<p class="x-empty">该应用尚未配置部署环境。</p>';
+      return '<div class="x-tbar"><label>环境 <select class="x-select" data-app-env aria-label="环境">' + envs.map(function (e) {
+        return '<option value="' + E(e.name) + '"' + (e.name === selectedEnv ? " selected" : "") + ">" + E(e.name) + "</option>";
+      }).join("") + "</select></label></div>";
+    }
+    function envMatches(value) {
+      var key = String(value || "").trim().toLowerCase();
+      var aliases = { development: "dev", "开发": "dev", "开发环境": "dev", test: "test", testing: "test", "测试": "test", "测试环境": "test", staging: "staging", pre: "staging", "预发": "staging", "预发布": "staging", production: "prod", "生产": "prod", "生产环境": "prod" };
+      return aliases[key] || key;
+    }
+    function appAlerts() {
+      var env = envConfig(), inv = inventory || {}, pods = inv.pods || [], services = inv.services || [], workloads = inv.workloads || [];
+      var targetId = inv.target_id || (env && env.target_id), targetCluster = appClusters.filter(function (c) { return String(c.id) === String(targetId); })[0] || null;
+      var sameEnvClusters = appClusters.filter(function (c) { return envMatches(c.env) === envMatches(env && env.name); });
+      var podNames = pods.map(function (x) { return x.name; }), serviceNames = services.map(function (x) { return x.name; });
+      var workloadNames = workloads.map(function (x) { return x.name; });
+      return alerts.filter(function (a) {
+        if (!env || (a.env && envMatches(a.env) !== envMatches(env.name))) return false;
+        return window.XSObserve && window.XSObserve.alertBelongsToScope(a, {
+          appName: app.name, namespace: env.namespace, targetId: targetId, targetCluster: targetCluster,
+          environmentClusterCount: sameEnvClusters.length, datasources: appDatasources,
+          pods: podNames, services: serviceNames, workloads: workloadNames
+        });
+      });
+    }
+    function paneContent() {
+      var env = envConfig(), inv = inventory || {}, ws = inv.workloads || [], pods = inv.pods || [], services = inv.services || [];
+      if (pane === "导览") {
+        var last = releases[0];
+        return '<div class="x-sethead"><h2 class="x-h2">应用信息</h2><span class="x-frac">' + E(app.updated_at ? fmtMin(app.updated_at) : "") + "</span></div>" +
+          '<dl class="x-sum">' + [["代码仓库", code(app.repo_url, 70)], ["默认分支", E(app.branch || "—")], ["镜像仓库", code(app.image_repo || "—", 60)], ["配置环境", E((app.envs || []).length + " 个")],
+            ["最近发布", last ? E(last.env + " · " + (last.image || last.status || "发布")) : "暂无发布记录"]].map(function (x) { return "<dt>" + x[0] + "</dt><dd>" + x[1] + "</dd>"; }).join("") + "</dl>" +
+          '<div class="x-cards x-cards4"><button class="x-card x-cardbtn" type="button" data-pane="服务列表"><p>服务</p><strong>' + (env ? services.length : "—") + "</strong></button>" +
+          '<button class="x-card x-cardbtn" type="button" data-pane="实例列表"><p>实例</p><strong>' + (env ? pods.length : "—") + "</strong></button>" +
+          '<button class="x-card x-cardbtn" type="button" data-pane="部署编排"><p>发布</p><strong>' + releases.length + "</strong></button>" +
+          '<button class="x-card x-cardbtn" type="button" data-pane="流程中心"><p>流水线</p><strong>' + pipes.length + "</strong></button></div>" +
+          (env ? '<div class="x-tbar"><span class="x-frac">' + E(env.name) + " · " + E(env.namespace || "未配置命名空间") + " · target #" + E(env.target_id) + '</span><span class="x-grow"></span><a class="x-btn" href="#/cicd/build">构建</a><a class="x-btn" href="#/cicd/artifact">制品</a></div>' : emptyHTML("该应用没有环境配置。"));
+      }
+      if (pane === "服务列表") {
+        if (!env) return emptyHTML("该应用没有环境配置。");
+        var serviceRows = services.map(function (s) { return [E(s.name), E(s.namespace), tag(s.type || "ClusterIP", "x-blue"), code(s.cluster_ip || "—", 24),
+          E((s.ports || []).map(function (p) { return (p.port || "") + "/" + (p.protocol || "TCP"); }).join(", ") || "—"), code(JSON.stringify(s.selector || {}), 56)]; });
+        return envBar() + '<p class="x-frac">' + E(env.name + " · " + env.namespace + " · " + services.length + " 个与该应用工作负载 selector 匹配的 Kubernetes Service") + (inv.warnings && inv.warnings.length ? "<br />" + inv.warnings.map(E).join("<br />") : "") + "</p>" +
+          (serviceRows.length ? tbl(["服务", "命名空间", "类型", "Cluster IP", "端口", "Pod selector"], serviceRows) : emptyHTML("此环境中没有 selector 匹配该应用工作负载的 Service。"));
+      }
+      if (pane === "实例列表") {
+        if (!env) return emptyHTML("该应用没有环境配置。");
+        var podRows = pods.map(function (pod, index) { return [E(pod.name), E(pod.namespace), E(pod.ready || "—"), stTag(pod.status || pod.phase || "未知"),
+          E(pod.restarts || 0), E(pod.node || "—"), code(pod.pod_ip || "—", 20), '<button class="x-act" type="button" data-app-pod="' + index + '">详情</button>']; });
+        return envBar() + '<p class="x-frac">' + E(env.name + " · " + env.namespace + " · 实时 Pod 清单") + (inv.warnings && inv.warnings.length ? "<br />" + inv.warnings.map(E).join("<br />") : "") + "</p>" +
+          (podRows.length ? tbl(["Pod", "命名空间", "Ready", "状态", "重启", "节点", "Pod IP", "详情"], podRows) : emptyHTML("此环境当前没有该应用的 Pod。"));
+      }
+      if (pane === "部署编排") {
+        if (!env) return emptyHTML("该应用没有环境配置。");
+        var configRows = (app.envs || []).map(function (item) { return [E(item.name), E(item.namespace || "—"), E(item.deployment || (item.helm && item.helm.release) || "—"), E("#" + item.target_id),
+          '<span class="ops-nowrap"><button class="x-btn" type="button" data-app-deploy="' + E(item.name) + '">部署</button><button class="x-btn" type="button" data-app-rollback="' + E(item.name) + '">回滚</button></span>']; });
+        var releaseRows = releases.map(function (r) { return [mono("#" + r.id), E(r.env), tag(r.kind || "deploy", r.kind === "rollback" ? "x-orange" : "x-blue"), code(r.image || "—", 42),
+          stTag(r.status), fmtMin(r.created_at), '<button class="x-btn" type="button" data-app-relrb="' + E(r.id) + '" data-app-relenv="' + E(r.env) + '">回滚到此</button>']; });
+        return envBar() + '<div class="x-sethead"><h2 class="x-h2">部署目标</h2></div>' + tbl(["环境", "命名空间", "工作负载", "执行集群", "操作"], configRows) +
+          '<div class="x-sethead" style="margin-top:20px"><h2 class="x-h2">发布记录</h2><span class="x-frac">' + releases.length + " 条</span></div>" +
+          (releaseRows.length ? tbl(["发布", "环境", "类型", "镜像", "状态", "创建时间", "操作"], releaseRows) : emptyHTML("该环境没有发布记录。"));
+      }
+      if (pane === "监控告警") {
+        if (!env) return emptyHTML("该应用没有环境配置。");
+        var appAlertRows = appAlerts().map(function (a) { var lb = a.labels || {}, an = a.annotations || {}; return [sevTag(a.severity || lb.severity),
+          '<button class="x-tlink x-alert-open" type="button" data-app-alert="' + E(alertKey(a)) + '">' + E(a.alertname || lb.alertname || "告警") + "</button>",
+          E(lb.namespace || env.namespace), E(lb.pod || lb.deployment || lb.service || lb.app || "—"), stTag(a.status || "未知"), fmtMin(a.starts_at), E(an.summary || an.description || "—")]; });
+        return envBar() + '<p class="x-frac">仅显示与当前应用清单中的 Pod、工作负载或 Service 标签匹配的告警。</p>' +
+          (appAlertRows.length ? tbl(["级别", "告警", "命名空间", "对象", "状态", "开始时间", "摘要"], appAlertRows) : emptyHTML("当前环境没有可确认属于此应用的告警。"));
+      }
+      if (pane === "应用成员") return '<div class="x-sethead"><h2 class="x-h2">应用成员</h2></div><p class="x-empty">当前后端没有应用级成员关系数据，无法准确列出负责人或授权成员。平台账号与角色请在系统设置中管理。</p>';
+      if (pane === "操作记录") {
+        var filtered = auditRows.filter(function (r) { return String(r.resource_id || "") === String(app.id) || String(r.path || "").indexOf("/cicd/applications/" + app.id) >= 0; });
+        var auditTable = filtered.map(function (r) { return [fmtMin(r.created_at || r.at), E(r.username || r.user || "—"), E(r.method || "—"), code(r.path || r.action || "—", 64), E(r.action || r.resource || "—"), stTag(r.result || r.status || "—")]; });
+        return '<div class="x-sethead"><h2 class="x-h2">操作记录</h2><span class="x-frac">' + filtered.length + " 条</span></div>" +
+          (auditTable.length ? tbl(["时间", "操作人", "方法", "路径", "动作", "结果"], auditTable) : emptyHTML("没有找到该应用的审计记录。"));
+      }
+      var pipelineRows = pipes.map(function (pl) { return [mono("#" + pl.id), E(pl.name || "—"), E("#" + pl.runner_target_id), E((pl.stages || []).length + " 阶段"), fmtMin(pl.updated_at),
+        '<span class="ops-nowrap"><button class="x-btn" type="button" data-app-pipeline="' + E(pl.id) + '">详情</button><button class="x-btn" type="button" data-app-runpipe="' + E(pl.id) + '">运行</button></span>']; });
+      var runRows = runs.map(function (r) { var pl = pipes.filter(function (x) { return String(x.id) === String(r.pipeline_id); })[0]; return [mono("#" + r.id), E(pl ? pl.name : "#" + r.pipeline_id), stTag(r.status), code(r.branch || "—", 22), code(r.image_tag || "—", 28), fmtMin(r.started_at || r.created_at),
+        '<span class="ops-nowrap"><button class="x-btn" type="button" data-app-rund="' + E(r.id) + '">详情</button><button class="x-btn" type="button" data-app-runlog="' + E(r.id) + '">日志</button></span>']; });
+      return '<div class="x-sethead"><h2 class="x-h2">流水线</h2><span class="ops-nowrap"><a class="x-btn" href="#/cicd/pipeline">管理流水线</a><button class="x-btn x-btn--pri" type="button" data-app-newrun>运行流水线</button></span></div>' +
+        (pipelineRows.length ? tbl(["ID", "名称", "执行集群", "阶段", "更新时间", "操作"], pipelineRows) : emptyHTML("该应用尚未配置流水线。")) +
+        '<div class="x-sethead" style="margin-top:20px"><h2 class="x-h2">运行记录</h2><span class="x-frac">' + runs.length + " 次</span></div>" +
+        (runRows.length ? tbl(["运行", "流水线", "状态", "分支", "镜像标签", "开始时间", "操作"], runRows) : emptyHTML("该应用暂无流水线运行记录。"));
+    }
+    function workspaceHTML() {
+      var crumbs = '<p class="x-crumb">应用交付<i>/</i>' + E(app.name) + '<i>/</i><b>' + E(pane) + "</b></p>";
+      var nav = '<nav class="x-menu" aria-label="应用菜单"><a href="#/delivery/apps" class="x-back">← 返回应用列表</a><p class="x-appname">' + E(app.name) + "</p>" +
+        DELIVERY_MENU.map(function (item) { return '<button type="button" data-pane="' + E(item) + '"' + (item === pane ? ' class="on" aria-current="page"' : "") + ">" + E(item) + "</button>"; }).join("") + "</nav>";
+      return '<div class="x-appv">' + nav + '<section class="x-panel">' + crumbs + paneContent() + "</section></div>";
+    }
+    function bindWorkspace() {
+      [].slice.call(p.box.querySelectorAll("[data-pane]")).forEach(function (button) {
+        button.onclick = function () { pane = button.getAttribute("data-pane"); history.replaceState(null, "", "#/delivery/" + encodeURIComponent(name) + "/" + encodeURIComponent(pane)); loadPane(); };
+      });
+      var envSelect = p.box.querySelector("[data-app-env]");
+      if (envSelect) envSelect.onchange = function () { selectedEnv = envSelect.value; loadPane(); };
+      [].slice.call(p.box.querySelectorAll("[data-app-pod]")).forEach(function (button) {
+        button.onclick = function () { infoModal("Pod 详情", preBlock((inventory.pods || [])[+button.getAttribute("data-app-pod")] || {})); };
+      });
+      [].slice.call(p.box.querySelectorAll("[data-app-alert]")).forEach(function (button) {
+        button.onclick = function () { if (typeof window.XSOpenAlertDetail === "function") window.XSOpenAlertDetail(button.getAttribute("data-app-alert")); };
+      });
+      [].slice.call(p.box.querySelectorAll("[data-app-deploy]")).forEach(function (button) { button.onclick = function () { appDeployModal(APP, button.getAttribute("data-app-deploy"), load); }; });
+      [].slice.call(p.box.querySelectorAll("[data-app-rollback]" )).forEach(function (button) {
+        button.onclick = function () { var env = button.getAttribute("data-app-rollback"); confirmDo("回滚应用", "确认回滚「" + E(app.name) + "」环境 <b>" + E(env) + "</b>？", "回滚", function () {
+          write(POST("/cicd/applications/" + encodeURIComponent(app.id) + "/rollback", { env: env }), "回滚请求已提交").then(function (result) { if (result) load(); });
+        }); };
+      });
+      [].slice.call(p.box.querySelectorAll("[data-app-relrb]")).forEach(function (button) {
+        button.onclick = function () { var env = button.getAttribute("data-app-relenv"), id = button.getAttribute("data-app-relrb"); confirmDo("回滚到指定发布", "确认将环境 <b>" + E(env) + "</b> 重新部署发布 #" + E(id) + " 的镜像？", "回滚", function () {
+          write(POST("/cicd/applications/" + encodeURIComponent(app.id) + "/rollback", { env: env, release_id: +id }), "回滚请求已提交").then(function (result) { if (result) load(); });
+        }); };
+      });
+      [].slice.call(p.box.querySelectorAll("[data-app-pipeline]")).forEach(function (button) { button.onclick = function () { var pl = pipes.filter(function (x) { return String(x.id) === button.getAttribute("data-app-pipeline"); })[0]; if (pl) infoModal("流水线 · " + (pl.name || pl.id), preBlock(pl)); }; });
+      [].slice.call(p.box.querySelectorAll("[data-app-runpipe]")).forEach(function (button) { button.onclick = function () { var pl = pipes.filter(function (x) { return String(x.id) === button.getAttribute("data-app-runpipe"); })[0]; if (pl) runPipelineModal(load, [pl]); }; });
+      var newRun = p.box.querySelector("[data-app-newrun]"); if (newRun) newRun.onclick = function () { runPipelineModal(load, pipes); };
+      [].slice.call(p.box.querySelectorAll("[data-app-rund]")).forEach(function (button) { button.onclick = function () { runDetailModal(button.getAttribute("data-app-rund")); }; });
+      [].slice.call(p.box.querySelectorAll("[data-app-runlog]")).forEach(function (button) { button.onclick = function () { openRunLog(button.getAttribute("data-app-runlog")); }; });
+    }
+    load();
+  }
+
+  function appDeployModal(app, env, done) {
+    var envs = (app.envs || []).map(function (item) { return item.name; });
+    if (!envs.length) { toast("该应用未配置环境"); return; }
+    formModal("部署 " + app.name, [
+      { k: "env", label: "环境", kind: "select", options: envs, value: env || envs[0] },
+      { k: "image", label: "镜像", required: true, placeholder: app.image_repo + ":v1.2.0" },
+      { k: "reason", label: "变更原因", placeholder: "hotfix / 需求发布" }
+    ], "部署", function (values) {
+      write(POST("/cicd/applications/" + encodeURIComponent(app.id) + "/deploy", { env: values.env, image: values.image, reason: values.reason }), "部署请求已提交").then(function (result) {
+        if (!result) return;
+        closeAll();
+        if (result.__approval) infoModal("已提交审批", '<p class="x-desc">生产环境部署需要审批，审批通过后自动执行。</p>');
+        if (done) done();
+      });
+    }, isProd(env) ? "生产环境可能需要审批（提交后显示“已提交审批”）。" : "");
+  }
 
   /* ---------------------------------------------------------------- release 发布单 */
 
@@ -1829,17 +2077,7 @@
   function renderAiLive(el) {
     var pg = aiPageKey();
     if (pg !== "config") {
-      if (typeof ST.originals.ai === "function" && ST.originals.ai !== renderAiLive) {
-        ST.originals.ai.call(null, el);
-        var note = document.createElement("div");
-        note.className = "x-warn";
-        note.setAttribute("role", "note");
-        note.style.marginBottom = "12px";
-        note.textContent = "该子页暂未接入实时接口，以下为演示内容（模型与提示词请到「AI 模型与提示词」页管理）。";
-        if (el.firstChild) el.insertBefore(note, el.firstChild); else el.appendChild(note);
-        return;
-      }
-      el.innerHTML = '<div class="x-panel">' + emptyHTML("该页暂不可用") + "</div>";
+      el.innerHTML = '<div class="x-panel">' + emptyHTML("该子页尚未接入后端接口") + "</div>";
       return;
     }
     var p = livePage(el, "AI 模型与提示词", "OpenAI 兼容模型接入与场景提示词", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newmodel>+ 新建模型</button><button class="x-btn" type="button" data-newprompt>+ 新建提示词</button>', "");
@@ -2612,7 +2850,7 @@
   function renderAutomationLive(el) {
     var p = livePage(el, "自动化编排", "版本化流程定义与受控执行记录", '<button class="x-btn" type="button" data-refresh>刷新</button>', "");
     if (!live()) {
-      p.paint(p.newToken(), '<div class="x-panel">' + banner("当前为演示模式：自动化编排需要连接后端后才可用。") + emptyHTML("未连接后端") + "</div>");
+      p.paint(p.newToken(), '<div class="x-panel">' + banner("自动化编排需要连接后端后才可用。") + emptyHTML("后端未连接") + "</div>");
       return;
     }
     el.querySelector("[data-refresh]").onclick = function () { renderAutomationLive(el); };

@@ -1,7 +1,7 @@
 # 星枢 Matrix 平台技术说明
 
 > 本文回答：用什么语言开发、整体架构、项目背景、业务逻辑与接口如何实现、接口文档在哪、哪些已经实现、哪些还没实现以及怎么实现。
-> 状态以仓库当前提交为准。**当前版本 v1.17（内测版）**：平台自身链路已在真实集群验证；真实外部依赖（Prometheus/Loki/ES/Jenkins/Kafka）尚未生产级联调，**请勿直接用于生产**。
+> 状态以仓库当前提交为准。**当前版本 v1.18（内测版）**：新增真实链路追踪、集群网络只读视图、应用运行清单与环境范围修正；本次代码尚未部署，真实外部依赖仍未完成生产级联调，**请勿直接用于生产**。
 > 逐页接线矩阵与缺口清单见 [docs/PROGRESS.md](PROGRESS.md)；版本变更见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ---
@@ -34,7 +34,7 @@
 | 前端适配层 | `public/xs-api.js` + `xs-live-core.js` + `xs-live-ops.js` | API 客户端与实时渲染接管，后端不可用时回退演示渲染 |
 | 部署 | Docker 多阶段镜像、docker-compose、K8s 清单、Istio 网关、物理机脚本 | 见 `Dockerfile`、`docker-compose.yml`、`deploy/` |
 
-规模基线（v1.17）：后端 86 个 `.go` 文件、**237 条 HTTP 路由**、**50 个权限点**、**7 类审批**、**12 个 AI 工具**；前端 28 个路由键。
+规模基线（v1.18）：后端路由与权限沿用 v1.17 基线，并新增网络查询与应用 inventory 路由；前端 28 个路由键。精确历史统计见 v1.17 记录。
 
 ## 3. 总体架构
 
@@ -119,7 +119,7 @@ matrix-server (Go)
 | 日志检索 | Loki（LogQL）或 Elasticsearch（KQL→query_string）；采集端用 Fluent Bit / Vector / Filebeat | 统一 `POST /observability/logs/query`，结果归一为 `{ts, level, service, host, message, labels}` | observability |
 | 监控 | Prometheus HTTP API（node-exporter、kube-state-metrics、业务 exporter） | query / query_range / labels / label values / series / rules 代理与校验 | observability |
 | 告警 | Alertmanager Webhook 推送到平台 | 认领、关闭；静默写回 Alertmanager `/api/v2/silences`；钉钉/飞书/企微/邮件通知 | observability |
-| 链路追踪 | Jaeger `/api/traces` 或 Tempo `/api/search`（应用经 OpenTelemetry 上报） | 检索与详情归一化（前端页面尚未接线） | observability |
+| 链路追踪 | Jaeger `/api/traces` 或 Tempo `/api/search`（应用经 OpenTelemetry 上报） | 前端接入服务、检索、详情与资源标签；缺少共享集群标签时返回空结果 | observability |
 | CI/CD | 应用、流水线、运行记录存 PostgreSQL | 每个阶段创建一个 K8s Job（git-clone 初始化容器 + Kaniko 构建 / 测试脚本 / Helm），日志实时写库并以 SSE 推送；部署阶段 patch Deployment 镜像并等待滚动完成；生产部署走审批；支持回滚、Jenkins 触发、GitLab/GitHub Webhook | cicd |
 | 中间件 | Kafka Admin API、RabbitMQ Management API、RocketMQ Dashboard REST | Topic/队列创建删除（生产需审批）、消费组 Lag | middleware |
 | 数据库控制台 | MySQL / PostgreSQL / Redis 直连 | SQL 风险识别（DROP/TRUNCATE/无 WHERE 的 DELETE/UPDATE 等）→ 生产走审批；每条语句写入审计表；Redis 高危命令拦截 | middleware |
@@ -156,14 +156,14 @@ matrix-server (Go)
 | [docs/dev-guide.md](dev-guide.md) | 新增模块、迁移、权限、审批、AI 工具的开发规范 |
 | [docs/backend-architecture.md](backend-architecture.md) | 后端接入方案（初版设计说明） |
 | [docs/PROGRESS.md](PROGRESS.md) | 进度报告：逐页接线矩阵、已完成/部分完成/未开始 |
-| [docs/OUTSTANDING.md](OUTSTANDING.md) | 未完成 / 未落实清单：未做浏览器实测、缓存未迁移、功能缺口（推送已完成） |
+| [docs/OUTSTANDING.md](OUTSTANDING.md) | 未完成 / 未落实清单：v1.18 发布状态、浏览器实测、缓存与功能缺口 |
 | [docs/fix-stale-image-uncommitted-code.md](fix-stale-image-uncommitted-code.md) | 集群镜像混入未提交代码的排查与重建（v1.61 → v1.62） |
 | [docs/bastion-product-patterns.md](bastion-product-patterns.md) | 堡垒机产品模式与实现边界（资产来源、协议字段、SSH 契约、未验证清单） |
 | [docs/bastion-round-fix-notes.md](bastion-round-fix-notes.md) | 堡垒机与登录页 5 个问题的四段式复盘 |
 | [docs/deploy-v1.63-bastion-workbench.md](deploy-v1.63-bastion-workbench.md) | v1.63 镜像构建、三节点分发、滚动与回滚记录 |
 | [docs/deploy-192.168.6.3.md](deploy-192.168.6.3.md) | 真实集群部署与验收记录（7 个真实故障与解法） |
 
-## 6. 已实现（截至 v1.17）
+## 6. 已实现（截至 v1.18）
 
 **后端（真实代码，可编译、单测通过）**
 
@@ -176,7 +176,7 @@ matrix-server (Go)
 **前端**
 
 - 登录页、真实 JWT 登录/刷新/改密/退出，独立 API 客户端 `public/xs-api.js`（base 探测、401 单飞刷新、SSE/WS）。
-- 28 个路由中 **19 个真实可用**：总览、应用、集群状态、应用状态、流水线、自动化编排、发布单、监控告警、中间件、日志检索、变更审批、运维审计、Coding、项目管理、团队协作、缺陷总览、智能助手、用户与权限、设置；另有 1 个（值班故障）前端已接但**后端缺失**（接口 404，见 §7），8 个仍为演示数据（见 [PROGRESS.md §6](PROGRESS.md)）。
+- v1.17 的 19/1/8 页面统计仍作为历史基线；v1.18 新增 trace 真实接线、网络 Service/NetworkPolicy 只读视图和 CICD 应用 inventory，traffic/netpol/bastion 仍是部分接线，oncall 后端仍缺失。
 - 演示模式：`XS.mode === "live"` 才接管渲染器；后端不可用时保留原演示渲染器并显示「演示模式」徽标。
 
 **已完成真实联调**
@@ -191,9 +191,9 @@ matrix-server (Go)
 | 项目 | 现状 | 实现方法 |
 |---|---|---|
 | oncall 值班 / 故障 / SLO 后端 | **前端已写完并调用 `/oncall/*`，后端无该模块（404）** | 新增 `internal/modules/oncall`：排班（分层轮值、代班）、故障单（声明/认领/升级/解决）、复盘、SLO 与错误预算；`approval` 注册 `oncall.change` |
-| 堡垒机控制台前端接线 | 后端 25 条路由完整，前端 `#/bastion/*` 仍是演示数据 | 在 `xs-live-ops.js` 增加 `bastion` 渲染器，接 `/bastion/assets|accounts|rules|filters|sessions|my/assets|sessions/ssh/ws` |
-| 链路追踪前端接线 | 后端 `/observability/traces/*` 可用，前端 `#/trace` 演示数据 | 加 `trace` 渲染器，接 `/observability/traces/services|search|:traceId` |
-| 流量治理 / 网络策略 / 多集群 | 前端页面与编辑器完成，**无后端接口** | 新增 `internal/modules/network`：Istio `VirtualService`/`DestinationRule`/`Gateway` 与 Cilium `CiliumNetworkPolicy` 读写；多集群聚合用多 kubeconfig 扇出 |
+| 堡垒机控制台前端接线 | 后端 25 条路由完整，前端仍部分接线 | 继续接入账号、授权、过滤、审计和协议代理 |
+| 链路追踪前端接线 | v1.18 已接服务、检索、详情和资源标签 | 继续补共享数据源标签校验与多集群端到端验证 |
+| 流量治理 / 网络策略 / 多集群 | traffic/netpol 仅部分真实只读；多集群无聚合接口 | 补 Istio/Cilium 写接口和多集群扇出 |
 | 研发中心完整流程 | 基础 CRUD；`requirements`/`workbench`/`testing` 仍读前端本地数据 | 按资源定义状态机（需求：提出→受理→评审→开发→测试→验收→上线），补 `comments`、`links`（Git/流水线）、测试计划与用例表 |
 | 自动化编排执行器 | `trigger` 只写 `queued`，无 worker | 新增 `automation_runner`：受控步骤（HTTP / 等待 / 主机命令 / K8s 操作 / 审批），失败重试与超时；或接 Tekton / Argo Workflows |
 | 真实外部依赖联调 | 仅 httptest 假服务与 client-go fake | 备一套测试环境（kind/k3s + kube-prometheus-stack + Loki + Alertmanager + Jenkins + Kafka），按 `scripts/smoke-test.sh` 扩展端到端用例 |
@@ -243,27 +243,28 @@ matrix-agent -server https://matrix.example.com -token mxe_xxx
 ### 8.1 版本与发布
 
 ```bash
-# 1) 打标签（应用版本）
-git tag -a v1.17 -m "v1.17" && git push origin v1.17
+# 1) 打标签（应用版本；发布时执行）
+git tag -a v1.18 -m "v1.18"
+git push origin v1.18
 
 # 2) 构建镜像（版本号写入二进制，GET /api/v1/version 可见）
-docker build --build-arg VERSION=v1.17 --build-arg COMMIT=$(git rev-parse --short HEAD) \
-  -t xingshu/matrix-server:v1.17 .
+docker build --build-arg VERSION=v1.18 --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  -t xingshu/matrix-server:v1.18 .
 
 # 3) 离线环境：导出 OCI tar
-ctr -n k8s.io images export matrix-server-v1.17.tar.gz docker.io/xingshu/matrix-server:v1.17
+ctr -n k8s.io images export matrix-server-v1.18.tar.gz docker.io/xingshu/matrix-server:v1.18
 ```
 
 镜像 tag 有多套历史口径（当前集群 `v1.63` / 脚本默认 `v1.3` / 离线包 `v40`），
 v1.16 起约定以**应用版本**为镜像 tag，但现网仍用构建序号，差异与治理建议见 [PROGRESS.md §9.1](PROGRESS.md)。
-当前对应关系：应用版本 `v1.17` ↔ 镜像 `v1.63` ↔ commit `f9cd41e`（`GET /api/v1/version` 可复核）。
+历史对应关系：应用版本 `v1.17` ↔ 镜像 `v1.63` ↔ commit `f9cd41e`；v1.18 尚未构建或部署。
 
 ## 9. 质量门禁
 
 ```bash
 cd server && go build ./... && go vet ./...      # 编译与静态检查
 cd server && go test ./...                       # 单测：7 个包（含 cmd/matrix-agent）
-node --test tests/frontend/xs-api.test.mjs       # 前端 API 客户端 5 条
+node --test tests/frontend/xs-api.test.mjs tests/frontend/xs-observability.test.mjs # API 与可观测性 14 条
 node public/xs-live-core.js                      # 核心适配层 48 条断言
 node --check public/xs-live-ops.js               # 语法检查（ops 无 Node 自测，依赖 window）
 ```
@@ -275,7 +276,8 @@ push `main` / 打 `v*` / 手工触发；通过后推送 `ghcr.io/<owner>/xingshu
 
 | 版本 | 时间 | 主题 |
 | --- | --- | --- |
-| v1.17 | 2026-10-21 | 堡垒机访问工作台与真实 SSH 会话；资产协议参数持久化；登录可访问性；镜像 v1.63 |
+| v1.18 | 2026-10-24 | 真实 trace 与环境范围、网络只读接口、应用运行清单；beta / 标签 / Release 已发布，未部署 |
+| v1.17 | 2026-10-21 | 堡垒机访问工作台与真实 SSH 会话；资产协议参数持久化；登录可访问性；镜像 v1.63（历史部署） |
 | v1.16 | 2026-10-20 | 文档与版本对齐；修复 CI 引用不存在脚本；新增 PROGRESS / CHANGELOG |
 | v1.11–v1.15 | 2026-10-19/20 | IAM 部门与用户组、AI 对话框全覆盖、告警规则走 PrometheusRule、Istio 网关、镜像对齐 v1.34 |
 | v1.4–v1.10 | 2026-10-18 | 可视化编辑器、堡垒机编辑类页面、集群/主机向导、登录页视觉收敛 |

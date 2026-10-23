@@ -2,7 +2,7 @@
 
 > 统一的云原生运维与研发效能平台 —— 一个入口管好集群、主机、应用交付、可观测、堡垒机与研发协作，并在每个功能里直接调用 AI。
 
-![status](https://img.shields.io/badge/version-v1.17-2f6bff) ![deploy](https://img.shields.io/badge/deploy-K8s%20%7C%20Docker%20%7C%20物理机-0b1a33) ![api](https://img.shields.io/badge/API-237%20routes-0b1a33) ![pages](https://img.shields.io/badge/pages-19%2F28%20live%20%C2%B7%201%20%E7%BC%BA%E5%90%8E%E7%AB%AF-3F8F1F)
+![status](https://img.shields.io/badge/version-v1.18-2f6bff) ![deploy](https://img.shields.io/badge/deploy-K8s%20%7C%20Docker%20%7C%20物理机-0b1a33) ![api](https://img.shields.io/badge/API-updated-0b1a33)
 
 > **技术说明文档**：开发语言、架构、背景、接口逻辑、接口文档索引、已实现与未实现清单见 [docs/PLATFORM.md](docs/PLATFORM.md)。后端为 Go 1.23（`server/`），接口文档在 `docs/api/`。
 >
@@ -74,9 +74,9 @@
 - 多集群对比与资源分发 **[演]**
 - 应用交付：应用、流水线、运行与 SSE 日志、部署/回滚、发布单、Jenkins、GitLab/GitHub Webhook **[真]**
 - 自动化编排：流程、版本、触发、运行记录 **[真，无执行器]**
-- 网络：流量治理、网关、网络策略、证书 **[演]**
-- 可观测：监控与告警（PromQL、认领/关闭、静默、通知渠道）、日志检索（Loki/ES）**[真]**；链路追踪 **[演]**（后端已有接口）
-- 堡垒机：Web SSH / 会话 / 命令审计 / 录像回放 **[演]**（后端完整，前端未接）；RDP / VNC **[未实现]**
+- 网络：流量治理服务拓扑、NetworkPolicy / Service 清单 **[部分真]**；网关配置和策略写入未接入
+- 可观测：监控与告警（PromQL、认领/关闭、静默、通知渠道）、日志检索（Loki/ES）、链路追踪（Jaeger/Tempo）**[真]**
+- 堡垒机：资产、访问工作台与 SSH 会话 **[部分真]**；未接入的管理子页在 live 模式显示空态；RDP / VNC **[未实现]**
 - 值班与故障：排班、故障、复盘、SLO **[缺]**
 - 设置：用户、角色、权限矩阵、部门、用户组、环境策略、登录日志、访问域名、AI 模型与提示词 **[真]**；SSO/LDAP **[未实现]**
 
@@ -93,20 +93,20 @@
 
 ## 当前状态（务必阅读）
 
-当前版本 **v1.17**，定位是**可在真实集群部署的内测版**，不是生产版。
+当前代码版本 **v1.18**，定位是**可在真实集群部署的内测版**，不是生产版。v1.18 增加了真实链路追踪、告警详情和通知配置改进、集群网络只读接口、应用运行清单，以及更严格的环境和数据归属处理；具体范围与验证状态见 [CHANGELOG.md](CHANGELOG.md)。
 
 **已经做到的**
 
-- **后端可编译、可测试**：237 条路由、34 张表、13 个迁移、50 个权限点、7 类审批；`go build ./...`、`go vet ./...` 全部通过，`go test ./...` 中 bastion / cicd / cluster / hosts / middleware / observability 六个模块测试通过。
+- **后端能力**：原 v1.17 基线为 237 条路由、34 张表、13 个迁移、50 个权限点、7 类审批；本版新增 CI/CD 应用清单与集群 Service / NetworkPolicy 查询接口。
 - **8 个业务模块全部有真实执行链路**：cluster（client-go 直连）、hosts（WebSocket Agent）、bastion（SSH 代理 + 录像 + 命令审计）、observability（Prometheus/Loki/ES/Jaeger/Tempo/Alertmanager）、cicd（K8s Job + Kaniko + Helm）、middleware（Kafka/RabbitMQ/RocketMQ/SQL/Redis）、automation、devcenter。
 - **AI 嵌到操作里**：12 个 Function Calling 工具，3 个写工具（`k8s_scale_deployment`、`hosts_exec`、`cicd_run_pipeline`）必须用户二次确认，生产环境继续走审批；告警规则、创建工作负载、创建用户、部门/用户组、接入集群等对话框均可 AI 生成。
-- **前端 28 个页面中 19 个真实可用**，另有 1 个（值班故障）前端已接但后端缺失（明细见 [docs/PROGRESS.md](docs/PROGRESS.md) §6）。
-- **已在真实集群验证**：`192.168.6.3` 三节点，`https://xingshu-matrix.com` 入口，登录 → 强制改密 → 用户/角色/集群/主机/审批/审计接口全部 200（记录见 [docs/deploy-192.168.6.3.md](docs/deploy-192.168.6.3.md)）。
+- **数据接线状态**：v1.18 对链路追踪和网络视图增加真实数据路径；堡垒机仍为部分接线。v1.17 的 19/1/8 统计仅作历史基线，逐页状态见 [docs/PROGRESS.md](docs/PROGRESS.md) §6。
+- **历史部署记录**：曾在 `192.168.6.3` 验证平台自身链路；这不代表 v1.18 已部署，记录见 [docs/deploy-192.168.6.3.md](docs/deploy-192.168.6.3.md)。
 
 **还没做到的**
 
 - **值班故障 / SLO 只有前端**：页面会调 `/oncall/*`，但后端没有 oncall 模块，请求返回 404，页面顶部会显示加载失败横幅。
-- **8 个页面仍是演示数据**：多集群、流量治理、网络策略、链路追踪（后端有接口、前端未接）、堡垒机控制台（后端最完整却未接）、工作台、需求管理、测试管理。
+- **仍有功能缺口**：多集群聚合、网关配置写入、网络策略写入、堡垒机部分子页、工作台、需求管理和测试管理尚未接入真实完整流程；live 页面会标明未接接口的空态。
 - **自动化编排没有执行器**：触发只写 `queued`，流程不会真的执行步骤。
 - **真实外部依赖未联调**：Prometheus / Loki / Elasticsearch / Alertmanager / Jenkins / Kafka 目前只有 httptest 与 client-go fake 测试。
 - **单集群、单副本 PostgreSQL、单节点 Ingress**：无高可用，PostgreSQL 用 `local-path` PVC，Pod 重建后绑回原节点。
@@ -130,24 +130,24 @@
 
 | 概念 | 当前值 | 说明 |
 | --- | --- | --- |
-| 应用版本 | `v1.17` | 取自 git tag / `-ldflags`，写入二进制 `Version` 字段，`GET /api/v1/version` 可见 |
-| 集群内镜像 tag | `docker.io/xingshu/matrix-server:v1.63` | 构建序号，与上面**不是同一个号**；对应 commit `f9cd41e`（`GET /api/v1/version` 返回 `version=v1.17`） |
+| 应用版本 | `v1.18` | beta 已发布源码版本；构建时通过 `-ldflags` 写入，`GET /api/v1/version` 可见 |
+| 集群内镜像 tag | `docker.io/xingshu/matrix-server:v1.63` | 记录中的已部署历史镜像（应用版本 v1.17）；v1.18 本次仅更新源码分支，不代表集群已部署 |
 | 离线包 | `deploy/images/matrix-server-v40.tar.gz` | 包里 tag 为 `v40`，`image.sh` 会自动补目标 tag 别名 |
 | CI 产物 | `ghcr.io/<owner>/xingshu-matrix:latest` | 目前只推 `latest`，无版本 tag（待治理，见 docs/PROGRESS.md §9.1） |
 
 构建时务必带上版本号，否则 `/api/v1/version` 只会显示 `dev`：
 
 ```bash
-docker build --build-arg VERSION=v1.17 --build-arg COMMIT=$(git rev-parse --short HEAD) \
-  -t <你的仓库>/xingshu-matrix:v1.17 .
+docker build --build-arg VERSION=v1.18 --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  -t <你的仓库>/xingshu-matrix:v1.18 .
 ```
 
 ### 方式一：Kubernetes
 
 ```bash
 # 1. 构建并推送镜像（或使用你自己的镜像仓库）
-docker build --build-arg VERSION=v1.17 -t <你的仓库>/xingshu-matrix:v1.17 .
-docker push <你的仓库>/xingshu-matrix:v1.17
+docker build --build-arg VERSION=v1.18 -t <你的仓库>/xingshu-matrix:v1.18 .
+docker push <你的仓库>/xingshu-matrix:v1.18
 
 # 2. 修改 deploy/k8s/xingshu-matrix.yaml 中的 image 与 Ingress host
 kubectl apply -f deploy/k8s/xingshu-matrix.yaml
@@ -183,8 +183,8 @@ sudo bash deploy/baremetal/install.sh --port 8080 --dir /opt/xingshu-matrix
 **离线环境**：在有网机器上打包，拷贝到目标机安装：
 
 ```bash
-bash scripts/package.sh v1.17                  # 生成 dist/xingshu-matrix-v1.17.tar.gz
-sudo bash deploy/baremetal/install.sh --offline xingshu-matrix-v1.17.tar.gz
+bash scripts/package.sh v1.18                  # 生成 dist/xingshu-matrix-v1.18.tar.gz
+sudo bash deploy/baremetal/install.sh --offline xingshu-matrix-v1.18.tar.gz
 ```
 
 卸载：`sudo bash deploy/baremetal/uninstall.sh /opt/xingshu-matrix`
@@ -223,13 +223,13 @@ Makefile                 build / test / vet / run / docker / package
 
 ## 质量门禁
 
-本地可复现的全部检查（v1.17 实测结果）：
+本地检查命令（本次运行结果见 [CHANGELOG.md](CHANGELOG.md)）：
 
 ```bash
-cd server && go build ./... && go vet ./...   # 通过
-cd server && go test ./...                    # 7 个包 ok（bastion 12 个用例，v1.17 新增 7 个）
-node --test tests/frontend/xs-api.test.mjs    # 5 通过
-node public/xs-live-core.js                   # 48 条断言全部通过
+cd server && go build ./... && go vet ./...
+cd server && go test ./...
+node --test tests/frontend/xs-api.test.mjs tests/frontend/xs-observability.test.mjs
+node public/xs-live-core.js
 ```
 
 CI（`.github/workflows/docker.yml`）在 `push` 到 `main`、打 `v*` 标签或手工触发时执行同一组检查并推送镜像。
@@ -242,11 +242,12 @@ CI（`.github/workflows/docker.yml`）在 `push` 到 `main`、打 `v*` 标签或
 - [x] 场景化 AI 入口与模型配置（12 个工具 + 3 个写操作确认）
 - [x] 核心后端 API 与持久化（认证、RBAC、审计、审批、AI）
 - [x] automation 与研发中心 API、迁移和前端真实接口
-- [x] 真实集群部署与平台自身链路验收（192.168.6.3）
+- [x] 历史版本真实集群部署与平台自身链路验收（192.168.6.3）
 - [x] 用户组 / 部门 / 登录日志 / 访问域名 / 告警规则 PrometheusRule
 - [x] CI 修复（v1.16）
 - [ ] oncall 后端模块（排班 / 故障 / 复盘 / SLO）
-- [ ] 堡垒机控制台、链路追踪前端接真实接口
+- [x] 链路追踪前端接真实接口（v1.18）
+- [ ] 堡垒机控制台其余子页接真实接口
 - [ ] automation 执行器 worker
 - [ ] 真实 Kubernetes / Prometheus / Loki / ES / Jenkins / Kafka 生产级联调
 - [ ] Helm Chart 与高可用部署方案

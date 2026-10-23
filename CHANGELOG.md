@@ -7,6 +7,50 @@
 
 ---
 
+## v1.18 — 2026-10-24
+
+主题：**真实环境筛选与可观测体验补强，补齐应用清单和集群网络只读接口**。
+
+### 新增
+
+- **集群网络资源接口**：新增 `GET /clusters/:id/network/services` 与
+  `GET /clusters/:id/network/policies`，供实时网络视图读取 Kubernetes Service 和 NetworkPolicy。
+- **应用运行清单接口**：新增 `GET /cicd/applications/:id/inventory`，汇总已配置环境中的工作负载、
+  Pod、容器与匹配 Service，并返回采集警告。
+- **可观测体验**：新增数据归属、指标查询、日志归一化、链路与告警资源定位工具；
+  支持集群范围的链路/告警详情、通知渠道配置和应用级告警筛选。Jaeger trace 归一化纳入 process resource tags，
+  并按 OpenTelemetry 错误状态识别错误 span。
+- **拓扑数据**：流量拓扑基于当前集群 Service 与真实检索到的 trace 样本构建；
+  网络策略视图读取 Kubernetes NetworkPolicy 声明。无观测数据时显示空态，不虚构调用关系。
+- **环境与实时状态**：统一环境别名规范化；顶栏集群数量使用真实集群清单，区分加载中、失败与真实空列表；
+  总览按所选环境加载集群、节点、Pod、告警及历史指标。
+
+### 修复
+
+- 修复共享 Jaeger/Tempo 数据源详情缺少 process 级 `k8s.cluster.name` 标签的问题，并补充 OTEL 错误状态识别。
+- 修复环境菜单与总览将尚未加载的集群清单显示成零，以及环境筛选口径不一致的问题。
+- live 模式明确标注未接后端或未接真实数据的页面，避免将本地样例显示成真实运行状态。
+
+### 测试
+
+- 新增 `tests/frontend/xs-observability.test.mjs`，覆盖数据源归属、查询转义、日志归一化、
+  trace span 层级、告警资源定位与应用告警范围。
+- 本轮执行的前端 API 与可观测 Node 测试共 14 条通过；三个新增/修改前端脚本语法检查通过。
+- 使用工作区隔离的 Go 模块/构建缓存执行 `go build ./...`、`go vet ./...`、`go test ./...`，均通过；没有测试的包报告 `[no test files]`。
+
+### 文档
+
+- 更新 README、平台说明、逐页进度与未完成清单，记录 v1.18 的功能、验证结果和仍待处理事项。
+- 补充应用清单、集群网络接口及可观测集群归属说明。
+- 发布说明同步至 [GitHub Release v1.18](https://github.com/yangguangdijia/xingshu-matrix/releases/tag/v1.18)。
+
+### 发布状态
+
+- 代码已推送 GitHub `beta`，`v1.18` 标签及 GitHub Release 已发布并说明本次功能与验证结果。
+- 本次发布不包含镜像构建、部署或真实集群验收；历史镜像和部署结果不代表此标签的运行状态。
+
+---
+
 ## v1.17 — 2026-10-21
 
 主题：**堡垒机从演示页变成访问工作台，SSH 接真实 WebSocket，登录页补齐可访问性**。

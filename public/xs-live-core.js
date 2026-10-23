@@ -2567,11 +2567,11 @@
       var el = ensureBadge();
       el.className = state === "live" ? "xs-live-ok" : state === "demo" ? "xs-live-demo" : "xs-live-boot";
       var span = el.querySelector("span");
-      if (span) span.textContent = state === "live" ? "实时数据" : state === "demo" ? "演示模式" : "连接检测中…";
+      if (span) span.textContent = state === "live" ? "实时数据" : state === "demo" ? "后端未连接" : "连接检测中…";
       el.title = note || (state === "live"
         ? "已连接 matrix-server：" + apiBase()
         : state === "demo"
-          ? "未检测到 matrix-server，页面沿用内置演示数据（不覆盖原渲染器）"
+          ? "未检测到 matrix-server，页面无法读取实时数据"
           : "正在探测 matrix-server…");
       return el;
     } catch (e) {
@@ -2587,7 +2587,7 @@
     updateBadge("boot");
     var x = xs();
     if (!x) {
-      updateBadge("demo", "xs-api.js 未加载，无法访问后端；页面沿用内置演示数据");
+      updateBadge("demo", "xs-api.js 未加载，无法访问后端；实时数据不可用");
       return;
     }
     function onMode(mode) {

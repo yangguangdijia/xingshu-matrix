@@ -1,13 +1,23 @@
-# 未完成 / 未落实清单（v1.17）
+# 未完成 / 未落实清单（v1.18）
 
-> 生成时间：2026-10-20（基线 `18c3999`，tag `v1.16`）；v1.17 更新于 2026-10-21（基线 `f9cd41e`）
+> 生成时间：2026-10-24（v1.18 增量）；v1.17 历史基线记录保留在下文
 > 本文只记录**没做完的部分**：你明确要求但我没执行的、项目功能本身缺的、以及我提了但你没拍板的。
 > 已完成项见 [PROGRESS.md](PROGRESS.md)；每页状态见 PROGRESS 的接线矩阵。
 > 判定原则：每条都附**可复核的证据**（命令输出 / 文件行号 / 远端引用），不确定的标「未核实」。
 
 ---
 
-## 0. v1.17 变更摘要
+## 0. v1.18 变更摘要
+
+| 条目 | v1.17 | v1.18 | 当前结论 |
+| --- | --- | --- | --- |
+| 链路追踪 | 后端有、前端未接 | 服务、检索、详情与资源标签接入 | **部分完成**；共享数据源仍要求正确的集群资源标签 |
+| 网络视图 | 流量治理 / 网络策略为演示 | Service、NetworkPolicy 列表和拓扑数据读取真实接口 | **部分完成**；不支持策略写入、Istio 配置下发 |
+| 应用运行清单 | 无专用接口 | 新增 `/cicd/applications/:id/inventory` | **已完成只读清单**；仍受应用环境目标配置限制 |
+| 环境与告警范围 | 口径不一致 | 环境归一化、集群加载状态、资源归属提示 | **已改进**；多集群共享采集标签仍需现场配置 |
+| 发布交付 | v1.17 历史远端提交 | v1.18 已推送 beta，标签和 Release 已发布 | 部署与真实集群验收仍未执行 |
+
+## 0.1 v1.17 变更摘要
 
 本清单的原始条目保留（作为历史记录），下面只写 v1.17 改变了的结论：
 
@@ -27,55 +37,50 @@
 
 | # | 上一版说法 | 实际 | 影响 |
 | --- | --- | --- | --- |
-| 1 | 前端「真实 20 / 演示 7 / 后端缺失 1」 | 实际 **真实可用 19 / 前端已接但后端缺失 1（oncall） / 纯演示 8** | 20+7+1=28 看似成立，但 oncall 被同时算进「真实 20」和「后端缺失 1」；真正的演示页有 8 个（多集群、流量治理、网络策略、链路追踪、堡垒机、工作台、需求管理、测试管理），漏算了 1 个 |
+| 1 | 前端「真实 20 / 演示 7 / 后端缺失 1」 | v1.17 历史统计为 **真实可用 19 / 后端缺失 1（oncall） / 演示 8**；v1.18 已更新 trace 与 network 接线 | oncall 曾被重复计数；v1.17 统计只保留作历史基线 |
 | 2 | 后端「6 个模块包有测试」 | 实际 **7 个包**：`cmd/matrix-agent` + bastion / cicd / cluster / hosts / middleware / observability | 上一轮用 C 盘缓存跑 `go test`，输出被 `tail` 截断，漏掉了 `cmd/matrix-agent` 那一行；用 D 盘缓存重跑后完整可见 |
 
 修正后的口径：**页面 19 真实 / 1 前端就绪后端缺失 / 8 演示；后端 7 个包有测试。**
 
 ---
 
-## A. 你明确要求过，但这一轮我没有执行
+## A. v1.18 发布与待完成的验收
 
-### A1. ~~没有推送到 GitHub 的 `beta` 分支~~ → 已推送（2026-10-20 补推完成）
+### A1. v1.18 已推送到 GitHub 的 `beta` 分支
 
 | 项 | 事实 |
 | --- | --- |
-| 约定流程 | checkout `beta` → `git merge --ff-only test` → 打附注标签 → `git push origin HEAD:beta` → `git push origin <tag>` → 用 `git rev-list --left-right --count` 校验与 `origin/beta` 同步 |
-| 当前状态 | **已推送成功（2026-10-20 补推）**：`36cca24..dac8dfc  HEAD -> beta`，标签 `v1.16` 已推送到远端 |
-| 同步校验 | `git fetch origin && git rev-list --left-right --count origin/beta...HEAD` → `0  0`（远端与本地完全一致）；`origin/beta` = `dac8dfc` |
-| 首次推送失败记录（保留） | 2026-10-20 首推 `git push origin HEAD:beta` 返回 128：`fatal: unable to access 'https://github.com/yangguangdijia/xingshu-matrix.git/': Failed to connect to github.com port 443 after 21123 ms: Could not connect to server`；网络恢复后重试即成功，与代码无关 |
-| 仍然没做的 | `git merge --ff-only test` 未执行（`test` 分支停在 `36cca24`，与 `beta` 已分叉，需你确认是否合并）；标签推送本身已完成 |
+| v1.18 发布流程 | `beta`、v1.18 标签和 GitHub Release 均已发布 |
+| 历史状态 | **已推送成功（2026-10-20 补推）**：`36cca24..dac8dfc  HEAD -> beta`，标签 `v1.16` 已推送到远端 |
+| v1.18 当前状态 | v1.18 源码、文档、标签和 GitHub Release 均已发布到 GitHub |
+| 标签基线 | `v1.18` 标签标记本版本源码；beta 后续提交可继续包含文档或开发更新 |
+| 历史发布记录 | 2026-10-20 v1.16 曾有一次网络失败后补推成功；不代表本轮发布状态 |
 
-**补齐方式**（已完成，仅保留供复核）
+**发布复核命令**
 
 ```bash
 # 0) 先确认这台机器能连到 github.com:443
 git ls-remote --heads origin beta     # 通则继续，超时先修网络/代理
 
-# 1) 按约定快进合并 test（若 test 领先）
-git checkout beta && git merge --ff-only test
-
-# 2) 推送分支与标签
+# 1) 推送分支与标签
 git push origin HEAD:beta
-git push origin v1.16
+git push origin v1.18
 
-# 3) 校验同步（左右两边都应为 0）
+# 2) 校验同步（左右两边都应为 0）
 git fetch origin && git rev-list --left-right --count origin/beta...HEAD
 ```
 
-> 结果：`HEAD:beta` 与 `v1.16` 均已推送（远端 tag `refs/tags/v1.16` → commit `dac8dfc`）。
-> 剩余可选项：`git merge --ff-only test`——`test` 分支当前在 `36cca24`，`beta` 已领先 4 个提交，
-> 直接 ff-only 会失败，需先决定是否把 `test` 快进到 `beta`（`git checkout test && git merge --ff-only beta && git push origin test`）。
+GitHub Release：[v1.18](https://github.com/yangguangdijia/xingshu-matrix/releases/tag/v1.18)，发布说明与 CHANGELOG 顶部的 v1.18 条目同步。
 
-### A2. 没有做多分辨率浏览器实测
+### A2. v1.18 没有做多分辨率浏览器实测
 
 | 项 | 事实 |
 | --- | --- |
 | 约定标准 | 改动以 1366×768、1440×900、1680×900、390×844 四个分辨率浏览器实测通过为完成标准 |
-| 实际做了什么 | 只做了 Node 层（`node --test` 5 条、`xs-live-core.js` 自测 48 条、`node --check` 3 个文件）与 Go 层（build / vet / test）验证 |
+| 实际做了什么 | Node API/observability 测试 14 项、JS 语法检查与 Go `go test ./...`；未进行浏览器视口验收 |
 | 实际没做什么 | 没有启动浏览器、没有截图、没有检查控制台错误、没有验证 4 个视口的布局 |
 | 本轮文档改动的风险 | 文档改动本身不影响渲染，但**没有实测就等于没有验收**，不能算完成 |
-| v1.17 补测 | 已实测 **1366×800**（登录、错误登录、首次改密、访问工作台）与 **600×800**（工作台窄屏），控制台无新增错误；**1440×900、1680×900、390×844 仍未测** |
+| 历史补测 | v1.17 曾实测 **1366×800** 与 **600×800**；v1.18 页面改动未做多分辨率浏览器验收 |
 
 **补齐方式**
 
@@ -114,23 +119,23 @@ rm -rf "C:/Users/jiangpeng/AppData/Local/go-build"                             #
 
 > 风险提示：`GOMODCACHE` 迁移后首次构建会做一次模块校验，离线环境下可能失败；建议在网络可用时执行。
 
-### A4. 没有按约定走完整发布流程
+### A4. v1.18 源码发布已完成，部署尚未执行
 
 | 步骤 | 约定 | 实际 |
 | --- | --- | --- |
-| 1 | 审查并测试改动 | 做了（Go + Node） |
-| 2 | `merge --ff-only test` | **未做**（`test` 停在 `36cca24`，比 `beta` 落后 4 个提交；方向应是 `test` 快进到 `beta`） |
-| 3 | 打附注标签 | 做了（`v1.16`） |
-| 4 | 推送 `HEAD:beta` 与标签 | **已做**（`36cca24..dac8dfc` + `[new tag] v1.16`） |
-| 5 | 用 `git rev-list` 校验同步 | **已完成**：`0  0` |
+| 1 | 审查并测试改动 | 做了（Go + Node；结果见 CHANGELOG v1.18） |
+| 2 | 合并其他分支 | v1.18 以当前 beta 工作树为准，未合并 `test` |
+| 3 | 打附注标签 | `v1.18` 已创建并推送 |
+| 4 | 推送 `HEAD:beta` 与标签 | 已推送；GitHub Release 已创建 |
+| 5 | 部署与验收 | 本轮未执行 |
 
-### A5. 演示数据清理的验收没有继续推进
+### A5. v1.16 演示数据清理验收的历史遗留
 
 | 项 | 事实 |
 | --- | --- |
 | 历史遗留 | 之前记录了一条未完成事项：在 `v1.56` 镜像上清空 localStorage 重新登录、确认进入工作台、验证网络策略页空态，然后继续清理剩余演示数据 |
-| 这一轮做了什么 | 只在文档层量化了"还有 8 个页面是演示数据"，**没有改任何页面代码** |
-| 为什么没做 | 这一轮的任务是文档与版本对齐，不是清演示数据；如果要做，属于功能改动，需要单独一轮 |
+| 历史记录 | 该项描述 v1.16；v1.18 已为 trace 与 network 加入真实数据路径，并为未接页面显示 live 空态 |
+| 后续工作 | 继续逐页核对 live 模式数据来源，补齐仍未接入的功能 |
 | 版本号提示 | 该条记录里的 `v1.56` 与当前 `v1.16` 不是同一口径（`v1.56` 是集群镜像构建序号），**是否仍适用未核实** |
 
 ---
@@ -147,20 +152,20 @@ rm -rf "C:/Users/jiangpeng/AppData/Local/go-build"                             #
 
 **补齐方式**：新增 `internal/modules/oncall`，表 `oncall_schedules` / `oncall_layers` / `oncall_overrides` / `oncall_incidents` / `oncall_timeline` / `oncall_slos`，权限 `oncall:read|manage`，注册审批类型 `oncall.change`。
 
-### B2. 7 个页面仍是演示数据，另 1 个（堡垒机）部分接线
+### B2. 仍有页面未接真实后端，另有页面部分接线
 
 | 页面 | 路由 | 现状 | 后端是否就绪 |
 | --- | --- | --- | --- |
 | 多集群 | `#/ops/multicluster` | 演示（`renderMC`） | 无接口 |
-| 流量治理 | `#/traffic` | 演示（`renderTraffic`） | 无接口 |
-| 网络策略 | `#/netpol` | 演示（`renderNetpol`） | 无接口 |
-| 链路追踪 | `#/trace` | 演示（`renderTrace`） | **有接口**（`/observability/traces/*`），前端未接 |
-| 堡垒机 | `#/bastion/*` | **部分接线**：资产 / Web 终端 / 访问工作台接真实后端；账号、授权策略、命令过滤、审计、脱敏、数据库仍为静态示例（live 下 UI 标注） | **有 25 条路由**，已接资产与 SSH 会话 |
-| 工作台 | `#/workbench` | 演示（本地 `state.reqs`） | 部分（devcenter） |
-| 需求管理 | `#/requirements` | 演示（本地 `state.reqs`） | 部分（devcenter） |
-| 测试管理 | `#/testing` | 演示（本地 `PLANS`） | 部分（devcenter） |
+| 流量治理 | `#/traffic` | 拓扑子页部分读取真实 Service / trace；配置页未接 | 部分 |
+| 网络策略 | `#/netpol` | Service / NetworkPolicy 只读真实；编辑下发未接 | 部分 |
+| 链路追踪 | `#/trace` | 服务、检索、详情读取真实接口 | **有**；共享资源标签缺失时为空 |
+| 堡垒机 | `#/bastion/*` | **部分接线**：资产 / Web 终端 / 访问工作台接真实后端；其余未接子页 live 显示空态 | **有 25 条路由**，已接资产与 SSH 会话 |
+| 工作台 | `#/workbench` | 演示模式本地样例；live 显示未接入空态 | 部分（devcenter） |
+| 需求管理 | `#/requirements` | 演示模式本地样例；live 显示未接入空态 | 部分（devcenter） |
+| 测试管理 | `#/testing` | 演示模式本地样例；live 显示未接入空态 | 部分（devcenter） |
 
-**补齐优先级建议**：链路追踪（后端现成，成本最低）→ 堡垒机（后端最完整，收益最大）→ 需求/测试（devcenter 扩字段）→ 流量/网络策略（需先写后端）。
+**后续建议**：补 oncall 后端、网络策略写入与多集群聚合、堡垒机管理子页、研发中心完整流程及真实外部依赖联调。
 
 ### B3. 自动化编排没有执行器
 
@@ -207,7 +212,7 @@ MySQL / PostgreSQL 仍只能登记资产，没有协议代理。前端对这三�
 | C1 | 镜像 tag 统一为应用版本 | 四套并存：集群 `v1.62`、Argo/test1 的 `v1.57`、`image.sh` 默认 `v1.3`、离线包 `v40` | 是否改成 `v1.16`，并把构建序号降级为 label |
 | C2 | 补 Helm Chart | 只有 values 示例 | 是否本轮就做，还是继续用原生清单 + Argo CD |
 | C3 | Go 缓存持久化到 D 盘 | 只做了临时 env，未 `go env -w` | 是否允许改全局 Go 配置（会影响其它项目） |
-| C4 | 下版本优先级 | 已给建议（oncall P0 → 堡垒机 P0 → 联调 P1） | 是否按这个顺序排 v1.17 |
+| C4 | 后续版本优先级 | 历史建议（oncall → 堡垒机 → 联调） | 按当前 v1.18 缺口重新排序 |
 | C5 | 是否下架 `/oncall` 菜单 | 现状是点进去报错 | 短期止血（隐藏菜单）还是直接补后端 |
 
 ---
@@ -216,19 +221,15 @@ MySQL / PostgreSQL 仍只能登记资产，没有协议代理。前端对这三�
 
 | 项 | 证据 |
 | --- | --- |
-| 修复 CI 引用不存在脚本 | `.github/workflows/docker.yml` 改为 `setup-go` + `go build/vet/test` + `node --test` |
+| v1.18 功能 | trace 与网络只读数据路径、应用 inventory、环境与告警范围改进 |
 | 新增进度报告 | `docs/PROGRESS.md`（接线矩阵 + 三张清单） |
 | 重写技术说明 | `docs/PLATFORM.md` |
-| 更新 README | 徽章 v1.16、当前状态、`[真]/[演]/[缺]` 标注、版本与镜像标签说明 |
-| 新增 CHANGELOG | `CHANGELOG.md`（v1.0 → v1.16） |
-| 新增 CI 修复记录 | `docs/fix-ci-smoke-script.md`（四段式） |
-| 新增本清单 | `docs/OUTSTANDING.md` |
-| Go 层验证（D 盘缓存） | `go build` ✅、`go vet` ✅、`go test` 7 个包 `ok` |
-| Node 层验证 | `xs-api.test.mjs` 5 通过、`xs-live-core.js` 48 断言通过、3 个文件语法通过 |
+| 文档 | README、CHANGELOG、PROGRESS、PLATFORM、OUTSTANDING 与两个 API 文档已更新 |
+| Go 层验证 | 隔离缓存下 build、vet、test 全部通过 |
+| Node 层验证 | API/observability 共 14 项通过，新增/修改脚本语法检查通过 |
 
 ---
 
 ## E. 一句话总结
 
-**已经做完的是"文档与版本对齐 + 一处真实 CI 缺陷修复 + 推送到 beta 并打标签"；还没做完的是"四分辨率浏览器实测"（你定的完成标准里就差这一步）和"功能缺口"（oncall 后端、8 个演示页、执行器、真实联调）。**
-下一轮如果要收口，最短路径是：先做四分辨率实测（把 v1.16 真正交付），再按 C4 的顺序补 `oncall` 与堡垒机接线。
+**v1.18 已完成源码、文档、测试及 beta/标签/Release 发布；仍待部署验收，以及 oncall 后端、网络策略写入、自动化执行器、真实外部依赖生产级联调等功能缺口。**

@@ -473,8 +473,8 @@
       .x-mi { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--x-text); font: inherit; font-size: 13px; text-align: left; text-decoration: none; cursor: pointer; }
       .x-mi:hover { background: #f5f6f8; }
       .x-mi svg { width: 16px; height: 16px; color: var(--x-sub); }
-      .x-mi[aria-checked="true"] { color: var(--x-ink); font-weight: 500; }
-      .x-mi[aria-checked="true"]::after { content: "✓"; margin-left: auto; }
+      .x-mi[aria-checked="true"] { color: var(--x-ink); font-weight: 500; background: var(--x-blue-bg, #e8f3ff); border-left: 3px solid var(--x-blue-h, #4096ff); padding-left: 7px; border-radius: 0 6px 6px 0; }
+      .x-mi[aria-checked="true"]::after { content: none; }
       .x-pop hr { margin: 4px 0; border: 0; border-top: 1px solid var(--x-line); }
       .x-poph { display: flex; align-items: center; gap: 8px; padding: 4px 10px 6px; font-size: 13px; font-weight: 600; }
       .x-poph small { color: var(--x-sub); font-weight: 400; font-size: 12px; }
@@ -521,11 +521,6 @@
       .x-col .x-sbrand { justify-content: center; padding: 0; }
       .x-col .x-sbrand .x-wm { display: none; }
       .x-pill { border-radius: 999px; padding: 0 10px; }
-      /* 演示数据开关（头像菜单） */
-      .x-msw { position: relative; flex: none; width: 28px; height: 16px; margin-left: auto; border-radius: 8px; background: #bfbfbf; transition: background .2s; }
-      .x-msw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform .2s; }
-      [aria-checked="true"] > .x-msw { background: var(--x-blue); }
-      [aria-checked="true"] > .x-msw::after { transform: translateX(12px); }
       /* 未接入集群 */
       .x-nodata { display: grid; justify-items: center; gap: 8px; text-align: center; padding: 56px 24px; }
       .x-nodata svg { width: 120px; height: 96px; margin-bottom: 8px; }
@@ -829,6 +824,57 @@
       .x-ch dt { color: var(--x-sub); }
       .x-ch dd { margin: 0; overflow-wrap: anywhere; }
       .x-chfoot { display: flex; gap: 8px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--x-line); }
+      /* Scoped notification configuration and alert details. */
+      .x-channel-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 20px; padding: 16px 20px; border: 1px solid var(--x-line); border-radius: 8px; background: #fff; }
+      .x-channel-tools p { margin: 3px 0 0; color: var(--x-sub); font-size: 13px; }
+      .x-channel-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+      .x-channel-grid .x-ch { margin: 0; padding: 22px; gap: 20px; border-top: 3px solid var(--channel-color); }
+      .x-channel-grid .x-chhead { flex-wrap: wrap; gap: 12px; }
+      .x-channel-grid .x-chhead > div { flex-basis: 90px; }
+      .x-channel-icon { width: 44px; height: 44px; flex: none; border-radius: 12px; display: grid; place-items: center; color: var(--channel-color); background: color-mix(in srgb, var(--channel-color) 9%, white); }
+      .x-channel-icon svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+      .x-channel-icon img { width: 26px; height: 26px; object-fit: contain; }
+      .x-channel-grid .x-ch dl { grid-template-columns: 65px minmax(0, 1fr); gap: 12px 10px; }
+      .x-channel-grid .x-ch dd { min-width: 0; }
+      .x-channel-grid .x-ch dd .x-mono { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+      .x-channel-help { margin: 0; color: var(--x-sub); font-size: 13px; line-height: 1.7; }
+      .x-channel-grid .x-chfoot { justify-content: space-between; padding-top: 16px; }
+      .x-channel-grid .x-chfoot .x-btn { flex: 1; }
+      .x-channel-grid .x-chfoot .x-btn:disabled { opacity: .5; cursor: not-allowed; }
+      .x-channel-editor { width: min(760px, calc(100vw - 32px)); }
+      .x-channel-editor .x-form { padding: 0 26px 24px; gap: 18px; }
+      .x-channel-intro { display: flex; align-items: center; gap: 14px; margin: 24px 26px; }
+      .x-channel-intro strong { display: block; margin-bottom: 3px; font-size: 16px; }
+      .x-channel-editor fieldset { margin: 0; padding: 20px 0 0; border: 0; border-top: 1px solid var(--x-line); display: grid; gap: 16px; min-width: 0; }
+      .x-channel-editor legend { padding: 0 12px 0 0; font-weight: 600; font-size: 13px; }
+      .x-channel-editor .x-input { width: 100%; min-width: 0; }
+      .x-channel-editor textarea.x-input { resize: vertical; min-height: 74px; padding-top: 9px; }
+      .x-channel-editor label small { font-size: 12px; color: var(--x-sub); line-height: 1.65; }
+      .x-channel-editor .x-channel-enabled { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-radius: 8px; background: #f7f9fc; }
+      .x-channel-enabled strong { display: block; font-weight: 500; }
+      .x-channel-enabled input { width: 18px; height: 18px; accent-color: var(--x-blue); }
+      .x-channel-types { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 24px; }
+      .x-channel-types button { display: flex; align-items: center; gap: 14px; padding: 18px; background: #fff; border: 1px solid var(--x-line); border-radius: 8px; color: var(--x-text); text-align: left; font: inherit; cursor: pointer; }
+      .x-channel-types button:hover { border-color: var(--x-blue); background: #f7faff; }
+      .x-modal.x-alert-detail { width: min(1080px, calc(100vw - 40px)); top: 5vh; max-height: 90vh; }
+      .x-alert-content { padding: 24px; }
+      .x-alert-banner { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+      .x-alert-banner h2 { margin: 0 0 8px; font-size: 19px; line-height: 1.5; overflow-wrap: anywhere; }
+      .x-alert-banner p { margin: 0; color: var(--x-sub); font-size: 13px; }
+      .x-alert-columns { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 24px; }
+      .x-alert-section { margin-bottom: 22px; min-width: 0; }
+      .x-alert-section h3 { margin: 0 0 12px; font-size: 14px; }
+      .x-alert-facts { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 10px 14px; margin: 0; font-size: 13px; line-height: 1.6; }
+      .x-alert-facts dt { color: var(--x-sub); }
+      .x-alert-facts dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+      .x-alert-scope { background: #f7f9fc; border: 1px solid #e8edf5; padding: 18px; border-radius: 8px; }
+      .x-alert-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.85; }
+      .x-alert-note { margin: 12px 0 0; color: #735a24; background: #fffbeb; border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.7; }
+      .x-alert-raw { border-top: 1px solid var(--x-line); padding-top: 14px; }
+      .x-alert-raw summary { cursor: pointer; font-size: 13px; font-weight: 500; }
+      .x-alert-raw pre { margin: 12px 0 0; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px; background: #f7f9fc; border-radius: 6px; font: 12px/1.7 "Geist Mono", monospace; }
+      @media (max-width: 1350px) { .x-channel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+      @media (max-width: 760px) { .x-channel-grid, .x-alert-columns { grid-template-columns: minmax(0, 1fr); } .x-channel-tools { align-items: flex-start; } .x-channel-tools .x-btn { flex: none; } .x-channel-editor .x-row2 { grid-template-columns: 1fr; } .x-alert-content { padding: 18px; } .x-alert-banner { flex-wrap: wrap; } }
       @media (max-width: 1200px) { .x-obgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
       @media (max-width: 760px) {
         .x-obgrid { grid-template-columns: minmax(0, 1fr); }
@@ -840,12 +886,13 @@
       /* 链路追踪 */
       .x-tlink { color: var(--x-ink); text-decoration: none; font-weight: 500; }
       .x-tlink:hover { text-decoration: underline; }
+      .x-alert-open { border: 0; padding: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
       .x-topo a .n rect { transition: stroke-width var(--x-t); }
       .x-topo a:hover .n rect, .x-topo a:focus-visible .n rect { stroke-width: 3; }
       .x-sv { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; white-space: nowrap; font-size: 12px; color: var(--x-sub); }
       .x-sv::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--c); }
-      .x-dbar { display: inline-block; vertical-align: middle; width: 64px; height: 6px; margin-left: 8px; border-radius: 3px; background: var(--x-line); overflow: hidden; }
-      .x-dbar i { display: block; height: 100%; background: var(--c, var(--x-blue)); }
+      .x-tr-duration { display: inline-block; vertical-align: middle; width: 64px; height: 6px; margin-left: 8px; border-radius: 3px; background: var(--x-line); overflow: hidden; }
+      .x-tr-duration i { display: block; height: 100%; background: var(--c, var(--x-blue)); }
       .x-trmeta { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 0 0 12px; font-size: 13px; color: var(--x-sub); }
       .x-trmeta b { color: var(--x-text); font-weight: 500; }
       .x-trgrid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
@@ -1751,6 +1798,7 @@
     <script src="datalabels.js"></script>
     <script src="hark-charts.js"></script>
     <script src="xs-api.js"></script>
+    <script src="xs-observability.js"></script>
     <script>
       // Sandboxed iframe (no allow-forms) blocks native submission: re-create it with synthetic submit events
       document.addEventListener("click", (e) => {
@@ -1862,6 +1910,10 @@
         iam: { label: "用户与权限", icon: "users", render: (el) => renderIam(el) },
         settings: { label: "设置", icon: "gear", render: renderSettings },
       };
+      const REAL_DATA_ROUTES = new Set(["automation", "coding", "project", "bugs", "traffic", "trace", "netpol", "bastion"]);
+      function hasRealDataRenderer(key, route) {
+        return !!(window.XS && XS.mode === "live" && (REAL_DATA_ROUTES.has(key) || route.__xsLivePatched || route.__xlopsPatched));
+      }
       async function apiRequest(path, options = {}) {
         if (window.XS && XS.mode === "live") return XS.api(path, options);
         const base = window.XINGSHU_API_BASE || "/api/v1";
@@ -1963,7 +2015,7 @@
           };
           $("lforgot").onclick = (e) => { e.preventDefault(); toast("请联系平台管理员重置密码"); };
           $("lsso").onclick = async () => {
-            if (!window.XS || XS.mode !== "live") return toast("未连接后端，演示模式不支持企业 SSO");
+            if (!window.XS || XS.mode !== "live") return toast("后端未连接，企业 SSO 暂不可用");
             try {
               const cfg = await XS.get("/auth/sso/config");
               if (!cfg || cfg.enabled === false || !cfg.enabled && !cfg.issuer) return toast("企业 SSO 尚未配置，请联系平台管理员");
@@ -2156,14 +2208,23 @@
         render();
       }
 
+      let pageRenderRev = 0;
       function render() {
+        pageRenderRev++;
         legacyHash();
         if (gate()) return;
         drawNav();
         killCharts();
-        const r = routes[current()], on = curLeaf(), t = on ? on.t : r.label;
+        const routeKey = current(), r = routes[routeKey], on = curLeaf(), t = on ? on.t : r.label;
         // Home (#/, #/sre or no hash) shows the bare brand; every other page is 「<页面名> · 星枢 Matrix」
         document.title = /^#?\/?(sre)?$/.test(location.hash) ? "星枢 Matrix" : t + " · 星枢 Matrix";
+        if (!hasRealDataRenderer(routeKey, r)) {
+          const message = window.XS && XS.mode === "live"
+            ? "该页面尚未接入真实数据接口，当前无可展示的数据。"
+            : "后端未连接，无法展示真实数据。";
+          $("view").innerHTML = phead(t, (on && on.s) || r.soon || "") + `<section class="x-panel"><div class="x-empty"><strong>无可展示数据</strong><p>${esc(message)}</p></div></section>`;
+          return;
+        }
         // 堡垒机页面自带连接器状态（可用/未配置/未授权/未连接），不依赖集群是否已接入，
         // 否则「访问工作台」在未接集群的环境里永远看不到，也无法如实展示未连接原因。
         const basPage = current() === "bastion";
@@ -3239,6 +3300,8 @@
       // 构建 / 制品 / 流水线 (#/cicd/<page>[/<app>]): every app's builds and artifacts, optionally filtered to one app
       const CICD = { build: "构建", artifact: "制品", pipeline: "流水线" };
       function renderCicd(el) {
+        el.innerHTML = phead("应用交付", "构建、制品与流水线运行数据") + '<section class="x-panel"><p class="x-empty">应用交付数据尚未就绪，无法显示真实构建记录。</p></section>';
+        return;
         const [, , pg0 = "build", ap = ""] = location.hash.split("/"), pg = CICD[pg0] ? pg0 : "build", app = decodeURIComponent(ap), a = APPS.find((x) => x.name === app);
         if (pg === "pipeline") return renderPipeline(el, app);
         const list = a ? [a] : APPS, sel = `<select class="x-select" style="width:auto" id="cicdApp" aria-label="按应用筛选"><option value="">全部应用</option>${opt(APPS.map((x) => x.name), a ? a.name : "")}</select>`;
@@ -3574,6 +3637,8 @@
         };
       }
       function renderDelivery(el) {
+        el.innerHTML = phead("应用", "各应用的运行状态与最近发布") + '<section class="x-panel"><p class="x-empty">应用交付数据尚未就绪，无法显示真实应用信息。</p></section>';
+        return;
         const a = APPS.find((x) => x.name === cd.app);
         if (!a) {
           el.innerHTML = phead("应用", "各应用的运行状态与最近发布；点击应用管理实例与部署") +
@@ -4815,7 +4880,24 @@
       const clKeep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
       const ENV_TAGS = clLoad("xingshu-env-tags", [["生产", "#f5222d"], ["预发", "#fa8c16"], ["测试", "#1677ff"], ["开发", "#52c41a"]]);
       const ENV_SW = ["#f5222d", "#fa8c16", "#fadb14", "#52c41a", "#13c2c2", "#1677ff", "#722ed1", "#eb2f96", "#8c8c8c"];
-      const envNorm = (e) => (e === "dev" ? "开发" : e);
+      // 环境值规范化：大小写 + 首尾空格 + 常见英文别名 + 中文「环境」后缀，统一成 生产 / 预发 / 测试 / 开发；
+      // 认不出来的自定义环境值（如「灰度」）原样保留，不能被折叠成别的环境。
+      // 同一函数供顶栏菜单计数与环境选择过滤复用。
+      const ENV_ALIAS = {
+        prod: "生产", prd: "生产", production: "生产",
+        pre: "预发", preview: "预发", staging: "预发", uat: "预发",
+        test: "测试", testing: "测试", qa: "测试",
+        dev: "开发", development: "开发",
+      };
+      const ENV_SUFFIX = /\s*(环境|environment|env)$/i;
+      function envNorm(e) {
+        const raw = e == null ? "" : String(e).trim();
+        if (!raw) return "";
+        // 生产环境 / 测试环境 / prod env / dev environment → 去掉后缀后再走别名表
+        const s = raw.replace(ENV_SUFFIX, "").trim();
+        if (!s) return raw;
+        return ENV_ALIAS[s.toLowerCase()] || s;
+      }
       // 资源本身没有环境字段时，用命名空间推断：prod/pre/test/default 等
       const NS_ENV = { prod: "生产", production: "生产", monitoring: "生产", "kube-system": "生产", "istio-system": "生产", pre: "预发", staging: "预发", test: "测试", qa: "测试", dev: "开发", default: "开发" };
       const nsEnv = (ns) => NS_ENV[String(ns || "").toLowerCase()] || (/prod|prd/i.test(ns) ? "生产" : /test|qa/i.test(ns) ? "测试" : /pre|stage/i.test(ns) ? "预发" : "开发");
@@ -4842,6 +4924,54 @@
         l.forEach((c) => CL_ENV[c.n] && (c.env = CL_ENV[c.n]));
         return l.concat(USER_CL).map((c) => ((c.labels = CL_LBL[c.n] || {}), c));
       }
+      // 顶栏环境菜单的集群计数：只认后端 /clusters 的真实清单（不混入演示集群与本地保存的集群）。
+      // 未加载完成时计数返回 null，由渲染方显示「统计中…/未接入」，不把「还没加载」显示成真实的 0。
+      const CL_LIVE = { items: null, status: "idle", loading: null };
+      const clMenuReady = () => CL_LIVE.status === "ready";
+      // 唯一数据源是 window.XS_CLUSTERS（syncClusterLive 写同一份），集群页与菜单口径保持一致
+      const clMenuItems = () => (clMenuReady() ? (Array.isArray(window.XS_CLUSTERS) ? window.XS_CLUSTERS : CL_LIVE.items) : []);
+      function clMenuLoad(force) {
+        if (CL_LIVE.loading) return CL_LIVE.loading;
+        if (!window.XS) { CL_LIVE.status = "unavailable"; return Promise.resolve([]); }
+        if (clMenuReady() && !force) return Promise.resolve(CL_LIVE.items);
+        if (XS.mode !== "live" && XS.mode !== "demo") {
+          // 后端还在探测：等 ready 之后再看是实时还是演示，避免把「探测中」误判成 0 个集群
+          if (!XS.ready || typeof XS.ready.then !== "function") { CL_LIVE.status = "unavailable"; return Promise.resolve([]); }
+          CL_LIVE.status = "loading";
+          CL_LIVE.loading = XS.ready.then(
+            () => { CL_LIVE.loading = null; return clMenuLoad(force); },
+            () => { CL_LIVE.loading = null; CL_LIVE.status = "unavailable"; return []; });
+          return CL_LIVE.loading;
+        }
+        if (XS.mode !== "live") { CL_LIVE.status = "unavailable"; return Promise.resolve([]); }
+        CL_LIVE.status = "loading";
+        CL_LIVE.loading = apiRequest("/clusters?page_size=200").then((d) => {
+          const items = ((d && d.items) || []).filter((c) => c && c.name);
+          CL_LIVE.items = items; CL_LIVE.status = "ready";
+          window.XS_CLUSTERS = items; // 复用已有的实时集群缓存，集群页与菜单共用同一份数据
+          return items;
+        }).catch((err) => {
+          CL_LIVE.items = null; CL_LIVE.status = "error";
+          console.warn("env menu clusters", err);
+          return [];
+        }).then((items) => { CL_LIVE.loading = null; return items; });
+        return CL_LIVE.loading;
+      }
+      function clMenuPrewarm() { if (!clMenuReady() && CL_LIVE.status !== "loading") clMenuLoad(); }
+      // 计数：null = 未知（统计中 / 未接入），调用方据此避免渲染出假的 0
+      function clEnvCount(env) {
+        if (!clMenuReady()) return null;
+        const list = clMenuItems();
+        return env === "全部" ? list.length : list.filter((c) => envNorm(c.env) === env).length;
+      }
+      const clCountTxt = (n) => (n != null ? n + " 个集群"
+        : CL_LIVE.status === "loading" || CL_LIVE.status === "idle" ? "统计中…" : "未接入");
+      // 实时清单里出现的自定义环境值也要能在菜单里选中（值原样保留，只做别名规范化）
+      const clMenuEnvs = () => {
+        const l = [];
+        clMenuItems().forEach((c) => { const e = envNorm(c.env); if (e && l.indexOf(e) < 0) l.push(e); });
+        return l;
+      };
       // 集群自定义标签 key=value，按集群名保存
       const CL_LBL = clLoad("xingshu-cl-labels", {});
       const lblText = (o) => Object.entries(o || {}).map(([k, v]) => `${k}=${v}`).join(" ");
@@ -4856,10 +4986,11 @@
         return { o };
       }
       const lblField = (v = "") => `<label><span>标签（key=value，空格分隔）</span><input class="x-input x-mono" name="lbl" value="${esc(v)}" placeholder="team=infra region=sh" autocomplete="off" spellcheck="false" /></label>`;
-      const envOk = (e) => nav.env === "全部" || envNorm(e) === nav.env;
+      // 环境选择过滤：两侧都走 envNorm，与菜单计数使用同一套别名规则
+      const envOk = (e) => nav.env === "全部" || envNorm(e) === envNorm(nav.env);
       const clVisible = () => clAll().filter((c) => envOk(c.env));
       const clEnvOf = (n) => (clAll().find((c) => c.n === n) || {}).env;
-      // 演示主机：仅在「加载演示数据」打开时出现（hostSync）；用户的主机只来自「导入主机」
+      // 预置主机仅用于离线示例；真实主机只来自「导入主机」
       const HOST_DEMO = [
         { n: "web-01", ip: "10.0.1.11", os: "Ubuntu 22.04", g: "Web 集群", env: "生产", spec: "8C16G", ag: "在线" },
         { n: "web-02", ip: "10.0.1.12", os: "Ubuntu 22.04", g: "Web 集群", env: "生产", spec: "8C16G", ag: "在线" },
@@ -4945,9 +5076,11 @@
                 const rc = parseInt(parts[0], 10) || 0, rd = parseInt(parts[1], 10) || rc;
                 const imgs = w.images || [];
                 K8.wl.push({
-                  k: label, n: w.name, ns: w.namespace || "", ready: [rc, rd],
+                  k: label, n: w.name, ns: w.namespace || "", ready: [rc, rd], cluster: c.name,
                   img: imgs[0] || "—", upd: String(w.created_at || "").slice(0, 10) || "—",
-                  revs: imgs.length ? imgs : ["—"],
+                  revs: imgs.length ? imgs : ["—"], status: w.status || w.phase || "Unknown",
+                  phase: w.phase || "", node: w.node || "", podIP: w.pod_ip || "",
+                  restarts: Number(w.restarts) || 0, labels: w.labels || {}, owner: w.owner || "",
                 });
               });
             } catch (e) { /* 单类失败不影响其它 */ }
@@ -4959,7 +5092,7 @@
       function renderClusters(el) {
         const p = K8_PAGES.find((x) => x.k === "list"), all = clAll(), list = all.filter((c) => envOk(c.env));
         const dn = location.hash.split("/")[3];
-        if (dn) return clDetail(el, all.find((c) => c.n === decodeURIComponent(dn)), decodeURIComponent(dn));
+        if (dn) return clDetail(el, list.find((c) => c.n === decodeURIComponent(dn)), decodeURIComponent(dn));
         [...clSel].forEach((n) => list.some((c) => c.n === n) || clSel.delete(n));
         const nodes = (c) => { const v = clNodeN(c); return !v ? "—" : `<a class="x-tlink" href="${clHash(c.n, "nodes")}" aria-label="查看 ${esc(c.n)} 的 ${v} 个节点">${v}</a>`; };
         const empty = (t, d) => `<section class="x-panel x-nodata">${NODATA_ILL}<strong>${t}</strong><p>${d}</p><div class="x-nodata__acts"><button class="x-btn x-btn--pri" data-cladd>接入集群</button></div></section>`;
@@ -5415,18 +5548,141 @@
       const sre = { env: "全部" };
       // 数据规则：接入 K8s 集群后，运维中心各页展示实时数据
       // 本版本不提供演示数据
-      let demo = false;
+      const demo = false;
       const linked = () => !!(saved.done && cfg.k8s && (cfg.k8s.api || cfg.k8s.kubeconfig || cfg.k8s.name));
       const opsOn = () => demo || linked() || userClusters();
       let OPS = null;
       const ops = () => (OPS = OPS || JSON.parse($("ops-demo").textContent));
+      async function loadSREHistory(box, clusters, clusterNodes, selectedEnv, renderRev) {
+        const isCurrent = () => renderRev === pageRenderRev && current() === "sre" && $("resChartBox") === box;
+        const scope = selectedEnv === "全部" ? "当前环境范围" : selectedEnv + "环境";
+        const empty = (title, detail) => {
+          if (!isCurrent()) return;
+          const target = $("resChartEmpty");
+          if (target) target.innerHTML = "<strong>" + esc(title) + "</strong><p class=\"x-frac\" style=\"margin:6px 0 0\">" + esc(detail) + "</p>";
+        };
+        if (!isCurrent()) return;
+        if (!clusters.length) {
+          empty(scope + "尚未接入集群", "没有集群时不查询 Prometheus，避免显示无归属的指标。");
+          return;
+        }
+
+        const groups = new Map();
+        for (const cluster of clusters) {
+          const name = String(cluster && cluster.name || "").trim();
+          const env = envNorm(cluster && cluster.env);
+          if (!name || !env) {
+            empty("集群环境信息不完整", "请为集群补充环境标签后再显示对应指标。");
+            return;
+          }
+          if (!groups.has(env)) groups.set(env, new Set());
+          groups.get(env).add(name);
+        }
+        const instancesByCluster = new Map();
+        clusterNodes.forEach((node) => {
+          const name = String(node && node.cluster || "").trim();
+          const ip = String(node && node.internal_ip || "").trim();
+          if (!name || !ip) return;
+          const instance = ip.startsWith("[") ? ip + ":9100"
+            : ip.includes(":") ? "[" + ip + "]:9100" : ip + ":9100";
+          if (!instancesByCluster.has(name)) instancesByCluster.set(name, new Set());
+          instancesByCluster.get(name).add(instance);
+        });
+
+        try {
+          const dsRaw = await apiRequest("/observability/datasources");
+          if (!isCurrent()) return;
+          const list = Array.isArray(dsRaw) ? dsRaw : (dsRaw.items || []);
+          const promSources = list.filter((d) => String(d.type || "").toLowerCase() === "prometheus");
+          const jobs = Array.from(groups, ([env, nameSet]) => {
+            const names = Array.from(nameSet);
+            const clusterInstances = names.map((name) => instancesByCluster.get(name));
+            return {
+              env,
+              names,
+              instances: Array.from(new Set(clusterInstances.flatMap((set) => set ? Array.from(set) : []))),
+              missingClusterNodes: clusterInstances.some((set) => !set || !set.size),
+              datasource: promSources.find((d) => envNorm(d.env) === env)
+            };
+          });
+          if (jobs.some((job) => job.missingClusterNodes)) {
+            empty("集群节点信息不完整", "无法将所选集群的节点映射到 Prometheus instance 标签。");
+            return;
+          }
+          if (jobs.some((job) => !job.datasource)) {
+            empty("当前环境未配置 Prometheus", "所选集群的环境没有对应的 Prometheus 数据源。");
+            return;
+          }
+
+          const end = Math.floor(Date.now() / 1000), start = end - 24 * 3600;
+          const escapeRegex = (value) => {
+            const slash = String.fromCharCode(92);
+            const special = ".+*?()|[]{}^$" + slash;
+            return String(value).split("").map((ch) => special.indexOf(ch) >= 0 ? slash + ch : ch).join("");
+          };
+          const queryRange = (datasource, query) =>
+            "/observability/prometheus/" + encodeURIComponent(datasource.id) + "/query_range?query=" +
+            encodeURIComponent(query) + "&start=" + start + "&end=" + end + "&step=300";
+          const responses = await Promise.all(jobs.map(async (job) => {
+            const pattern = job.instances.map(escapeRegex).join("|");
+            const matcher = "instance=~" + JSON.stringify(pattern);
+            const cpuQuery = '100 - (avg(rate(node_cpu_seconds_total{mode="idle",' + matcher + '}[5m])) * 100)';
+            const memQuery = "100 * (1 - sum(node_memory_MemAvailable_bytes{" + matcher +
+              "}) / sum(node_memory_MemTotal_bytes{" + matcher + "}))";
+            const result = await Promise.all([
+              apiRequest(queryRange(job.datasource, cpuQuery)),
+              apiRequest(queryRange(job.datasource, memQuery))
+            ]);
+            return { cpu: result[0], mem: result[1] };
+          }));
+          if (!isCurrent()) return;
+
+          const points = (raw) => {
+            const result = raw && raw.data && raw.data.result;
+            if (!Array.isArray(result)) return [];
+            return result.flatMap((series) => (series.values || []).map((value) => [
+              Number(value[0]), Number.parseFloat(value[1])
+            ])).filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
+          };
+          const combine = (key) => {
+            const byTime = new Map();
+            responses.forEach((response, index) => {
+              const weight = jobs[index].names.length;
+              points(response[key]).forEach(([time, value]) => {
+                const acc = byTime.get(time) || { sum: 0, weight: 0 };
+                acc.sum += value * weight;
+                acc.weight += weight;
+                byTime.set(time, acc);
+              });
+            });
+            return Array.from(byTime, ([time, value]) => [time, value.sum / value.weight])
+              .sort((a, b) => a[0] - b[0]);
+          };
+          const cpu = combine("cpu"), mem = combine("mem");
+          if (!cpu.length && !mem.length) {
+            empty("Prometheus 暂无 24h 数据", "数据源已接入，但没有匹配当前集群标签的采样点。");
+            return;
+          }
+          const times = Array.from(new Set(cpu.concat(mem).map((point) => point[0]))).sort((a, b) => a - b);
+          const cpuByTime = new Map(cpu), memByTime = new Map(mem);
+          const labels = times.map((time) => new Date(time * 1000).toTimeString().slice(0, 5));
+          if (!isCurrent()) return;
+          box.style.display = "block";
+          box.innerHTML = '<canvas id="resChart" role="img" aria-label="过去 24 小时 CPU 与内存使用率"></canvas>';
+          obChart("resChart", labels, [
+            ["CPU", times.map((time) => cpuByTime.has(time) ? cpuByTime.get(time) : null), "#1677ff"],
+            ["内存", times.map((time) => memByTime.has(time) ? memByTime.get(time) : null), "#52c41a"]
+          ], "%");
+        } catch (e) {
+          empty("Prometheus 读取失败", e.message || "接口错误");
+        }
+      }
       // 中间件告警 (demo only): raised by the 中间件 page's demo instances, listed in 告警事件 with a link back (mw)
       const MW_ALERTS = [
         { p: "P1", app: "kafka-prod", env: "生产", msg: "Kafka 消费堆积：消费组 order-events Lag 128k，持续上涨", rule: "Kafka 消费堆积", val: "128k", t: "22 分钟", who: "", st: "告警中", mw: "#/middleware/kafka/kafka-prod" },
         { p: "P0", app: "rabbitmq-prod", env: "生产", msg: "RabbitMQ 节点宕机：rabbit@rabbitmq-prod-2 不可达，集群 2/3 运行", rule: "RabbitMQ 节点宕机", val: "2/3", t: "9 分钟", who: "", st: "告警中", mw: "#/middleware/rabbitmq/rabbitmq-prod" },
       ];
       const liveAlerts = () => (opsOn() ? [...ops().alerts, ...(demo ? MW_ALERTS : [])].filter((a) => !a.ack) : []);
-      function setDemo() { toast("当前版本不提供演示数据，请接入集群与后端服务"); }
       let charts = [];
       const killCharts = () => { charts.forEach((c) => c.destroy()); charts = []; };
       // 图表配色：有数据的序列一律用调色板，演示数据与真实数据相同；灰色只留给空状态占位与网格线
@@ -5481,10 +5737,11 @@
       const NST = { Ready: "x-green", 高负载: "x-orange", 内存压力: "x-red" };
       const pillTag = (t, c) => `<span class="x-tag x-dot x-pill ${c}">${esc(t)}</span>`;
       const meter = (v) => `<span class="x-meter"><span class="x-prog${v >= 85 ? " x-hot" : v >= 75 ? " x-low" : ""}"><i style="width:${v}%"></i></span>${v}%</span>`;
-      const fmtN = (v) => v.toLocaleString("en-US");
+      const fmtN = (v) => v == null || !Number.isFinite(Number(v)) ? "—" : v.toLocaleString("en-US");
       // 总览：沿用原来的布局与交互（5 张 KPI / 24h 曲线卡 / 节点 TOP5 / 平台公告 / 环境筛选 / 变更与告警），
       // 数据改为实时读取后端；取不到的区块保留卡片与入口，标注"未接入"。
       async function renderSRE(el) {
+        const renderRev = ++pageRenderRev;
         killCharts();
         el.innerHTML = phead("总览", "集群容量、节点负载、变更与告警") +
           '<section class="x-panel"><p class="x-empty">正在读取集群数据…</p></section>';
@@ -5495,6 +5752,20 @@
         try { alerts = (await apiRequest("/observability/alerts?page_size=200&status=firing")).items || []; } catch (e) { failed.push("告警：" + e.message); }
         try { notices = (await apiRequest("/platform/notices")).items || []; } catch (e) { failed.push("公告：" + e.message); }
         try { if (window.XS && XS.mode === "live") await XS.ready; } catch (e) {}
+
+        // 先按当前环境筛选集群，再从这些集群加载节点和 Pod，避免总览混入其它环境的数据。
+        const selectedEnv = envNorm(sre.env);
+        const allEnvs = selectedEnv === "全部";
+        clusters = clusters.filter((c) => allEnvs || envNorm(c.env) === selectedEnv);
+        const visibleClusterNames = new Set(clusters.map((c) => c.name));
+        const visibleClusterEnvs = new Set(clusters.map((c) => envNorm(c.env)).filter(Boolean));
+        alerts = alerts.filter((a) => {
+          const labels = a && a.labels || {};
+          const alertEnv = a && (a.env || a.environment || a.cluster_env) || labels.env || labels.environment;
+          const clusterName = a && (a.cluster || a.cluster_name) || labels.cluster || labels.cluster_name;
+          if (clusterName) return visibleClusterNames.has(clusterName);
+          return !!alertEnv && visibleClusterEnvs.has(envNorm(alertEnv));
+        });
 
         // 逐集群拿节点（含 CPU/内存使用率，依赖 metrics-server）
         const nodes = [];
@@ -5513,32 +5784,29 @@
             const items = d.items || [];
             podsTotal += d.total != null ? d.total : items.length;
             podsRunning += items.filter((p) => String(p.phase || p.status) === "Running").length;
-            items.forEach((p) => { if (p.node) podByNode[p.node] = (podByNode[p.node] || 0) + 1; });
+            items.forEach((p) => { if (p.node) { const key = c.name + "/" + p.node; podByNode[key] = (podByNode[key] || 0) + 1; } });
           } catch (e) {}
         }));
 
-        const f = (e) => sre.env === "全部" || e === sre.env;
-        const envOf = (c) => (c === "dev" ? "开发" : c);
+        if (renderRev !== pageRenderRev || current() !== "sre") return;
         const ready = nodes.filter((n) => n.ready).length;
         const cpuAvg = nodes.filter((n) => n.usage).length ? Math.round(nodes.reduce((s, n) => s + (n.usage ? n.usage.cpu_percent : 0), 0) / nodes.filter((n) => n.usage).length) : null;
         const memAvg = nodes.filter((n) => n.usage).length ? Math.round(nodes.reduce((s, n) => s + (n.usage ? n.usage.memory_percent : 0), 0) / nodes.filter((n) => n.usage).length) : null;
         const metricsOK = nodes.some((n) => n.usage);
         const top = nodes.slice().sort((a, b) => ((b.usage ? b.usage.cpu_percent : -1) - (a.usage ? a.usage.cpu_percent : -1))).slice(0, 5);
-        const visClusters = clusters.filter((c) => f(envOf(c.env)));
-
         el.innerHTML = phead("总览", clusters.length + " 个集群的容量、节点负载、变更与告警") +
           (failed.length ? `<p class="x-aerr" role="alert">部分数据加载失败：${esc(failed.join("；"))}</p>` : "") +
           `<div class="x-cards x-cards5">
             <div class="x-card x-kpi" tabindex="0" role="link" data-go="#/cluster/list"><p>集群数</p><strong>${clusters.length}</strong>
               <span class="x-frac">${clusters.length ? esc(clusters.map((c) => c.name).join(" · ")) : "尚未接入"}</span></div>
             <div class="x-card x-kpi" tabindex="0" role="link" data-go="#/cluster/nodes"><p>节点 Ready / 总数</p><strong>${nodes.length ? ready + " / " + nodes.length : "—"}</strong>
-              <span class="x-frac">${nodes.length ? (nodes.length - ready) + " 个 NotReady" : "未接入集群"}</span></div>
+              <span class="x-frac">${nodes.length ? (nodes.length - ready ? `${nodes.length - ready} 个 NotReady` : "全部就绪") : "未接入集群"}</span></div>
             <div class="x-card x-kpi" tabindex="0" role="link" data-go="#/cluster/workloads"><p>Pod 运行 / 总数</p><strong>${podsKnown ? podsRunning + " / " + podsTotal : "—"}</strong>
-              <span class="x-frac">${podsKnown ? "来自 /workloads/pods" : "未接入"}</span></div>
+              <span class="x-frac">${podsKnown ? (podsTotal - podsRunning ? `${podsTotal - podsRunning} 个异常` : "全部运行中") : "未接入"}</span></div>
             <div class="x-card x-kpi" tabindex="0" role="link" data-go="#/observe"><p>CPU 使用率</p><strong>${cpuAvg == null ? "—" : cpuAvg + "%"}</strong>
-              <span class="x-frac">${metricsOK ? "节点均值 · metrics-server" : "metrics-server 未就绪"}</span></div>
+              <span class="x-frac" title="metrics-server 最近一次采样，节点 CPU 使用率算术均值；历史图使用 Prometheus 5 分钟速率">${metricsOK ? "metrics-server · 节点均值" : "暂无数据"}</span></div>
             <div class="x-card x-kpi" tabindex="0" role="link" data-go="#/observe"><p>内存使用率</p><strong>${memAvg == null ? "—" : memAvg + "%"}</strong>
-              <span class="x-frac">${metricsOK ? "节点均值 · metrics-server" : "metrics-server 未就绪"}</span></div>
+              <span class="x-frac" title="metrics-server 最近一次采样，节点内存使用率算术均值；历史图使用 node-exporter 物理内存总量加权">${metricsOK ? "metrics-server · 节点均值" : "暂无数据"}</span></div>
           </div>
           <section class="x-panel x-setform"><div class="x-sethead"><h2 class="x-h2">集群资源使用 · 24h</h2>
             <span class="x-frac">${metricsOK ? "当前 CPU " + cpuAvg + "% · 内存 " + memAvg + "%" : "需要 Prometheus 才能保留 24h 历史"}</span></div>
@@ -5554,7 +5822,7 @@
                 `<span class="x-tag x-grey">${esc(n.cluster)}</span>`,
                 n.usage ? `${n.usage.cpu_percent}%` : "—",
                 n.usage ? `${n.usage.memory_percent}%` : "—",
-                podByNode[n.name] != null ? podByNode[n.name] : "—",
+                podByNode[n.cluster + "/" + n.name] != null ? podByNode[n.cluster + "/" + n.name] : "—",
                 n.ready ? '<span class="x-tag x-green">Ready</span>' : '<span class="x-tag x-red">NotReady</span>'
               ])) : '<p class="x-empty">尚无节点数据</p>'}</section>
             <section class="x-panel"><div class="x-sethead"><h2 class="x-h2">平台公告</h2><button class="x-btn" id="addNotice">+ 发布公告</button></div>
@@ -5568,56 +5836,34 @@
           <div class="x-two">
             <section class="x-panel"><h2 class="x-h2">最近变更</h2>
               <p class="x-empty">尚未接入发布记录：在「应用交付 › 发布单」创建发布后显示。</p></section>
-            <section class="x-panel"><h2 class="x-h2">活跃告警 <span class="x-frac">${alerts.length} 条</span></h2>
+            <section class="x-panel"><div class="x-sethead"><h2 class="x-h2">活跃告警 <span class="x-frac">${alerts.length} 条</span></h2><a class="x-btn" href="#/observe/events">查看全部</a></div>
               ${alerts.length ? `<ul class="x-list">${alerts.slice(0, 8).map((a) => {
                 const lb = a.labels || {};
                 const title = a.alertname || a.name || lb.alertname || "告警";
                 const detail = a.summary || (a.annotations && a.annotations.summary) || (a.annotations && a.annotations.description) || "";
-                return `<li><span class="x-tag x-red">${esc(a.severity || lb.severity || "P?")}</span>` +
+                const loc = [lb.namespace, lb.pod, lb.instance].filter(Boolean).join(" · ") || lb.cluster || a.cluster || "";
+                return `<li role="button" tabindex="0" data-alert-open="${esc(a.id)}" style="cursor:pointer">` +
+                  `<span class="x-tag x-red">${esc(a.severity || lb.severity || "严重")}</span>` +
                   `<span class="x-name">${esc(title)}</span>` +
-                  `<span class="x-frac">${esc([lb.namespace, lb.pod, lb.instance].filter(Boolean).join(" · ") || a.status || "firing")}</span>` +
-                  (detail ? `<span class="x-frac" style="display:block;margin-left:24px">${esc(String(detail).slice(0, 120))}</span>` : "") + "</li>";
+                  (loc ? `<span class="x-frac">${esc(loc)}</span>` : "") +
+                  (detail ? `<span class="x-frac" style="display:block;margin-top:2px;margin-left:0">${esc(String(detail).slice(0, 100))}</span>` : "") + "</li>";
               }).join("")}</ul>` : '<p class="x-empty">当前没有触发中的告警</p>'}</section>
           </div>`;
 
-        el.querySelectorAll("[data-seg]").forEach((b) => (b.onclick = () => { sre.env = b.dataset.seg; renderSRE(el); }));
-        el.querySelectorAll("[data-go]").forEach((t) => (t.onclick = () => navGo(t.dataset.go)));
+        el.querySelectorAll("[data-seg]").forEach((b) => (b.onclick = () => { sre.env = b.dataset.seg; nav.env = envNorm(b.dataset.seg); drawTop(); renderSRE(el); }));
+        el.querySelectorAll("[data-go]").forEach((t) => { t.onclick = () => navGo(t.dataset.go); if (t.getAttribute("tabindex") === "0") t.onkeydown = (e) => e.key === "Enter" && navGo(t.dataset.go); });
+        el.querySelectorAll("[data-alert-open]").forEach((t) => {
+          const open = (e) => { e.preventDefault(); window.XSOpenAlertDetail(t.dataset.alertOpen); };
+          t.onclick = open;
+          t.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") open(e); };
+        });
         el.querySelectorAll("[data-note-del]").forEach((b) => (b.onclick = async () => {
           if (!confirm("删除这条公告？")) return;
           try { await apiRequest("/platform/notices/" + encodeURIComponent(b.dataset.noteDel), { method: "DELETE" }); toast("已删除公告"); renderSRE(el); }
           catch (e) { toast("删除失败：" + e.message); }
         }));
-        // 24h 曲线：从平台已注册的 prometheus 数据源取 query_range
-        (async () => {
-          const box = $("resChartBox");
-          if (!box) return;
-          try {
-            const dsRaw = await apiRequest("/observability/datasources");
-            const list = Array.isArray(dsRaw) ? dsRaw : (dsRaw.items || []);
-            const prom = list.find((d) => d.type === "prometheus");
-            if (!prom) { $("resChartEmpty").innerHTML = '<strong>尚未接入 Prometheus</strong><p class="x-frac" style="margin:6px 0 0">在「设置 › 系统接入」配置数据源后显示 24h 曲线。</p>'; return; }
-            const end = Math.floor(Date.now() / 1000), start = end - 24 * 3600;
-            const q = (q) => `/observability/prometheus/${prom.id}/query_range?query=${encodeURIComponent(q)}&start=${start}&end=${end}&step=300`;
-            const [cpuR, memR] = await Promise.all([
-              apiRequest(q("100 - (avg(rate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)")),
-              apiRequest(q("100 * (1 - avg(node_memory_MemAvailable_bytes) / avg(node_memory_MemTotal_bytes))")),
-            ]);
-            const series = (raw) => {
-              const r = raw && raw.data && raw.data.result && raw.data.result[0];
-              return r && r.values ? r.values.map((v) => [v[0], Math.round(parseFloat(v[1]) * 10) / 10]) : [];
-            };
-            const cpu = series(cpuR), mem = series(memR);
-            if (!cpu.length && !mem.length) { $("resChartEmpty").innerHTML = '<strong>Prometheus 暂无 24h 数据</strong><p class="x-frac" style="margin:6px 0 0">数据源已接入，但最近 24h 没有采样点。</p>'; return; }
-            const base = (cpu.length ? cpu : mem);
-            const labels = base.map(([ts]) => new Date(ts * 1000).toTimeString().slice(0, 5));
-            box.style.display = "block";
-            box.innerHTML = '<canvas id="resChart" role="img" aria-label="过去 24 小时 CPU 与内存使用率"></canvas>';
-            const align = (arr) => arr.length === labels.length ? arr.map((x) => x[1]) : arr.map((x) => x[1]);
-            obChart("resChart", labels, [["CPU", align(cpu), "#1677ff"], ["内存", align(mem), "#52c41a"]], "%");
-          } catch (e) {
-            if ($("resChartEmpty")) $("resChartEmpty").innerHTML = '<strong>Prometheus 读取失败</strong><p class="x-frac" style="margin:6px 0 0">' + esc(e.message || "接口错误") + "</p>";
-          }
-        })();
+        const chartBox = $("resChartBox");
+        if (chartBox) loadSREHistory(chartBox, clusters, nodes, selectedEnv, renderRev);
         $("addNotice").onclick = () => {
           dlg("发布公告", `<form class="x-form" id="ntf" novalidate>
             <label><span>标题</span><input class="x-input" name="title" maxlength="200" required /></label>
@@ -5865,16 +6111,20 @@
       function renderSec(el) {
         const s = secCur(), g = current() === "bastion" && BAS_G.find((x) => x.ks.length > 1 && x.ks.includes(s.k));
         if (!g) return secBody(el, s);
-        el.innerHTML = `<div class="x-bar"><nav class="x-tabs" aria-label="${g.t}">${g.ks.map((k) => { const p = SEC.find((x) => x.k === k), n = p.n ? p.n() : 0;
+        el.innerHTML = `<div class="x-bar"><nav class="x-tabs" aria-label="${g.t}">${g.ks.map((k) => { const p = SEC.find((x) => x.k === k), n = BAS_UNWIRED.includes(k) ? 0 : p.n ? p.n() : 0;
           return `<button type="button" data-sh="${secHash(p)}"${p === s ? ' class="on" aria-current="page"' : ""}>${p.t}${n ? `<b>${n}</b>` : ""}</button>`; }).join("")}</nav></div><div></div>`;
         el.querySelectorAll("[data-sh]").forEach((b) => (b.onclick = () => navGo(b.dataset.sh)));
         secBody(el.lastElementChild, s);
       }
       // 未接入后端的堡垒机子页：live 模式明确标注为静态示例，避免把演示数据当成生产状态
-      const BAS_UNWIRED = ["accounts", "policy", "cmd", "audit", "mask", "db"];
+      const BAS_UNWIRED = ["accounts", "policy", "cmd", "audit", "mask", "db", "batch", "cmdap", "req", "pwd", "lsec"];
       const basStaticNote = (s) => (!basIsLive() || current() !== "bastion" || !BAS_UNWIRED.includes(s.k) ? ""
-        : `<p class="x-frac" style="margin:0 0 10px;padding:8px 12px;border:1px solid #ffe0a3;border-radius:8px;background:#fffaf0">静态示例数据：${esc(s.t)} 尚未接入后端接口，本轮只展示交互，不代表真实生产状态。</p>`);
+        : `<p class="x-frac" style="margin:0 0 10px;padding:8px 12px;border:1px solid #ffe0a3;border-radius:8px;background:#fffaf0">${esc(s.t)} 尚未接入后端接口。</p>`);
       function secBody(el, s) {
+        if (basIsLive() && BAS_UNWIRED.includes(s.k)) {
+          el.innerHTML = phead(s.t, s.sub) + '<section class="x-panel"><p class="x-empty">该页面尚未接入真实数据接口，当前无可展示的数据。</p></section>';
+          return;
+        }
         if (s.view) {
           s.view(el);
           const note = basStaticNote(s);
@@ -7205,9 +7455,8 @@
         const prod = GOV.ls.prod && basMeta(r).env === "生产", mfa = GOV.ls.mfa && !GOV.mfaOk;
         if (!prod && !mfa) return fn();
         dlg(`安全校验 · ${esc(r[0])}`, `<form class="x-form" id="ggF">${prod ? `<p class="x-warn" style="margin:0">⚠ ${esc(r[0])}（${esc(r[1])}）是<b>生产资产</b>，会话全程录像，高危命令需审批。</p><label class="x-switch"><input type="checkbox" role="switch" name="ok" required /> 我确认以 ${esc(u)} 登录该生产资产</label>` : ""}
-          ${mfa ? `<label><span>MFA 动态码</span><input class="x-input" name="otp" inputmode="numeric" pattern="\\d{6}" maxlength="6" placeholder="6 位数字" required autocomplete="one-time-code" /></label>${demo ? '<p class="x-frac" style="margin:-8px 0 0">演示环境：输入任意 6 位数字 <button type="button" class="x-act" id="ggDemo" style="color:var(--x-blue)">填入演示码</button></p>' : ""}<p class="x-frac" style="margin:0">验证通过后，本次登录内不再重复校验。</p>` : ""}</form>`,
+          ${mfa ? `<label><span>MFA 动态码</span><input class="x-input" name="otp" inputmode="numeric" pattern="\\d{6}" maxlength="6" placeholder="6 位数字" required autocomplete="one-time-code" /></label><p class="x-frac" style="margin:0">验证通过后，本次登录内不再重复校验。</p>` : ""}</form>`,
           '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="ggF">验证并连接</button>');
-        if ($("ggDemo")) $("ggDemo").onclick = () => { const o = $("ggF").elements.otp; o.value = "123456"; o.focus(); };
         $("ggF").onsubmit = (e) => { e.preventDefault(); if (mfa) GOV.mfaOk = true; basAudit(r[0], `登录校验通过 · ${[mfa && "MFA", prod && "生产二次确认"].filter(Boolean).join(" + ")}`); fn(); };
       }
       // A session ends once (closed tab, exit, forced or idle) and becomes a history row with its recording
@@ -9302,7 +9551,7 @@
         };
       }
       // 中间件 (#/middleware, #/middleware/<type>/<id>): Kafka / RabbitMQ / RocketMQ 实例、节点/Broker、Topic/队列与消费组堆积。
-      // 演示实例只在「加载演示数据」时出现（关闭时为空状态）；新建的 Topic/队列只在内存中。MW_ALERTS (above) feed 告警事件
+      // 预置中间件只用于离线示例；实时模式从后端读取实例。MW_ALERTS (above) feeds alert events.
       const MW_T = {
         kafka: { t: "Kafka", node: "Broker", topic: "Topic", part: "分区", grp: "消费组" },
         rabbitmq: { t: "RabbitMQ", node: "节点", topic: "队列", part: "类型", grp: "消费者" },
@@ -10034,7 +10283,13 @@
       function ndDrawer(i, tab = ND.tab) {
         const x = K8.nodes[i]; if (!x) return;
         ND = { ...ND, i, tab };
-        const d = $("drawer"), inf = ndInfo(x), pods = demo ? ndPods(x) : [], M = demo && tab === "监控" ? ndMetrics(x, inf, ND.rg) : [];
+        const d = $("drawer"), inf = ndInfo(x), live = !!(window.XS && XS.mode === "live");
+        const pods = live
+          ? K8.wl.filter((w) => w.k === "Pod" && w.cluster === x.c && w.node === x.n).map((w) => ({
+              n: w.n, ns: w.ns, st: w.status || w.phase || "Unknown", rs: w.restarts || 0,
+            }))
+          : demo ? ndPods(x) : [];
+        const M = demo && tab === "监控" ? ndMetrics(x, inf, ND.rg) : [];
         const dl = (rows) => `<dl class="x-sum">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`, mono = (v) => `<span class="x-mono">${v}</span>`;
         chartsIn(d);
         const body = {
@@ -10045,8 +10300,14 @@
               ["磁盘", inf.disk ? `${inf.disk} GiB${inf.diskPct == null ? "（容量；使用率未采集）" : ` · 已用 ${inf.diskPct}%`}` : "—"], ["Pod 容量", `${x.pods} / 110`]])}`,
           监控: () => !demo ? ndOff("监控数据") : `<div class="x-ndhd"><span class="x-frac">当前 CPU ${x.cpu}% · 内存 ${x.mem}% · 磁盘 ${inf.diskPct}%</span><span style="display:inline-flex;gap:6px" role="group" aria-label="时间范围">${["1h", "6h", "24h"].map((r) => `<button class="x-seg" data-ndrg="${r}" aria-pressed="${r === ND.rg}">${r}</button>`).join("")}</span></div>
             <div class="x-ndgrid">${M.map(([k, t, u, sets]) => { const all = sets.flatMap((s) => s[1]); return `<section class="x-panel"><h3 class="x-h2" style="margin:0 0 8px">${t}</h3><div class="x-ochart"><canvas id="ndc-${k}" role="img" aria-label="${t}近 ${ND.rg} 在 ${Math.min(...all)} 到 ${Math.max(...all)}${u ? " " + u : ""} 之间"></canvas></div></section>`; }).join("")}</div>`,
-          Pod: () => !demo ? ndOff("Pod 数据") : `<p class="x-frac" style="margin:0 0 8px">${pods.length} 个 Pod · CPU 请求合计 ${(pods.reduce((s, p) => s + p.c, 0) / 1000).toFixed(2)} / ${inf.cores} 核 · 内存请求合计 ${(pods.reduce((s, p) => s + p.m, 0) / 1024).toFixed(1)} / ${inf.mem} GiB</p>`
-            + k8Table(["Pod", "命名空间", "状态", "CPU 请求", "内存请求", "重启"], pods.map((p) => k8Row("", [`<span class="x-name">${p.n}</span>`, p.ns, pillTag(p.st, p.st === "Running" ? "x-green" : "x-red"), mono(fmtCpu(p.c)), mono(fmtMem(p.m)), p.rs ? `<b>${p.rs}</b>` : 0]))),
+          Pod: () => {
+            if (!demo && !live) return ndOff("Pod 数据");
+            if (live) return pods.length
+              ? `<p class="x-frac" style="margin:0 0 8px">${pods.length} 个 Pod</p>` + k8Table(["Pod", "命名空间", "状态", "CPU 请求", "内存请求", "重启"], pods.map((p) => k8Row("", [`<span class="x-name">${p.n}</span>`, p.ns, pillTag(p.st, p.st === "Running" ? "x-green" : "x-red"), mono("—"), mono("—"), p.rs ? `<b>${p.rs}</b>` : 0])))
+              : ndOff("Pod 数据");
+            return `<p class="x-frac" style="margin:0 0 8px">${pods.length} 个 Pod · CPU 请求合计 ${(pods.reduce((s, p) => s + p.c, 0) / 1000).toFixed(2)} / ${inf.cores} 核 · 内存请求合计 ${(pods.reduce((s, p) => s + p.m, 0) / 1024).toFixed(1)} / ${inf.mem} GiB</p>`
+              + k8Table(["Pod", "命名空间", "状态", "CPU 请求", "内存请求", "重启"], pods.map((p) => k8Row("", [`<span class="x-name">${p.n}</span>`, p.ns, pillTag(p.st, p.st === "Running" ? "x-green" : "x-red"), mono(fmtCpu(p.c)), mono(fmtMem(p.m)), p.rs ? `<b>${p.rs}</b>` : 0])));
+          },
           标签与污点: () => `<div class="x-ndhd"><h3 class="x-h2" style="margin:0">标签 <span class="x-frac">${Object.keys(x.labels).length}</span></h3><button class="x-btn" data-ndact="label">编辑标签/污点</button></div>${lblTags(x.labels)}
             <h3 class="x-h2" style="margin:20px 0 8px">污点 <span class="x-frac">${x.taints.length}</span></h3>${x.taints.length ? `<span class="x-lbls">${x.taints.map((t) => `<span class="x-tag x-orange x-tag--s">${esc(t)}</span>`).join("")}</span>` : '<p class="x-frac" style="margin:0">无污点，所有 Pod 均可调度到该节点</p>'}
             ${x.cordon ? '<p class="x-frac" style="margin:8px 0 0">节点已封锁，相当于 node.kubernetes.io/unschedulable:NoSchedule</p>' : ""}`,
@@ -10094,8 +10355,21 @@
         chartsIn(el);
         const crumb = `<p class="x-crumb"><a class="x-tlink" href="#/cluster/list">集群</a><i>/</i><b>${esc(name)}</b></p>`;
         if (!c) { el.innerHTML = crumb + phead(esc(name), "集群不存在或已移除") + `<section class="x-panel x-nodata">${NODATA_ILL}<strong>找不到集群「${esc(name)}」</strong><p>它可能已被移除，或</p><div class="x-nodata__acts"><a class="x-btn x-btn--pri" href="#/cluster/list">返回集群列表</a></div></section>`; return; }
+        // 进入集群详情时，同步顶栏环境与 SRE 总览环境筛选到该集群所在环境
+        if (c.env) {
+          const cEnv = envNorm(c.env);
+          if (cEnv && nav.env !== cEnv) { nav.env = cEnv; sre.env = cEnv === "开发" ? "dev" : cEnv; drawTop(); }
+        }
         const tab = (CL_TABS.find((t) => t[0] === location.hash.split("/")[4]) || CL_TABS[0])[0], u = USER_CL.indexOf(c), st = c.st || "运行中";
-        const N = demo && c.demo ? K8.nodes.filter((x) => x.c === c.n) : [], has = N.length > 0, P = N.flatMap(ndPods);
+        const N = c.live ? K8.nodes.filter((x) => x.c === c.n) : demo && c.demo ? K8.nodes.filter((x) => x.c === c.n) : [];
+        const has = N.length > 0;
+        const P = c.live
+          ? K8.wl.filter((w) => w.k === "Pod" && w.cluster === c.n).map((w) => ({
+              app: w.labels && (w.labels.app || w.labels["app.kubernetes.io/name"]) || w.owner || w.n,
+              ns: w.ns, n: w.n, st: w.status || w.phase || "Unknown", rs: w.restarts || 0,
+              node: w.node || "—", ip: w.podIP || "—",
+            }))
+          : N.flatMap(ndPods);
         const off = (what) => `<section class="x-panel x-nodata">${NODATA_ILL}<strong>暂无${what}</strong><p>${st === "连接中" ? "集群正在连接。" : ""}平台尚未从 ${esc(c.n)} 采集到${what}，Agent 上报后自动显示；。</p></section>`;
         const avg = (k) => Math.round(N.reduce((s, x) => s + x[k], 0) / N.length);
         const G = has ? [["cpu", "CPU 使用率", avg("cpu"), C_BLUE], ["mem", "内存使用率", avg("mem"), C_GREEN], ["pod", "Pod 使用率", Math.round((P.length / (N.length * 110)) * 100), C_PURP]] : [];
@@ -10245,7 +10519,188 @@
         },
       };
 
+      const NET_VIEW = { clusterId: "" };
+      function netItems(v) { return XSObserve.items(v); }
+      async function netContext() {
+        const all = netItems(await XS.get("/clusters?page_size=500")), env = envNorm(nav.env);
+        const clusters = all.filter((c) => env === "全部" || envNorm(c.env) === env);
+        const cluster = clusters.find((c) => String(c.id) === String(NET_VIEW.clusterId)) || clusters[0] || null;
+        NET_VIEW.clusterId = cluster ? String(cluster.id) : "";
+        return { all, clusters, cluster };
+      }
+      function netClusterSelect(ctx) {
+        return `<select class="x-select" data-net-cluster aria-label="集群">${ctx.clusters.length ? ctx.clusters.map((c) => `<option value="${esc(c.id)}"${ctx.cluster && String(c.id) === String(ctx.cluster.id) ? " selected" : ""}>${esc(c.name)} · ${esc(c.env || "未标记")}</option>`).join("") : '<option value="">当前环境无集群</option>'}</select>`;
+      }
+      function netPanelPage(el, pg, kind) {
+        const rev = ++pageRenderRev;
+        const draw = (ctx, body) => {
+          if (rev !== pageRenderRev || current() !== kind) return;
+          el.innerHTML = `<div>${phead(pg.t, pg.sub, netClusterSelect(ctx))}<section class="x-panel x-setform">${body}</section></div>`;
+          const select = el.querySelector("[data-net-cluster]");
+          if (select) select.onchange = () => { NET_VIEW.clusterId = select.value; kind === "traffic" ? renderTrafficLive(el) : renderNetpolLive(el); };
+        };
+        draw({ clusters: [], cluster: null }, '<p class="x-empty">正在读取当前环境的集群资源…</p>');
+        return { rev, draw };
+      }
+      function topologySvg(serviceRows, traceServices, edges, clusterId) {
+        const servicesByTraceName = new Map();
+        serviceRows.forEach((service) => {
+          const key = `k8s:${service.namespace}/${service.name}`;
+          const item = { key, label: service.name, sub: `${service.namespace} · ${service.type} · ${service.cluster_ip || "Headless"}`, trace: service.name };
+          const matches = servicesByTraceName.get(service.name) || [];
+          matches.push(item); servicesByTraceName.set(service.name, matches);
+        });
+        const nodes = [...servicesByTraceName.values()].flat();
+        traceServices.forEach((name) => {
+          if ((servicesByTraceName.get(name) || []).length !== 1) nodes.push({ key: `trace:${name}`, label: name, sub: "OpenTelemetry 服务", trace: name });
+        });
+        const visible = nodes.slice(0, 32);
+        if (!visible.length) return '<p class="x-empty">当前集群没有 Service 或已发现的 trace 服务。</p>';
+        const width = 1040, cols = 4, cellW = 250, cellH = 112, rows = Math.ceil(visible.length / cols), height = Math.max(240, rows * cellH + 28);
+        const pos = Object.fromEntries(visible.map((node, i) => [node.key, { x: 100 + (i % cols) * cellW, y: 54 + Math.floor(i / cols) * cellH }]));
+        const traceNode = new Map();
+        servicesByTraceName.forEach((matches, name) => {
+          if (matches.length === 1 && pos[matches[0].key]) traceNode.set(name, matches[0].key);
+        });
+        visible.filter((node) => node.key.indexOf("trace:") === 0).forEach((node) => traceNode.set(node.trace, node.key));
+        const arrow = '<defs><marker id="net-trace-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 8 4 0 8z" fill="#1677ff" /></marker></defs>';
+        const lines = edges.filter((e) => traceNode.has(e.from) && traceNode.has(e.to) && traceNode.get(e.from) !== traceNode.get(e.to)).map((e) => {
+          const a = pos[traceNode.get(e.from)], b = pos[traceNode.get(e.to)], x1 = a.x + 70, x2 = b.x - 70, y1 = a.y, y2 = b.y;
+          return `<g class="e"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" marker-end="url(#net-trace-arrow)" /><text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}">${e.count} trace · 错误 ${e.errorPct}%</text></g>`;
+        }).join("");
+        const nodeMarkup = visible.map((node) => {
+          const p = pos[node.key];
+          return `<a href="#/trace/svc/${encodeURIComponent(node.trace)}?cluster=${encodeURIComponent(clusterId || "")}" aria-label="查看 ${esc(node.label)} 的链路"><g class="n"><rect x="${p.x - 72}" y="${p.y - 27}" width="144" height="54" rx="8" fill="#fff" stroke="#91caff" stroke-width="1.5" /><text x="${p.x}" y="${p.y - 4}">${esc(node.label)}</text><text x="${p.x}" y="${p.y + 14}">${esc(node.sub)}</text></g></a>`;
+        }).join("");
+        return `<div class="x-topo"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${visible.length} 个集群服务节点，${edges.length} 条由实际链路样本归纳的调用关系">${arrow}${lines}${nodeMarkup}</svg></div>`;
+      }
+      function netSelectorMatches(selector, labels) {
+        selector = selector || {}; labels = labels || {};
+        if (Object.entries(selector.matchLabels || selector.match_labels || {}).some(([k, v]) => labels[k] !== v)) return false;
+        return (selector.matchExpressions || selector.match_expressions || []).every((r) => {
+          const exists = Object.hasOwn(labels, r.key), values = r.values || [];
+          if (r.operator === "In") return exists && values.includes(labels[r.key]);
+          if (r.operator === "NotIn") return !exists || !values.includes(labels[r.key]);
+          if (r.operator === "Exists") return exists;
+          if (r.operator === "DoesNotExist") return !exists;
+          return false;
+        });
+      }
+      function netPolicyGraph(services, policies, pods, namespaces, clusterId) {
+        const serviceKey = (service) => `${service.namespace}/${service.name}`;
+        const names = [...new Set(services.map(serviceKey))].slice(0, 32);
+        const pos = Object.fromEntries(names.map((key, i) => [key, { x: 100 + i % 4 * 250, y: 56 + Math.floor(i / 4) * 116 }]));
+        const nsByName = Object.fromEntries(namespaces.map((ns) => [ns.name, ns]));
+        const servicesFor = (selectedPods) => [...new Set(selectedPods.flatMap((pod) => services.filter((svc) =>
+          svc.namespace === pod.namespace && svc.selector && Object.keys(svc.selector).length && Object.entries(svc.selector).every(([k, v]) => (pod.labels || {})[k] === v)
+        ).map(serviceKey)))];
+        const peerPods = (peer, policy) => {
+          if (peer.ipBlock || peer.ip_block) return [];
+          const namespaceSelector = peer.namespaceSelector || peer.namespace_selector, podSelector = peer.podSelector || peer.pod_selector;
+          const hasNs = !!namespaceSelector;
+          return pods.filter((pod) => {
+            const ns = nsByName[pod.namespace];
+            return !!ns && (hasNs ? netSelectorMatches(namespaceSelector, ns.labels) : pod.namespace === policy.namespace) &&
+              (!podSelector || netSelectorMatches(podSelector, pod.labels));
+          });
+        };
+        const edgeMap = new Map(), notes = [];
+        const add = (from, to, policy, direction, ports) => {
+          if (from === to) return;
+          const key = from + "\u0000" + to, edge = edgeMap.get(key) || { from, to, rules: [] };
+          edge.rules.push(`${policy.namespace}/${policy.name} ${direction} ${ports || "任意端口"}`); edgeMap.set(key, edge);
+        };
+        policies.forEach((policy) => {
+          const targetPods = pods.filter((pod) => pod.namespace === policy.namespace && netSelectorMatches(policy.pod_selector, pod.labels));
+          const targets = servicesFor(targetPods);
+          [["Ingress", policy.ingress || [], "from"], ["Egress", policy.egress || [], "to"]].forEach(([direction, rules, peerKey]) => {
+            rules.forEach((rule) => {
+              const ports = (rule.ports || []).map((p) => `${p.protocol || "TCP"}/${p.port || "任意"}`).join(", ");
+              const peers = rule[peerKey] || [];
+              if (!peers.length) { notes.push(`${policy.namespace}/${policy.name} ${direction} 允许任意${direction === "Ingress" ? "来源" : "目标"}${ports ? " · " + ports : ""}`); return; }
+              peers.forEach((peer) => {
+                const ipBlock = peer.ipBlock || peer.ip_block;
+                if (ipBlock) { notes.push(`${policy.namespace}/${policy.name} ${direction} ${ipBlock.cidr}${ports ? " · " + ports : ""}`); return; }
+                const mapped = servicesFor(peerPods(peer, policy));
+                if (!mapped.length) { notes.push(`${policy.namespace}/${policy.name} ${direction} 选择器当前未匹配到 Service${ports ? " · " + ports : ""}`); return; }
+                if (direction === "Ingress") mapped.forEach((from) => targets.forEach((to) => add(from, to, policy, direction, ports)));
+                else targets.forEach((from) => mapped.forEach((to) => add(from, to, policy, direction, ports)));
+              });
+            });
+          });
+          if (!targetPods.length) notes.push(`${policy.namespace}/${policy.name} 目标 Pod selector 当前未匹配到 Pod`);
+        });
+        const edges = [...edgeMap.values()].filter((e) => pos[e.from] && pos[e.to]);
+        const lines = edges.map((e) => {
+          const a = pos[e.from], b = pos[e.to], x1 = a.x + 72, x2 = b.x - 72;
+          const label = e.rules.length > 1 ? `${e.rules.length} 条声明规则` : e.rules[0];
+          return `<g class="e"><line x1="${x1}" y1="${a.y}" x2="${x2}" y2="${b.y}" marker-end="url(#np-live-arrow)" /><text x="${(x1 + x2) / 2}" y="${(a.y + b.y) / 2 - 8}">${esc(label)}</text></g>`;
+        }).join("");
+        const svcByName = Object.fromEntries(services.map((s) => [serviceKey(s), s]));
+        const nodes = names.map((key) => {
+          const p = pos[key], svc = svcByName[key];
+          return `<a href="#/trace/svc/${encodeURIComponent(svc.name)}?cluster=${encodeURIComponent(clusterId || "")}" aria-label="查看 ${esc(svc.name)} 的链路"><g class="n"><rect x="${p.x - 72}" y="${p.y - 27}" width="144" height="54" rx="8" fill="#fff" stroke="#91caff" stroke-width="1.5" /><text x="${p.x}" y="${p.y - 4}">${esc(svc.name)}</text><text x="${p.x}" y="${p.y + 14}">${esc(svc.namespace)} · ${esc(svc.type || "Service")}</text></g></a>`;
+        }).join("");
+        const height = Math.max(220, Math.ceil(names.length / 4) * 116 + 32);
+        const svg = names.length ? `<div class="x-topo"><svg viewBox="0 0 1040 ${height}" role="img" aria-label="${names.length} 个 Service 与 ${edges.length} 条实际 NetworkPolicy 声明关系"><defs><marker id="np-live-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 8 4 0 8z" fill="#1677ff" /></marker></defs>${lines}${nodes}</svg></div>` : '<p class="x-empty">当前集群没有 Kubernetes Service。</p>';
+          const rows = policies.map((p) => [esc(`${p.namespace}/${p.name}`), esc(Object.entries((p.pod_selector || {}).matchLabels || (p.pod_selector || {}).match_labels || {}).map(([k, v]) => `${k}=${v}`).join(", ") || "所有 Pod"),
+          esc((p.policy_types || []).join(", ") || "Ingress"), `入站 ${(p.ingress || []).length} 条 · 出站 ${(p.egress || []).length} 条`]);
+        return `${svg}<p class="x-frac" style="margin:8px 0 16px">连线只表示 NetworkPolicy 中明确声明且能映射到 Service selector 的方向，不代表网络插件观测到的流量或策略最终生效结果。</p>${rows.length ? tbl(["NetworkPolicy", "目标 Pod selector", "策略方向", "规则"], rows) : '<p class="x-empty">当前集群未配置 NetworkPolicy。</p>'}${notes.length ? `<details style="margin-top:12px"><summary>未映射到 Service 的实际规则（${notes.length}）</summary><ul>${[...new Set(notes)].map((n) => `<li>${esc(n)}</li>`).join("")}</ul></details>` : ""}`;
+      }
+      async function renderTrafficLive(el) {
+        const pg = tfCur();
+        if (pg.k !== "topo") {
+          el.innerHTML = `<div>${phead(pg.t, pg.sub)}<section class="x-panel"><p class="x-empty">该页面尚未接入可验证的集群配置接口，当前不显示本地样例数据。</p></section></div>`;
+          return;
+        }
+        const page = netPanelPage(el, pg, "traffic");
+        try {
+          const ctx = await netContext();
+          if (page.rev !== pageRenderRev) return;
+          if (!ctx.cluster) { page.draw(ctx, '<p class="x-empty">当前环境没有已接入的集群。</p>'); return; }
+          const serviceData = await XS.get(`/clusters/${encodeURIComponent(ctx.cluster.id)}/network/services`);
+          const services = netItems(serviceData);
+          const dsData = await XS.get("/observability/datasources");
+          const source = XSObserve.datasource(netItems(dsData), ctx.all, ctx.cluster, ["jaeger", "tempo"]);
+          let traceServices = [], edges = [];
+          if (source) {
+            traceServices = netItems(await XS.get(`/observability/traces/services?datasource=${encodeURIComponent(source.ds.id)}`));
+            const tags = source.dedicated ? {} : { [(source.ds.options || {}).cluster_label || "k8s.cluster.name"]: ctx.cluster.name };
+            const found = await Promise.all(traceServices.slice(0, 20).map((service) => {
+              const query = new URLSearchParams({ datasource: source.ds.id, service: service, tags: JSON.stringify(tags), start: "now-60m", end: "now", limit: "15" });
+              return XS.get("/observability/traces/search?" + query.toString()).then(netItems).catch(() => []);
+            }));
+            const hits = [...new Map(found.flat().map((t) => [t.trace_id || t.traceID, t])).values()].filter((t) => t.trace_id || t.traceID).slice(0, 40);
+            const details = await Promise.all(hits.map((t) => XS.get(`/observability/traces/${encodeURIComponent(t.trace_id || t.traceID)}?datasource=${encodeURIComponent(source.ds.id)}`).catch(() => null)));
+            const edgeMap = new Map();
+            details.filter(Boolean).forEach((trace) => {
+              const spans = trace.spans || [], byId = new Map(spans.map((s) => [s.span_id, s]));
+              spans.forEach((span) => {
+                const parent = byId.get(span.parent_id);
+                if (!parent || !parent.service || !span.service || parent.service === span.service) return;
+                const key = parent.service + "\u0000" + span.service;
+                const e = edgeMap.get(key) || { from: parent.service, to: span.service, count: 0, errors: 0 };
+                e.count++; if (span.error) e.errors++;
+                edgeMap.set(key, e);
+              });
+            });
+            edges = [...edgeMap.values()].map((e) => ({ ...e, errorPct: Math.round(e.errors * 100 / e.count) }));
+          }
+          if (page.rev !== pageRenderRev) return;
+          const sourceName = source ? `${source.ds.name} · 近 1 小时检索样本` : "未配置 Jaeger / Tempo，未绘制推测调用关系";
+          const counts = `<div class="x-tbar"><span class="x-frac">${esc(ctx.cluster.name)} · ${services.length} 个 Kubernetes Service · ${traceServices.length} 个 trace 服务 · ${edges.length} 条观测调用关系</span><span class="x-frac">${esc(sourceName)}</span></div>`;
+          const note = edges.length ? "边上的数量和错误率由本次返回的实际 trace span 样本计算，不代表全量 QPS。点击服务节点可查看该服务的链路。" : "当前窗口没有可关联的实际 trace 样本；只显示 Kubernetes Service，不推测调用边。";
+          page.draw(ctx, `${counts}${topologySvg(services, traceServices, edges, ctx.cluster.id)}<p class="x-frac" style="margin:8px 0 0">${esc(note)}</p>`);
+        } catch (err) {
+          if (page.rev === pageRenderRev) page.draw(await netContext().catch(() => ({ clusters: [], cluster: null })), `<p class="x-aerr" role="alert">读取真实拓扑数据失败：${esc(err.message || err)}</p>`);
+        }
+      }
+
       function renderTraffic(el) {
+        if (!demo && window.XS && XS.mode === "live") return renderTrafficLive(el);
+        const offlinePage = tfCur();
+        el.innerHTML = `<div>${phead(offlinePage.t, offlinePage.sub)}<section class="x-panel"><p class="x-empty">后端未连接，无法读取集群服务与策略数据。</p></section></div>`;
+        return;
         if (!tf.ns) {
           const b = (cfg.traffic || {}).bundle || { ns: ["prod", "pre", "test"], mtls: true };
           tf.ns = [["prod", 24], ["pre", 12], ["test", 9], ["default", 3]].map(([n, sc]) => ({ n, sc, on: !tfOff() && (b.ns || []).includes(n), m: b.mtls !== false && n !== "default" ? "STRICT" : "PERMISSIVE" }));
@@ -10489,7 +10944,7 @@
         { k: "channels", t: "通知渠道", i: "flow", sub: "飞书、钉钉、企业微信、邮件与 Webhook，告警按规则配置的渠道发送" },
       ];
       const obHash = (p) => (p.k === "metrics" ? "#/observe" : p.k === "logs" ? "#/logs" : "#/observe/" + p.k);
-      const obCur = () => OB_PAGES.find((p) => p.k === location.hash.split("/")[2]) || OB_PAGES[0];
+      const obCur = () => OB_PAGES.find((p) => p.k === (location.hash.split("/")[2] === "alerts" ? "events" : location.hash.split("/")[2])) || OB_PAGES[0];
       const OB_RANGES = { "15m": [15, 1], "1h": [12, 5], "6h": [12, 30], "24h": [24, 60], "7d": [14, 720] };
       const OB_LV = { ERROR: ["x-red", "#f5222d"], WARN: ["x-orange", "#fa8c16"], INFO: ["x-blue", "#1677ff"], DEBUG: ["x-grey", "#bfbfbf"] };
       const OB_WIN = [[15, "近 15 分钟"], [60, "近 1 小时"], [360, "近 6 小时"], [1440, "近 24 小时"]];
@@ -10521,6 +10976,141 @@
       const obRule = (name) => ob.rules.find((r) => r.name === name);
       const obDraw = (focus) => { if (current() !== "observe") return; renderObserve($("view")); const f = focus && $("ob").querySelector(focus); if (f) f.focus(); };
       const obConf = (c) => !!(c.k === "email" ? c.to : c.url);
+      const obChannelIcon = (k, color) => {
+        const logos = { feishu: "/assets/channels/feishu.svg", lark: "/assets/channels/feishu.svg", dingtalk: "/assets/channels/dingtalk.svg", dingding: "/assets/channels/dingtalk.svg", wecom: "/assets/channels/wecom.png", wechatwork: "/assets/channels/wecom.png", wxwork: "/assets/channels/wecom.png" };
+        const logo = logos[String(k || "").toLowerCase()];
+        return `<i class="x-channel-icon" style="--channel-color:${color}" aria-hidden="true">${logo ? `<img src="${logo}" alt="" />` : `<svg viewBox="0 0 24 24">${({ email: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>', webhook: '<path d="M8 5h8M18 8l3 5-3 5M16 19H8M6 16l-3-5 3-5M6 6l3 5M18 18l-3-5"/><circle cx="12" cy="12" r="2"/>' })[k] || '<circle cx="12" cy="12" r="8"/>'}</svg>`}</i>`;
+      };
+
+      async function obsContext(selected) {
+        const cr = await XS.get("/clusters?page_size=200");
+        const all = XSObserve.items(cr), env = envNorm(nav.env), clusters = all.filter((c) => env === "全部" || envNorm(c.env) === env);
+        const dr = clusters.length ? await XS.get("/observability/datasources") : [];
+        return { all, clusters, datasources: XSObserve.items(dr), cluster: clusters.find((c) => String(c.id) === String(selected)) || clusters[0] || null };
+      }
+      function obsSource(ctx, types) {
+        const source = XSObserve.datasource(ctx.datasources, ctx.all, ctx.cluster, types);
+        return source && { ...source, cluster: ctx.cluster };
+      }
+      function obsClusterSelect(id, ctx) {
+        return `<select class="x-select" id="${id}" aria-label="集群">${ctx.clusters.length ? ctx.clusters.map((c) => `<option value="${c.id}"${ctx.cluster && c.id === ctx.cluster.id ? " selected" : ""}>${esc(c.name)}</option>`).join("") : '<option value="">当前环境无集群</option>'}</select>`;
+      }
+      async function obsRange(ds, query, shift = 0, at = Math.floor(Date.now() / 1000)) {
+        const [count, step] = OB_RANGES[ob.range], end = at - shift;
+        return XSObserve.matrix(await XS.get("/observability/prometheus/" + ds.id + "/query_range?" + new URLSearchParams({ query, start: end - count * step * 60, end, step: step * 60 })));
+      }
+      async function obLoadMetrics(rev) {
+        const key = () => JSON.stringify([nav.env, ob.cl, ob.ns, ob.app, ob.range, ob.cmp]);
+        if (ob.metricKey === key() && Date.now() - (ob.metricAt || 0) < 30000) return;
+        ob.liveValues = {}; ob.livePrevious = {}; ob.liveTimes = []; ob.res = null; ob.source = null; ob.queries = {};
+        const ctx = await obsContext(ob.cl); if (rev !== pageRenderRev) return; ob.ctx = ctx; ob.cl = ctx.cluster ? String(ctx.cluster.id) : "";
+        OBD.clusters = {}; OBD.apps = {};
+        ctx.clusters.forEach((c) => { OBD.clusters[String(c.id)] = { ns: [] }; });
+        if (!ctx.cluster) { ob.liveNote = "当前环境尚未接入集群，不查询其他环境的数据"; return; }
+        const source = obsSource(ctx, ["prometheus"]); ob.source = source;
+        if (!source) { ob.liveNote = "当前集群环境未配置 Prometheus 数据源"; return; }
+        const [nr, pr] = await Promise.all([XS.get("/clusters/" + ob.cl + "/nodes"), XS.get("/clusters/" + ob.cl + "/workloads/pods?page_size=500")]);
+        if (rev !== pageRenderRev) return;
+        const nodes = XSObserve.items(nr), pods = XSObserve.items(pr), ns = [...new Set(pods.map((p) => p.namespace).filter(Boolean))].sort();
+        OBD.clusters[ob.cl].ns = ["", ...ns];
+        if (!ns.includes(ob.ns)) ob.ns = "";
+        pods.filter((p) => !ob.ns || p.namespace === ob.ns).forEach((p) => { const name = (p.labels || {}).app || (p.labels || {})["app.kubernetes.io/name"]; if (name) OBD.apps[name] = {}; });
+        if (!Object.hasOwn(OBD.apps, ob.app)) ob.app = "";
+        ob.queries = XSObserve.metricQueries(nodes, pods, ob.ns, ob.app);
+        const errors = [], results = {}, at = Math.floor(Date.now() / 1000);
+        await Promise.all(Object.entries(ob.queries).map(async ([key, q]) => {
+          try { results[key] = await obsRange(source.ds, q, 0, at); if (ob.cmp) results[key + "Prev"] = await obsRange(source.ds, q, 86400, at); }
+          catch (e) { errors.push(key + ": " + e.message); }
+        }));
+        if (rev !== pageRenderRev) return;
+        const times = [...new Set(Object.entries(results).filter(([k]) => !k.endsWith("Prev")).flatMap(([, series]) => series.flatMap((s) => s.values.map(([t]) => t))))].sort((a, b) => a - b);
+        ob.liveTimes = times;
+        Object.keys(ob.queries).forEach((key) => {
+          const align = (series, shift) => { const byTime = new Map(((series || [])[0] || { values: [] }).values.map(([t, v]) => [t + shift, v])); return times.map((t) => byTime.has(t) ? byTime.get(t) : null); };
+          ob.liveValues[key] = align(results[key], 0); ob.livePrevious[key] = align(results[key + "Prev"], 86400);
+        });
+        ob.metricKey = key(); ob.metricAt = Date.now();
+        const missing = OB_M.filter((m) => m.keys.every(([, key]) => !(ob.liveValues[key] || []).some((v) => v != null))).map((m) => m.t);
+        ob.liveNote = `${ctx.cluster.name} · Prometheus: ${source.ds.name} · ${ob.ns || "全部命名空间"}${ob.app ? " / " + ob.app : ""} · ${new Date().toLocaleTimeString()} 更新。CPU/内存${ob.ns || ob.app ? "为所选工作负载占集群可分配资源比例" : "来自 node-exporter，按节点 CPU 均值 / 内存总量加权"}；网络/磁盘为节点指标；重启为当前累计。` + (missing.length ? " 未采集：" + missing.join("、") + "。" : "") + errors.join("；");
+      }
+      async function obRunLive(q) {
+        ob.q = q.trim(); ob.err = "";
+        if (!ob.q) { ob.err = "请输入 PromQL 表达式"; return obDraw(); }
+        if (!ob.source) { ob.err = "当前集群没有可查询的 Prometheus 数据源"; return obDraw(); }
+        const started = performance.now(), rev = pageRenderRev;
+        try {
+          const query = ob.q === OB_PQ[3][1] ? ob.queries.cpu : ob.q;
+          const data = await obsRange(ob.source.ds, query), times = [...new Set(data.flatMap((s) => s.values.map(([t]) => t)))].sort((a, b) => a - b);
+          if (rev !== pageRenderRev || current() !== "observe") return;
+          ob.res = { series: data.map((s) => { const m = new Map(s.values); return [JSON.stringify(s.labels), times.map((t) => m.get(t) ?? null)]; }), labels: times.map((t) => hm(new Date(t * 1000))), u: "", ms: Math.round(performance.now() - started) };
+          obDraw();
+        } catch (e) { if (rev === pageRenderRev) { ob.err = e.message; obDraw(); } }
+      }
+      async function obLoadEvents(rev) {
+        const ctx = await obsContext(), raw = XSObserve.items(await XS.get("/observability/alerts?page_size=200"));
+        if (rev !== pageRenderRev) return;
+        ob.ev = raw.filter((a) => { const lb = a.labels || {}, name = lb.cluster || lb.cluster_name || lb["k8s.cluster.name"]; return name ? ctx.clusters.some((c) => c.name === name) : ctx.clusters.some((c) => envNorm(c.env) === envNorm(a.env)); }).map((a) => ({ ...a, p: { critical: "P1", warning: "P2" }[a.severity] || "P3", st: a.status === "firing" ? "告警中" : "已恢复", msg: (a.annotations || {}).summary || a.alertname, rule: a.alertname, app: (a.labels || {}).pod || (a.labels || {}).instance || a.datasource, val: (a.annotations || {}).value || "—", t: a.starts_at ? obTs(new Date(a.starts_at)) : "—", end: a.ends_at ? obTs(new Date(a.ends_at)) : "—", ack: a.acked_by, who: a.acked_by }));
+      }
+      async function obLoadChannels() {
+        const previous = ob.ch || [];
+        const defs = [ ["feishu", "飞书", "飞", C_BLUE], ["dingtalk", "钉钉", "钉", C_CYAN], ["wecom", "企业微信", "企", C_GREEN], ["email", "邮件", "邮", C_ORG] ];
+        const rows = XSObserve.items(await XS.get("/observability/channels"));
+        ob.ch = rows.map((r) => { const def = defs.find((d) => d[0] === r.type) || [r.type, r.type, "通", C_BLUE], cfg = r.config || {}; return { id: r.id, k: r.type, t: r.name, kind: def[1], ic: def[2], c: def[3], url: cfg.webhook || "", secret: cfg.secret || "", to: (cfg.to || []).join(", "), smtp: cfg.host ? cfg.host + ":" + cfg.port : "", on: r.enabled, config: cfg, severities: r.severities, envs: r.envs, test: (previous.find((c) => c.id === r.id) || {}).test || "" }; });
+        defs.filter(([k]) => !ob.ch.some((c) => c.k === k)).forEach(([k, t, ic, c]) => ob.ch.push({ k, t, ic, c, kind: t, url: "", to: "", on: false, config: {}, test: "" }));
+      }
+      async function obOpenAlert(id) {
+        try {
+          const a = await XS.get("/observability/alerts/" + encodeURIComponent(id));
+          const [cr, dr] = await Promise.all([XS.get("/clusters?page_size=500"), XS.get("/observability/datasources?page_size=500")]);
+          const clusters = XSObserve.items(cr), sources = XSObserve.items(dr), ds = sources.find((d) => String(d.id) === String(a.datasource_id));
+          const envClusters = clusters.filter((c) => !a.env || envNorm(c.env) === envNorm(a.env));
+          const inventory = await Promise.all(envClusters.map(async (c) => {
+            try { const [pods, nodes] = await Promise.all([XS.get("/clusters/" + c.id + "/workloads/pods?page_size=1000"), XS.get("/clusters/" + c.id + "/nodes")]); return { clusterId: c.id, pods: XSObserve.items(pods), nodes: XSObserve.items(nodes) }; }
+            catch (e) { return { clusterId: c.id, error: e.message }; }
+          }));
+          const loc = XSObserve.alertLocation(a, clusters, sources, inventory), lb = a.labels || {}, an = a.annotations || {};
+          const namespace = loc.namespace || "—", clusterName = loc.cluster && loc.cluster.name || (loc.candidates.length > 1 ? "无法唯一确认" : "未匹配到集群");
+          const node = loc.node, pod = loc.pod;
+          const ruleGuidance = {
+            InfoInhibitor: "这是用于抑制低优先级 info 告警的控制告警，单独触发通常表示 Alertmanager 正在按规则处理相关告警。请同时检查同一命名空间内 warning/critical 告警及抑制规则。",
+            AlertmanagerClusterFailedToSendAlerts: "告警系统报告关键通知集成发送失败。检查 Alertmanager 路由、接收器可达性、Webhook 返回码和集群内 Alertmanager 副本状态。",
+            AlertmanagerFailedToSendAlerts: "该 Alertmanager 实例报告通知发送失败。检查接收地址、鉴权或签名配置、目标服务可达性及失败原因标签。",
+            CPUThrottlingHigh: "容器 CPU 配额触发了较高比例的节流。对照容器 CPU limit、实际负载和同一工作负载的延迟，确认是否需要调整资源配额。",
+            NodeFilesystemWillFillIn24h: "节点文件系统预计可能在 24 小时内写满。检查对应挂载点剩余空间、增长速度和大文件来源，并在清理前确认数据保留策略。",
+            NodeSystemSaturation: "节点负载持续偏高。检查进程 CPU/IO、Pod 调度密度和节点资源余量，结合该节点的负载指标判断影响范围。"
+          }[a.alertname] || "按原始告警描述和标签核对受影响资源、指标值及时间窗口；页面不会从缺失字段推测根因。";
+          const facts = [["环境", a.env], ["严重级别", a.severity], ["当前状态", a.status === "firing" ? "告警中" : a.status], ["处理状态", a.handle_status], ["首次触发", a.starts_at], ["最近收到", a.last_received_at], ["触发次数", a.fire_count], ["确认人", a.acked_by], ["确认时间", a.acked_at], ["数据源", ds ? `${ds.name}（${ds.type}）` : a.datasource], ["集群范围依据", loc.basis]];
+          const targetRows = [["服务", lb.service], ["容器", lb.container], ["工作负载", lb.deployment || lb.statefulset || lb.daemonset || lb.job_name || lb.job], ["端点", lb.endpoint], ["挂载点", lb.mountpoint], ["设备", lb.device], ["文件系统", lb.fstype], ["失败原因", lb.reason || lb.error], ["通知集成", lb.integration], ["当前值", an.value || lb.value || lb.current], ["触发阈值", an.threshold || lb.threshold]].filter(([,v]) => v != null && v !== "");
+          const description = String(an.description || an.summary || "告警未提供说明。").replace(/\bcluster\s*\./gi, loc.cluster ? `cluster ${loc.cluster.name}.` : "cluster 未知.");
+          const annotationRows = Object.entries(an).filter(([k]) => k !== "summary" && k !== "description" && k !== "runbook_url");
+          const detail = `<div class="x-alert-content"><div class="x-alert-banner"><div><h2>${esc(an.summary || a.alertname)}</h2><p>${esc(a.alertname)}${lb.severity ? " · " + esc(lb.severity) : ""} · 指纹 ${esc(a.fingerprint || "—")}</p></div>${tfTag(a.status === "firing" ? "告警中" : "已恢复", a.status === "firing" ? "x-red" : "x-green")}</div>
+            <div class="x-alert-columns"><div><section class="x-alert-section x-alert-scope"><h3>资源定位</h3><dl class="x-alert-facts"><dt>所属集群</dt><dd>${esc(clusterName)}${loc.cluster ? ` · ${esc(loc.cluster.env)}` : ""}</dd><dt>资源类型</dt><dd>${esc(loc.type)}</dd><dt>资源名称</dt><dd>${esc(loc.name)}</dd><dt>命名空间</dt><dd>${esc(namespace)}${loc.nodeAlert && namespace !== "—" ? "（告警采集器所在命名空间）" : ""}</dd>${pod && loc.type !== "Pod" ? `<dt>${loc.nodeAlert ? "采集器 Pod" : "关联 Pod"}</dt><dd>${esc(pod.namespace)}/${esc(pod.name)}</dd>` : ""}${loc.nodeName ? `<dt>所在节点</dt><dd>${esc(loc.nodeName)}</dd>` : ""}${node ? `<dt>节点状态</dt><dd>${esc(node.status || (node.ready ? "Ready" : "NotReady"))}${node.internal_ip ? " · " + esc(node.internal_ip) : ""}${node.usage && (node.usage.cpu || node.usage.memory) ? " · CPU " + esc(node.usage.cpu || "—") + " · 内存 " + esc(node.usage.memory || "—") : ""}</dd>` : ""}${loc.instance ? `<dt>采集实例</dt><dd>${esc(loc.instance)}</dd>` : ""}${ds ? `<dt>数据源</dt><dd>${esc(ds.name)} · ${esc(ds.url || "")}</dd>` : ""}</dl>${loc.note ? `<p class="x-alert-note">${esc(loc.note)}</p>` : ""}${loc.inventoryError ? `<p class="x-alert-note">读取集群当前资源清单失败：${esc(loc.inventoryError)}</p>` : ""}</section>
+              <section class="x-alert-section"><h3>事件时间与处理</h3><dl class="x-alert-facts">${facts.map(([k,v]) => `<dt>${esc(k)}</dt><dd>${esc(v || "—")}</dd>`).join("")}</dl></section></div>
+              <div><section class="x-alert-section"><h3>问题详情</h3><p class="x-alert-text">${esc(description)}</p><p class="x-alert-note">排查建议：${esc(ruleGuidance)}</p>${an.runbook_url && /^https:\/\//i.test(an.runbook_url) ? `<p style="margin:12px 0 0;font-size:13px"><a href="${esc(an.runbook_url)}" target="_blank" rel="noopener noreferrer">打开官方 Runbook ↗</a></p>` : ""}</section>
+                ${targetRows.length ? `<section class="x-alert-section"><h3>告警目标与条件</h3><dl class="x-alert-facts">${targetRows.map(([k,v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></section>` : ""}
+                ${annotationRows.length ? `<section class="x-alert-section"><h3>告警附加信息</h3><dl class="x-alert-facts">${annotationRows.map(([k,v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></section>` : ""}</div></div>
+            <details class="x-alert-raw"><summary>查看原始标签与完整字段</summary><pre>${esc(JSON.stringify({ labels: lb, annotations: an, generator_url: a.generator_url, fingerprint: a.fingerprint }, null, 2))}</pre></details></div>`;
+          dlg("告警详情", detail, '<button class="x-btn" data-close>关闭</button>');
+          $("modal").classList.add("x-alert-detail");
+        } catch (e) { toast("告警详情读取失败：" + e.message); }
+      }
+      window.XSOpenAlertDetail = obOpenAlert;
+      // Legacy alert hashes can survive in bookmarks or cached markup; handle them as UI routes, never as document links.
+      document.addEventListener("click", (event) => {
+        const target = event.target && event.target.nodeType === 1 ? event.target : event.target && event.target.parentElement;
+        const alertControl = target && target.closest ? target.closest("[data-alert-open], a[href]") : null;
+        if (!alertControl) return;
+        let id = alertControl.getAttribute("data-alert-open") || "";
+        if (!id) {
+          const href = alertControl.getAttribute("href") || "";
+          const match = href.match(/^#\/observe\/(?:alerts|events)\/([^/?#]+)/);
+          if (!match) return;
+          try { id = decodeURIComponent(match[1]); } catch { id = match[1]; }
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (id) obOpenAlert(id);
+      }, true);
 
       function obInit() {
         const d = obd(), o = ops();
@@ -10544,9 +11134,15 @@
 
       // 指标监控: series derived from per-app base levels; the selection and range seed the shape
       function obBase(k) {
-        const d = obd(), f = d.clusters[ob.cl].f, apps = ob.app ? [ob.app] : Object.keys(d.apps), v = apps.map((a) => d.apps[a][k]), sum = v.reduce((s, x) => s + x, 0);
+        const d = obd(), cluster = d.clusters && d.clusters[ob.cl], f = cluster && Array.isArray(cluster.f) ? cluster.f : [1, 1];
+        const appsData = d.apps && typeof d.apps === "object" ? d.apps : {};
+        const names = ob.app && appsData[ob.app] ? [ob.app] : Object.keys(appsData);
+        const v = names.map((a) => Number(appsData[a] && appsData[a][k])).filter(Number.isFinite);
+        if (!v.length) return 0;
+        const sum = v.reduce((s, x) => s + x, 0);
         const raw = ["qps", "rx", "tx", "rst"].includes(k) ? sum : k === "p99" ? Math.max(...v) : sum / v.length;
-        return raw * (["cpu", "mem", "disk", "rst"].includes(k) ? f[0] : k === "p99" || k === "err" ? 1 : f[1]);
+        const factor = ["cpu", "mem", "disk", "rst"].includes(k) ? Number(f[0]) : k === "p99" || k === "err" ? 1 : Number(f[1]);
+        return Number.isFinite(raw * factor) ? raw * factor : 0;
       }
       function obSeries(base, amp, seed, n, dp, max = Infinity) {
         return Array.from({ length: n }, (_, i) => {
@@ -10555,6 +11151,7 @@
         });
       }
       function obLabels() {
+        if (!demo) return (ob.liveTimes || []).map((t) => hm(new Date(t * 1000)));
         const [n, step] = OB_RANGES[ob.range], now = Date.now();
         return Array.from({ length: n }, (_, i) => { const t = new Date(now - (n - 1 - i) * step * 6e4); return step >= 720 ? `${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}时` : hm(t); });
       }
@@ -10570,6 +11167,9 @@
       }
       // 每个指标：当前所选范围的序列，以及昨日同期（打开对比时）
       function obMetricSets() {
+        if (!demo) return OB_M.map((m) => ({ m,
+          sets: m.keys.map(([l, k, c]) => [l, (ob.liveValues || {})[k] || [null], c]),
+          prev: m.keys.map(([l, k, c]) => [l + " · 昨日同期", (ob.livePrevious || {})[k] || [null], c, { cmp: true }]) }));
         const n = OB_RANGES[ob.range][0];
         return OB_M.map((m) => {
           const mk = (k, y) => obSeries(obBase(k) * (y ? 0.9 + (obN(ob.cl + k) % 12) / 100 : 1), m.amp, obSeed(k) + (y ? 1.7 : 0), n, m.dp, m.u === "%" ? 100 : Infinity);
@@ -10578,19 +11178,22 @@
           return { m, sets, prev };
         });
       }
-      const OB_LEVEL = (v, th) => { const s = [...th].sort((a, b) => b[0] - a[0]).find((t) => v >= t[0]); return s ? (s[2] === C_RED ? ["超阈值", "x-red", C_RED] : ["偏高", "x-orange", C_ORG]) : ["正常", "x-green", C_GREEN]; };
+      const OB_LEVEL = (v, th) => { if (v == null) return ["暂无数据", "x-grey", "#bfbfbf"]; const s = [...th].sort((a, b) => b[0] - a[0]).find((t) => v >= t[0]); return s ? (s[2] === C_RED ? ["超阈值", "x-red", C_RED] : ["偏高", "x-orange", C_ORG]) : ["正常", "x-green", C_GREEN]; };
       const OB_BODY = {};
       const OB_AFTER = {};
       OB_BODY.metrics = () => {
-        if (ob.res) obRun(ob.q);
-        const d = obd(), sel = (id, lab, list, cur, all) => `<label class="x-obsel"><span>${lab}</span><select class="x-select" id="${id}">${all ? `<option value="">${all}</option>` : ""}${opt(list, cur)}</select></label>`;
+        const d = obd(), clusters = d.clusters && !Array.isArray(d.clusters) ? d.clusters : {}, apps = d.apps && typeof d.apps === "object" ? d.apps : {};
+        const clusterNames = Object.keys(clusters);
+        if (!Object.prototype.hasOwnProperty.call(clusters, ob.cl)) ob.cl = clusterNames[0] || "";
+        const cluster = clusters[ob.cl] || { ns: [] }, namespaces = Array.isArray(cluster.ns) ? cluster.ns : [];
+        const sel = (id, lab, list, cur, all) => `<label class="x-obsel"><span>${lab}</span><select class="x-select" id="${id}">${all ? `<option value="">${all}</option>` : ""}${list.map((v) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(id === "obCl" ? ((((ob.ctx || {}).clusters || []).find((c) => String(c.id) === v) || {}).name || v) : v || "全部命名空间")}</option>`).join("")}</select></label>`;
         const M = obMetricSets(), last = (a) => a[a.length - 1];
         const cards = M.map(({ m, sets, prev }) => {
-          const all = sets.flatMap((s) => s[1]), now = sets.map((s) => last(s[1])), unit = m.u === "%" ? "%" : m.u;
-          const head = m.k === "rst" ? `${fmtN(all.reduce((s, x) => s + x, 0))}<small>次 / ${ob.range}</small>` : m.k === "net" ? `入 ${now[0]} / 出 ${now[1]}<small>${unit}</small>` : `${fmtN(now[0])}<small>${unit}</small>`;
+          const all = sets.flatMap((s) => s[1]).filter((v) => v != null), now = sets.map((s) => last(s[1])), unit = m.u === "%" ? "%" : m.u;
+          const head = m.k === "rst" ? `${fmtN(now[0])}<small>次（当前累计）</small>` : m.k === "net" ? `入 ${fmtN(now[0])} / 出 ${fmtN(now[1])}<small>${unit}</small>` : `${fmtN(now[0])}<small>${unit}</small>`;
           let delta = "";
-          if (ob.cmp) {
-            const a = m.k === "rst" ? all.reduce((s, x) => s + x, 0) : now.reduce((s, x) => s + x, 0), b = m.k === "rst" ? prev.flatMap((s) => s[1]).reduce((s, x) => s + x, 0) : prev.reduce((s, p) => s + last(p[1]), 0);
+          if (ob.cmp && now.every((v) => v != null) && prev.every((p) => last(p[1]) != null)) {
+            const a = now.reduce((s, x) => s + x, 0), b = prev.reduce((s, p) => s + last(p[1]), 0);
             const df = a - b, pct = b ? (df / b) * 100 : 0;
             delta = `<span class="x-obdelta ${df > 0 ? "up" : df < 0 ? "dn" : ""}">较昨日 ${df > 0 ? "+" : df < 0 ? "−" : "±"}${Math.abs(pct).toFixed(1)}%</span>`;
           }
@@ -10599,22 +11202,23 @@
         }).join("");
         const gauges = OB_GAUGE.map(([k, l]) => {
           const g = M.find((x) => x.m.k === k), v = last(g.sets[0][1]), [lv, cls] = OB_LEVEL(v, g.m.th);
-          return `<div class="x-panel x-gauge"><div class="x-gcv"><canvas id="obg-${k}" role="img" aria-label="${l}当前使用率 ${v}%，${lv}"></canvas><b>${v}<small>%</small></b></div><p>${l}当前使用率</p><span class="x-tag x-tag--s ${cls}">${lv}</span></div>`;
+          return `<div class="x-panel x-gauge"><div class="x-gcv"><canvas id="obg-${k}" role="img" aria-label="${l}当前使用率 ${fmtN(v)}%，${lv}"></canvas><b>${fmtN(v)}<small>%</small></b></div><p>${l}当前使用率</p><span class="x-tag x-tag--s ${cls}">${lv}</span></div>`;
         }).join("");
         const net = M.find((x) => x.m.k === "net"), nv = net.sets.map((s) => last(s[1]));
-        return `<div class="x-tbar" role="group" aria-label="监控范围">${sel("obCl", "集群", Object.keys(d.clusters), ob.cl)}${sel("obNs", "命名空间", d.clusters[ob.cl].ns, ob.ns)}${sel("obApp", "应用", Object.keys(d.apps), ob.app, "全部应用")}
+        return `<div class="x-tbar" role="group" aria-label="监控范围">${sel("obCl", "集群", clusterNames, ob.cl)}${sel("obNs", "命名空间", namespaces, ob.ns)}${sel("obApp", "应用", Object.keys(apps), ob.app, "全部应用")}
             <span class="x-obtools"><span style="display:inline-flex;gap:6px;flex-wrap:wrap" role="group" aria-label="时间范围">${Object.keys(OB_RANGES).map((r) => `<button class="x-seg" data-range="${r}" aria-pressed="${r === ob.range}">${r}</button>`).join("")}</span>
             <label class="x-switch"><input type="checkbox" role="switch" id="obCmp"${ob.cmp ? " checked" : ""} /> 对比昨日</label>
             <button class="x-btn" data-obact="refresh">刷新</button></span></div>
-          <div class="x-ggrid">${gauges}<div class="x-panel x-gauge"><div class="x-gbig">${fmtN(+(nv[0] + nv[1]).toFixed(1))}<small>MB/s</small></div><p>当前网络吞吐</p><span class="x-frac">入 ${nv[0]} · 出 ${nv[1]}</span></div></div>
+          <p class="x-frac" role="status">${esc(ob.liveNote || "")}</p>
+          <div class="x-ggrid">${gauges}<div class="x-panel x-gauge"><div class="x-gbig">${fmtN(nv.some((v) => v == null) ? null : +(nv[0] + nv[1]).toFixed(1))}<small>MB/s</small></div><p>当前网络吞吐</p><span class="x-frac">入 ${fmtN(nv[0])} · 出 ${fmtN(nv[1])}</span></div></div>
           <div class="x-obgrid">${cards}</div>
-          <section class="x-panel x-setform x-obq"><div class="x-sethead" style="margin-bottom:8px"><h2 class="x-h2">PromQL 查询</h2><span class="x-frac">Ctrl / ⌘ + Enter 执行 · 范围 ${ob.cl} · 近 ${ob.range}</span></div>
+          <section class="x-panel x-setform x-obq"><div class="x-sethead" style="margin-bottom:8px"><h2 class="x-h2">PromQL 查询</h2><span class="x-frac">Ctrl / ⌘ + Enter 执行 · 数据源 ${esc((ob.source || {}).ds?.name || "未配置")} · 近 ${ob.range}；自定义表达式需自行限定标签</span></div>
             <textarea class="x-input" id="pq" rows="2" spellcheck="false" autocomplete="off" aria-label="PromQL 表达式" aria-describedby="pqerr">${esc(ob.q)}</textarea>
             <div class="x-tbar">${OB_PQ.map(([l], i) => `<button class="x-seg" data-pq="${i}" aria-pressed="${ob.q === OB_PQ[i][1]}">${l}</button>`).join("")}<button class="x-btn x-btn--pri" data-obact="run" style="margin-left:auto">执行查询</button></div>
             <p class="x-err" id="pqerr" style="margin:8px 0 0"${ob.err ? "" : " hidden"}>${esc(ob.err || "")}</p>
-            ${ob.res ? `<p class="x-frac" style="margin:12px 0 0">返回 ${ob.res.series.length} 条序列 · 每条 ${ob.res.series[0][1].length} 个点 · 耗时 ${ob.res.ms} ms${ob.res.u ? " · 单位 " + ob.res.u : ""}</p>
+            ${ob.res ? ob.res.series.length ? `<p class="x-frac" style="margin:12px 0 0">返回 ${ob.res.series.length} 条序列 · 每条 ${ob.res.series[0][1].length} 个点 · 耗时 ${ob.res.ms} ms${ob.res.u ? " · 单位 " + ob.res.u : ""}</p>
               <div class="x-ochart"><canvas id="pqc" role="img" aria-label="查询结果：${ob.res.series.map(([n, v]) => `${n || "结果"} 当前 ${v[v.length - 1]}`).join("，")}"></canvas></div>
-              ${tbl(["序列", "当前值", "最小", "最大"], ob.res.series.map(([n, v]) => [`<span class="x-mono">${esc(n || "{}")}</span>`, `<b>${v[v.length - 1]}</b>`, Math.min(...v), Math.max(...v)]))}` : ""}</section>`;
+              ${tbl(["序列", "当前值", "最小", "最大"], ob.res.series.map(([n, v]) => [`<span class="x-mono">${esc(n || "{}")}</span>`, `<b>${v[v.length - 1]}</b>`, Math.min(...v), Math.max(...v)]))}` : '<p class="x-empty">查询成功，但没有匹配的序列</p>' : ""}</section>`;
       };
       OB_AFTER.metrics = () => {
         const labels = obLabels(), M = obMetricSets();
@@ -10622,13 +11226,15 @@
         // 仪表：已用部分按水位着色，未用部分为浅色底槽
         OB_GAUGE.forEach(([k]) => {
           const g = M.find((x) => x.m.k === k), v = g.sets[0][1][g.sets[0][1].length - 1];
+          if (v == null) return;
           xChart($("obg-" + k), { type: "doughnut", data: { labels: ["已用", "可用"], datasets: [{ data: [v, Math.max(0, 100 - v)], backgroundColor: [OB_LEVEL(v, g.m.th)[2], "#eef0f3"], borderWidth: 0 }] },
             options: { rotation: -90, circumference: 180, cutout: "76%", events: [], plugins: { legend: { display: false }, tooltip: { enabled: false }, datalabels: { display: false } } } });
         });
-        if (ob.res) obChart("pqc", labels, ob.res.series.map(([n, v], i) => [n || "结果", v, CPAL[i % CPAL.length]]), ob.res.u || "");
+        if (ob.res && ob.res.series && ob.res.series.length) obChart("pqc", ob.res.labels || labels, ob.res.series.map(([n, v], i) => [n || "结果", v, CPAL[i % CPAL.length]]), ob.res.u || "");
         const cmp = $("obCmp"); if (cmp) cmp.onchange = () => { ob.cmp = cmp.checked; obDraw("#obCmp"); };
       };
       function obRun(q) {
+        if (!demo) { obRunLive(q); return ""; }
         q = q.trim(); ob.q = q;
         const bal = (o, c) => { let n = 0; for (const ch of q) { if (ch === o) n++; else if (ch === c && --n < 0) return false; } return n === 0; };
         if (!q) return "请输入 PromQL 表达式";
@@ -10640,7 +11246,7 @@
         const names = by === "app" ? Object.keys(apps) : by === "instance" ? K8.nodes.slice(1, 4).map((x) => x.ip + ":9100") : by === "pod" ? ["order-service-7c9d8f-x2k4p", "order-service-7c9d8f-m8q1z", "api-gateway-5f6b9d-q9w2c"] : [""];
         const n = OB_RANGES[ob.range][0], scale = u === "s" ? 0.001 : k === "err" ? 0.01 : 1;
         const series = names.map((nm) => {
-          let b = by === "app" ? apps[nm][k] : obBase(k);
+          let b = by === "app" ? Number(apps[nm] && apps[nm][k]) || 0 : obBase(k);
           if (nm && by !== "app") b *= 0.6 + (obN(nm) % 70) / 100;
           return [nm ? `{${by}="${nm}"}` : "", obSeries(b * scale, 0.18, obN(q + nm) % 100 / 10, n, dp, u === "%" ? 100 : Infinity)];
         });
@@ -10830,6 +11436,7 @@
         const ta = $("lgkql"), q = (ta ? ta.value : o.kql).trim(), P = lgParse(q);
         if (P.err) { toast("语句有误：" + P.err); return ta && ta.focus(); }
         Object.assign(LG, { q, qi: null, err: "", from: o.from, to: o.to }); LG.open.clear();
+        LG.live = false;
         A.open = false; A.edit = false;
         lgDraw("#lgin");
         toast(`已应用 AI 生成的语句，命中 ${LG.vis.length} 条日志`);
@@ -10837,6 +11444,7 @@
       function lgRun() {
         const q = (LG.qi ?? LG.q).trim(), P = lgParse(q);
         if (P.err) { LG.err = "语法错误：" + P.err; LG.qi = q; } else Object.assign(LG, { q, qi: null, err: "" });
+        if (!P.err) LG.live = false;
         LG.open.clear(); lgDraw("#lgin");
       }
       function lgAdd(k, v, neg) {
@@ -10943,43 +11551,39 @@
         };
       }
       // 实时日志：从平台已注册的 Loki 数据源取最近 24h 日志，填进原来的 ob.logs
-      async function loadLiveLogs() {
-        const dsRaw = await apiRequest("/observability/datasources");
-        const list = Array.isArray(dsRaw) ? dsRaw : (dsRaw.items || []);
-        const loki = list.find((d) => d.type === "loki");
-        if (!loki) throw new Error("未注册 Loki 数据源");
+      async function loadLiveLogs(rev) {
+        const ctx = await obsContext(LG.cluster);
+        if (rev !== pageRenderRev) { LG.live = false; return 0; }
+        LG.ctx = ctx; LG.cluster = ctx.cluster ? String(ctx.cluster.id) : ""; ob.logs = [];
+        if (!ctx.cluster) { LG.liveNote = "当前环境无集群"; return 0; }
+        const scope = obsSource(ctx, ["loki"]);
+        if (!scope) { LG.liveNote = "当前集群环境未配置日志数据源"; return 0; }
         const res = await apiRequest("/observability/logs/query", {
           method: "POST",
-          body: JSON.stringify({ datasource: loki.id, query: '{job="fluent-bit"}', from: "now-24h", to: "now", limit: 300 }),
+          body: JSON.stringify({ datasource: scope.ds.id, query: XSObserve.logQuery(scope), from: LG.from ? new Date(LG.from).toISOString() : `now-${Math.min(LG.win || 1440, 10080)}m`, to: LG.to ? new Date(LG.to).toISOString() : "now", limit: 500 }),
         });
         const rows = (res && res.rows) || [];
-        ob.logs = rows.map((r) => {
-          const lb = r.labels || {};
-          // 页面取色表 OB_LV 的键是大写（ERROR/WARN/INFO/DEBUG），这里做归一化
-          const raw = String(r.level || "info").toLowerCase();
-          const lv = raw.includes("err") ? "ERROR" : raw.includes("warn") ? "WARN"
-            : (raw.includes("debug") || raw.includes("trace")) ? "DEBUG" : "INFO";
-          return {
-            ts: new Date(r.ts), lv,
-            app: lb.container || r.service || "—", msg: r.message || "",
-            json: { ...lb, level: lv, app: lb.container || r.service,
-              pod: lb.pod || "", namespace: lb.namespace || "", msg: r.message || "" },
-          };
-        });
+        if (rev !== pageRenderRev) { LG.live = false; return 0; }
+        ob.logs = rows.map((r) => XSObserve.normalizeLog(r, ctx.cluster));
+        LG.liveNote = `${ctx.cluster.name} · ${scope.ds.name} · 最近 ${ob.logs.length} 条日志（最多 500 条，KQL 筛选当前结果）${scope.dedicated ? "" : " · 已按集群标签限定；采集端需包含 " + ((scope.ds.options || {}).cluster_label || "cluster")}`;
         return ob.logs.length;
       }
 
       function renderLogs(el) {
+        const renderRev = ++pageRenderRev;
         // 先跑一次演示初始化（会建 ob.rules 等骨架），再用真实日志覆盖 ob.logs；
         // 否则第二遍渲染时 obInit 会把真实日志重新覆盖回演示数据。
         killCharts(); obInit();
-        if (!LG.live) {
+        if (!LG.live || LG.env !== nav.env) {
           LG.live = true;
+          LG.env = nav.env;
           el.innerHTML = phead("日志检索", "从 Loki 读取容器日志") +
             '<section class="x-panel"><p class="x-empty">正在从 Loki 读取最近 24 小时日志…</p></section>';
-          loadLiveLogs().then(() => renderLogs(el)).catch((e) => {
-            el.innerHTML = phead("日志检索", "从 Loki 读取容器日志", '<span class="x-tag x-orange x-pill">数据源异常</span>') +
-              '<section class="x-panel"><p class="x-aerr" role="alert">Loki 读取失败：' + esc(e.message || e) + "</p></section>";
+          loadLiveLogs(renderRev).then(() => {
+            if (renderRev === pageRenderRev && current() === "logs") renderLogs(el);
+          }).catch((e) => {
+            if (renderRev !== pageRenderRev || current() !== "logs") return;
+            LG.liveNote = "Loki 读取失败：" + (e.message || e); ob.logs = []; renderLogs(el);
           });
           return;
         }
@@ -10994,7 +11598,7 @@
         }).join("");
         const rows = hits.map((l) => {
           const i = ob.logs.indexOf(l), on = LG.open.has(i);
-          return `<tr class="x-lgr${on ? " on" : ""}" data-lgrow="${i}"><td class="c"><button class="x-lgx" type="button" data-lgrow="${i}" aria-expanded="${on}" aria-label="展开 ${esc(l.msg)}">${ic("chev")}</button></td><td class="ts">${obTs(l.ts)}</td><td><span class="x-tag x-tag--s ${OB_LV[l.lv][0]}">${l.lv}</span></td><td class="kw">${esc(l.app)}</td><td class="msg">${esc(l.msg)}</td></tr>${on ? `<tr class="x-lgdet"><td colspan="5">${obJson(l)}</td></tr>` : ""}`;
+          return `<tr class="x-lgr${on ? " on" : ""}" data-lgrow="${i}"><td class="c"><button class="x-lgx" type="button" data-lgrow="${i}" aria-expanded="${on}" aria-label="展开 ${esc(l.msg)}">${ic("chev")}</button></td><td class="ts">${obTs(l.ts)}</td><td><span class="x-tag x-tag--s ${OB_LV[l.lv][0]}">${l.lv}</span></td><td class="kw">${esc(l.app)}<br /><span class="x-tag x-grey x-tag--s">${esc(l.cluster || "—")}</span></td><td class="msg">${esc(l.msg)}</td></tr>${on ? `<tr class="x-lgdet"><td colspan="5">${obJson(l)}</td></tr>` : ""}`;
         }).join("");
         const qv = LG.qi ?? LG.q;
         el.innerHTML = `<div id="lgw">${phead("日志检索", "用 KQL 检索容器日志，或让 AI 把一句话需求翻译成查询语句", "")}
@@ -11004,8 +11608,10 @@
             <select class="x-select" id="lgwin" aria-label="时间范围">${win}</select>
             <button class="x-btn x-btn--pri" type="button" data-lgrun>查询</button>
             <button class="x-lgaib" type="button" id="lgaib" aria-expanded="${LG.ai.open}" aria-haspopup="dialog">✦ AI 生成语句</button>
+            ${!demo && LG.ctx ? obsClusterSelect("lgcluster", LG.ctx) : ""}
             ${LG.ai.open ? lgPopHTML() : ""}
           </div>
+          ${LG.liveNote ? `<p class="x-frac" role="status">${esc(LG.liveNote)}</p>` : ""}
           ${LG.err ? `<p class="x-lgerr" role="alert">${esc(LG.err)}</p>` : ""}
           <div class="x-lgmain">
             <aside class="x-panel x-lgside" aria-label="字段分布">${side}</aside>
@@ -11026,7 +11632,7 @@
           if (e.target === inp && e.key === "Enter") { e.preventDefault(); lgRun(); }
           else if (e.key === "Escape" && LG.ai.open) { LG.ai.open = false; lgDraw("#lgaib"); }
         };
-        w.onchange = (e) => { if (e.target.id === "lgwin" && e.target.value !== "c") { LG.win = +e.target.value; LG.from = LG.to = 0; LG.open.clear(); lgDraw("#lgwin"); } };
+        w.onchange = (e) => { if (e.target.id === "lgcluster") { LG.cluster = e.target.value; LG.live = false; LG.open.clear(); renderLogs($("view")); } else if (e.target.id === "lgwin" && e.target.value !== "c") { LG.win = +e.target.value; LG.from = LG.to = 0; LG.open.clear(); LG.live = false; renderLogs($("view")); } };
         w.onsubmit = (e) => { if (e.target.id === "lgnl") { e.preventDefault(); lgAsk(); } };
         w.onclick = (e) => {
           const b = e.target.closest("button, tr[data-lgrow]"); if (!b || b.disabled) return;
@@ -11084,7 +11690,7 @@
           ${bar(key, { q: "搜索告警 / 对象 / 规则", fl: "级别", fo: OB_P, fc: 0 })}
           <section class="x-panel x-setform">${list.length ? tbl(["级别", "告警", "对象", "当前值", "状态", "持续", "处理人", "操作"], list.map((e) => {
             const i = ob.ev.indexOf(e), live = e.st === "告警中", s = live && obSil(obRule(e.rule));
-            return [`<span class="x-tag ${PRI[e.p]}">${e.p}</span>`, `<span class="x-name">${esc(e.msg)}</span><br /><span class="x-frac">${esc(e.rule)}</span>`,
+            return [`<span class="x-tag ${PRI[e.p]}">${e.p}</span>`, `<button class="x-name x-alert-open" type="button" data-alert-open="${esc(e.id)}">${esc(e.msg)}</button><br /><span class="x-frac">${esc(e.rule)}</span>`,
               `${esc(e.app)} <span class="x-tag x-grey x-tag--s">${e.env}</span>`, `<b>${esc(e.val)}</b>`,
               `<span class="x-tags">${live ? tfTag("告警中", "x-red") : tfTag("已恢复", "x-green")}${e.ack ? '<span class="x-tag x-green x-tag--s">已确认</span>' : ""}${s ? `<span class="x-tag x-grey x-tag--s">静默至 ${hm(new Date(s))}</span>` : ""}</span>${live ? "" : `<span class="x-frac">恢复于 ${e.end}</span>`}`,
               `<span style="white-space:nowrap">${e.t}</span>`, e.who ? esc(e.who) : '<span class="x-frac">未指派</span>',
@@ -11093,77 +11699,37 @@
       };
       OB_AFTER.events = (el) => bindBar(el, "#/observe/events");
 
-      // 链路追踪: demo traces seeded once; #/trace/svc/<name> opens the list filtered by service, #/trace/t/<id> a trace
-      const TR_C = { "api-gateway": C_BLUE, "order-service": C_GREEN, "user-center": C_PURP, mysql: C_ORG, redis: C_CYAN };
-      const TR_SVCS = Object.keys(TR_C);
+      // 链路追踪只展示实际检索到的 OpenTelemetry 数据。
+      const TR_C = {};
+      const TR_SVCS = [], TR_OPS = [];
       const trHref = (svc) => "#/trace/svc/" + encodeURIComponent(svc);
-      const trMs = (v) => (v >= 1000 ? (v / 1000).toFixed(2) + "s" : Math.round(v) + "ms");
-      // [service, operation, kind, base ms, children]
-      const H = (m, u) => ({ "http.method": m, "http.url": u }), DB = (s) => ({ "db.system": "mysql", "db.statement": s }), RD = (s) => ({ "db.system": "redis", "db.statement": s });
-      const TR_TPL = [
-        ["api-gateway", "POST /api/v1/orders", "server", 4, H("POST", "/api/v1/orders"), [
-          ["order-service", "OrderController.create", "server", 6, H("POST", "/orders"), [
-            ["user-center", "GET /users/{id}", "server", 5, H("GET", "/users/10293"), [["mysql", "SELECT users", "client", 3, DB("SELECT * FROM users WHERE id = ?"), []]]],
-            ["redis", "DECRBY stock", "client", 1, RD("DECRBY stock:sku-8812 1"), []],
-            ["mysql", "INSERT orders", "client", 8, DB("INSERT INTO orders (user_id, sku, amount) VALUES (?, ?, ?)"), []]]]], 0.12],
-        ["api-gateway", "GET /api/v1/orders/{id}", "server", 3, H("GET", "/api/v1/orders/88123"), [
-          ["order-service", "OrderController.get", "server", 3, H("GET", "/orders/88123"), [
-            ["redis", "GET order", "client", 1, RD("GET order:88123"), []],
-            ["mysql", "SELECT orders", "client", 5, DB("SELECT * FROM orders WHERE id = ?"), []]]]], 0.04],
-        ["api-gateway", "POST /api/v1/login", "server", 3, H("POST", "/api/v1/login"), [
-          ["user-center", "AuthController.login", "server", 9, H("POST", "/auth/login"), [
-            ["mysql", "SELECT users", "client", 4, DB("SELECT id, pwd_hash FROM users WHERE phone = ?"), []],
-            ["redis", "SET session", "client", 1, RD("SET session:* EX 7200"), []]]]], 0.01],
-        ["api-gateway", "GET /api/v1/products", "server", 2, H("GET", "/api/v1/products"), [
-          ["order-service", "ProductController.list", "server", 4, H("GET", "/products"), [["redis", "MGET products", "client", 2, RD("MGET product:*"), []]]]], 0],
-      ];
-      const TR_ERR = { mysql: "Lock wait timeout exceeded; try restarting transaction", redis: "READONLY You can't write against a read only replica", "user-center": "upstream connect error: connection refused" };
+      const trMs = (v) => v == null ? "—" : (v >= 1000 ? (v / 1000).toFixed(2) + "s" : Math.round(v) + "ms");
       const tr = { list: null, f: { svc: "", op: "", tag: "", min: "", st: "", win: 60 }, span: 0, tab: "瀑布图" };
-      function trSeed() {
-        let s = 20251014;
-        const rnd = () => ((s = (s * 1103515245 + 12345) >>> 0) / 4294967296), now = Date.now();
-        const hex = (n) => Array.from({ length: n }, () => "0123456789abcdef"[(rnd() * 16) | 0]).join("");
-        const pods = { "api-gateway": "api-gateway-5f6b9d-q9w2c", "order-service": "order-service-7c9d8f-x2k4p", "user-center": "user-center-66b4c1-r5t8n", mysql: "mysql-0", redis: "redis-node-1" };
-        tr.list = Array.from({ length: 140 }, (_, i) => {
-          const tp = TR_TPL[[0, 0, 0, 1, 1, 2, 3][i % 7]], pe = tp[6];
-          const slow = rnd() < 0.06, fail = rnd() < pe, spans = [];
-          const leafs = [];
-          const walk = (n, depth, parent, start) => {
-            const [svc, op, kind, base, tags, kids] = n, idx = spans.length;
-            const sp = { svc, op, kind, depth, parent, start, dur: 0, err: false, tags: { "span.kind": kind, "k8s.pod.name": pods[svc], ...tags }, logs: [] };
-            spans.push(sp);
-            let t = start + 0.4 + rnd() * 1.2;
-            kids.forEach((k) => { const c = walk(k, depth + 1, idx, t); t = c.start + c.dur + 0.2 + rnd() * 0.6; });
-            const self = base * (0.6 + rnd() * 0.9) * (slow && !kids.length && svc === "mysql" ? 40 + rnd() * 30 : 1);
-            sp.dur = +(t - start + self).toFixed(1);
-            if (!kids.length) leafs.push(idx);
-            return sp;
-          };
-          walk(tp, 0, -1, 0);
-          if (fail) {
-            const cands = leafs.filter((j) => spans[j].svc === "mysql" || spans[j].svc === "redis"), j = cands[(rnd() * cands.length) | 0];
-            for (let k = j; k >= 0; k = spans[k].parent) {
-              const sp = spans[k]; sp.err = true; sp.tags["otel.status_code"] = "ERROR";
-              if (sp.tags["http.method"]) sp.tags["http.status_code"] = k === 0 ? 500 : 503;
-            }
-            spans[j].logs.push({ t: spans[j].dur, ev: "exception", msg: TR_ERR[spans[j].svc], err: true });
-            if (spans[j].svc === "mysql") {
-              spans[j].dur = +(spans[j].dur + 50).toFixed(1);
-              for (let k = j; spans[k].parent >= 0; k = spans[k].parent) { const c = spans[k], p = spans[c.parent]; p.dur = +Math.max(p.dur, c.start + c.dur - p.start + 0.6).toFixed(1); }
-            }
-          }
-          spans.forEach((sp) => {
-            if (!sp.err) { sp.tags["otel.status_code"] = "OK"; if (sp.tags["http.method"]) sp.tags["http.status_code"] = 200; }
-            if (sp.kind === "client") sp.tags["peer.service"] = sp.svc;
-            if (sp.svc === "redis" && !sp.err) sp.logs.push({ t: 0.3, ev: "cache", msg: rnd() < 0.8 ? "cache hit" : "cache miss, fallback to mysql" });
-            if (sp.depth === 0) sp.logs.unshift({ t: 0, ev: "request", msg: `${sp.tags["http.method"]} ${sp.tags["http.url"]} from 10.2.${(rnd() * 255) | 0}.${(rnd() * 255) | 0}` });
-            if (sp.dur > 300 && !sp.err) sp.logs.push({ t: sp.dur, ev: "slow", msg: `slow ${sp.kind === "client" ? "query" : "request"}: ${trMs(sp.dur)}` });
-          });
-          // the root covers its children
-          const end = Math.max(...spans.map((x) => x.start + x.dur)); spans[0].dur = +(end + 0.5).toFixed(1);
-          const ts = new Date(now - Math.round((i / 140) ** 2 * 86000e3 + i * 23e3 + 3e3));
-          return { id: hex(16) + hex(16), ts, op: tp[1], dur: spans[0].dur, err: spans.some((x) => x.err), spans, svcs: [...new Set(spans.map((x) => x.svc))] };
-        });
+      async function trLoadLive(rev) {
+        const key = JSON.stringify([nav.env, tr.cluster, tr.f.svc, tr.f.win, tr.f.tag, tr.f.min, tr.f.op]);
+        if (tr.liveKey === key && Date.now() - (tr.loadedAt || 0) < 30000) return;
+        tr.list = []; tr.note = "";
+        const ctx = await obsContext(tr.cluster); if (rev !== pageRenderRev) return; tr.ctx = ctx; tr.cluster = ctx.cluster ? String(ctx.cluster.id) : "";
+        TR_SVCS.splice(0); TR_OPS.splice(0); Object.keys(TR_C).forEach((name) => delete TR_C[name]);
+        if (!ctx.cluster) { tr.note = "当前环境无集群"; return; }
+        const scope = obsSource(ctx, ["jaeger", "tempo"]); tr.source = scope;
+        if (!scope) { tr.note = "当前集群环境未配置 Jaeger / Tempo 数据源"; return; }
+        const services = XSObserve.items(await XS.get("/observability/traces/services?datasource=" + scope.ds.id));
+        if (rev !== pageRenderRev) return;
+        const tags = {};
+        if (!scope.dedicated) tags[(scope.ds.options || {}).cluster_label || "k8s.cluster.name"] = ctx.cluster.name;
+        const [tag, value] = tr.f.tag.split("=").map((v) => v.trim());
+        if (tag && value != null) { if (Object.hasOwn(tags, tag) && tags[tag] !== value) throw new Error("标签条件与所选集群冲突"); tags[tag] = value; }
+        const requested = tr.f.svc ? [tr.f.svc] : services.slice(0, 20);
+        const found = await Promise.all(requested.map((service) => XS.get("/observability/traces/search?" + new URLSearchParams({ datasource: scope.ds.id, service, tags: JSON.stringify(tags), start: "now-" + tr.f.win + "m", end: "now", limit: 100, operation: tr.f.op, minDuration: tr.f.min ? tr.f.min + "ms" : "" }))));
+        if (rev !== pageRenderRev) return;
+        const unique = new Map(found.flatMap(XSObserve.items).map((r) => [r.trace_id, r]));
+        tr.list = [...unique.values()].map((r) => XSObserve.traceRecord(r, ctx.cluster)).sort((a, b) => b.ts - a.ts);
+        const available = [...new Set([...services, ...tr.list.flatMap((t) => t.svcs), ...(tr.f.svc ? [tr.f.svc] : [])])];
+        TR_SVCS.push(...available); available.forEach((s, i) => { TR_C[s] = CPAL[i % CPAL.length]; });
+        TR_OPS.push(...new Set(tr.list.map((t) => t.op)));
+        tr.note = `${ctx.cluster.name} · ${scope.ds.name} · 基于已检索的 ${tr.list.length} 条链路样本计算；每服务最多 100 条，不代表全量业务 QPS。`;
+        tr.liveKey = JSON.stringify([nav.env, tr.cluster, tr.f.svc, tr.f.win, tr.f.tag, tr.f.min, tr.f.op]); tr.loadedAt = Date.now();
       }
       const trHits = () => {
         const f = tr.f, from = Date.now() - f.win * 6e4, min = +f.min || 0, [tk, tv] = f.tag.split("=").map((x) => x.trim());
@@ -11180,12 +11746,13 @@
         const win = OB_WIN.find((w) => w[0] === f.win)[1];
         return `<form class="x-tbar" id="trf" role="search" novalidate>
             <select class="x-select" name="svc" aria-label="服务"><option value="">全部服务</option>${opt(TR_SVCS, f.svc)}</select>
-            <select class="x-select" name="op" aria-label="接口"><option value="">全部接口</option>${opt(TR_TPL.map((t) => t[1]), f.op)}</select>
+            <select class="x-select" name="op" aria-label="接口"><option value="">全部接口</option>${opt(TR_OPS, f.op)}</select>
             <input class="x-input" name="tag" value="${esc(f.tag)}" placeholder="标签，如 http.status_code=500" aria-label="标签，格式 key=value" style="flex:1;min-width:200px" />
             <input class="x-input" type="number" name="min" min="0" value="${esc(f.min)}" placeholder="最小耗时 ms" aria-label="最小耗时（毫秒）" style="width:130px" />
             <select class="x-select" name="st" aria-label="状态"><option value="">全部状态</option>${opt(["成功", "错误"], f.st)}</select>
             <select class="x-select" name="win" aria-label="时间范围">${opt(OB_WIN.map((w) => w[0]), f.win, (v) => OB_WIN.find((w) => w[0] === v)[1])}</select>
-            <button class="x-btn x-btn--pri" type="submit">查询链路</button></form>
+            <button class="x-btn x-btn--pri" type="submit">查询链路</button>${!demo && tr.ctx ? obsClusterSelect("trcluster", tr.ctx) : ""}</form>
+          <p class="x-frac" role="status">${esc(tr.note || "")}</p>
           <div class="x-cards x-cards5">${kpi("请求数", fmtN(hits.length))}${kpi("错误率", hits.length ? ((errs / hits.length) * 100).toFixed(1) + "%" : "—", errs ? "#cf1322" : "")}${kpi("P50", hits.length ? trMs(trPct(d, 0.5)) : "—")}${kpi("P95", hits.length ? trMs(trPct(d, 0.95)) : "—")}${kpi("P99", hits.length ? trMs(trPct(d, 0.99)) : "—", trPct(d, 0.99) > 500 ? "#d4380d" : "")}</div>
           ${trRedHTML()}
           <div class="x-wide" style="margin-bottom:0">${trRankHTML()}${trSlowHTML(hits)}</div>
@@ -11193,8 +11760,8 @@
             <div class="x-ochart"><canvas id="trScatter" role="img" aria-label="${win}共 ${hits.length} 条链路，耗时 P50 ${trMs(trPct(d, 0.5))}、P99 ${trMs(trPct(d, 0.99))}，其中 ${errs} 条错误"></canvas></div></section>` : ""}
           <section class="x-panel x-setform"><div class="x-sethead" style="margin-bottom:8px"><h2 class="x-h2">共 ${hits.length} 条链路</h2>${hits.length > 50 ? '<span class="x-frac">显示最近 50 条</span>' : ""}</div>
             ${hits.length ? tbl(["时间", "TraceID", "入口接口", "服务", "Span", "耗时", "状态"], hits.slice(0, 50).map((t) => [
-              `<span class="x-mono" style="white-space:nowrap">${obTs(t.ts)}</span>`, `<a class="x-tlink x-mono" href="#/trace/t/${t.id}">${t.id.slice(0, 12)}…</a>`, esc(t.op), trSvcs(t.svcs), t.spans.length,
-              `<span style="white-space:nowrap"><b>${trMs(t.dur)}</b><span class="x-dbar" aria-hidden="true"><i style="width:${Math.max(2, (t.dur / max) * 100)}%;--c:${t.err ? C_RED : C_BLUE}"></i></span></span>`, trSt(t.err)]))
+              `<span class="x-mono" style="white-space:nowrap">${obTs(t.ts)}</span>`, `<a class="x-tlink x-mono" href="#/trace/t/${t.id}">${t.id.slice(0, 12)}…</a>`, esc(t.op), trSvcs(t.svcs) + (t.cluster ? `<span class="x-tag x-grey x-tag--s">${esc(t.cluster)}</span>` : ""), t.spanCount || t.spans.length,
+              `<span style="white-space:nowrap"><b>${trMs(t.dur)}</b><span class="x-tr-duration" aria-hidden="true"><i style="width:${Math.max(2, (t.dur / max) * 100)}%;--c:${t.err ? C_RED : C_BLUE}"></i></span></span>`, trSt(t.err)]))
               : '<p class="x-empty">没有匹配的链路，试试放宽时间范围或清空筛选</p>'}</section>`;
       }
       function trChart(hits) {
@@ -11218,13 +11785,24 @@
         ["redis", "DECRBY stock", 320, 0.6, 8, 0.2], ["redis", "GET order", 610, 0.4, 4, 0], ["redis", "SET session", 140, 0.5, 5, 0], ["redis", "MGET products", 980, 1.1, 12, 0],
       ];
       const TR_BUCKET = { 15: [15, 1], 60: [12, 5], 360: [12, 30], 1440: [24, 60] };
-      const trRedSvc = () => tr.f.svc || tr.red || "api-gateway";
+      const trRedSvc = () => tr.f.svc || (TR_SVCS.includes(tr.red) ? tr.red : TR_SVCS[0]) || "";
       // 每个接口在当前时间范围内的 QPS / P99 / 错误率，随范围略有起伏
-      const trEps = () => TR_EP.map(([svc, op, q, p50, p99, e]) => {
+      const trEps = () => !demo ? (() => {
+        const groups = new Map();
+        trHits().forEach((t) => { const svc = t.spans[0].svc, key = svc + "\n" + t.op; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(t); });
+        return [...groups.values()].map((list) => { const d = list.map((t) => t.dur).sort((a,b) => a-b); return { svc: list[0].spans[0].svc, op: list[0].op, qps: +(list.length / (tr.f.win * 60)).toFixed(4), p50: trPct(d, 0.5), p99: trPct(d, 0.99), err: +(100 * list.filter((t) => t.err).length / list.length).toFixed(2) }; });
+      })() : TR_EP.map(([svc, op, q, p50, p99, e]) => {
         const s = obN(op + tr.f.win) % 100 / 100;
         return { svc, op, qps: Math.round(q * (0.88 + s * 0.24)), p50: +(p50 * (0.9 + s * 0.2)).toFixed(1), p99: Math.round(p99 * (0.85 + s * 0.35)), err: +(e * (0.7 + s * 0.6)).toFixed(2) };
       });
       function trRedSeries(svc) {
+        if (!demo) {
+          const [n, step] = TR_BUCKET[tr.f.win], now = Date.now(), start = now - tr.f.win * 60000;
+          const bins = Array.from({ length: n }, () => []);
+          trHits().filter((t) => t.spans[0].svc === svc).forEach((t) => { const i = Math.floor((t.ts - start) / (step * 60000)); if (i >= 0 && i < n) bins[i].push(t); });
+          const pct = (a, p) => a.length ? trPct(a.map((t) => t.dur).sort((x,y) => x-y), p) : null;
+          return { labels: bins.map((_,i) => hm(new Date(start + (i + 1) * step * 60000))), qps: bins.map((a) => a.length ? +(a.length / (step * 60)).toFixed(4) : null), err: bins.map((a) => a.length ? +(100 * a.filter((t) => t.err).length / a.length).toFixed(2) : null), p50: bins.map((a) => pct(a, .5)), p95: bins.map((a) => pct(a, .95)), p99: bins.map((a) => pct(a, .99)) };
+        }
         const eps = trEps().filter((x) => x.svc === svc), qps = eps.reduce((s, x) => s + x.qps, 0) || 1;
         const w = (k) => eps.reduce((s, x) => s + x[k] * x.qps, 0) / qps;
         const p50 = w("p50"), p99 = Math.max(...eps.map((x) => x.p99)) * 0.92, p95 = p50 + (p99 - p50) * 0.55, err = w("err");
@@ -11237,11 +11815,11 @@
       function trRedHTML() {
         const svc = trRedSvc(), r = trRedSeries(svc), last = (a) => a[a.length - 1], win = OB_WIN.find((w) => w[0] === tr.f.win)[1];
         const card = (id, t, now, al) => `<section class="x-panel"><div class="x-sethead" style="margin-bottom:8px"><h3 class="x-h2" style="margin:0">${t}</h3><span class="x-obv">${now}</span></div><div class="x-ochart"><canvas id="${id}" role="img" aria-label="${al}"></canvas></div></section>`;
-        return `<div class="x-redhead"><h2 class="x-h2">服务 RED 指标 <span class="x-frac">${win} · 全量指标</span></h2>
+        return `<div class="x-redhead"><h2 class="x-h2">服务 RED 指标 <span class="x-frac">${win} · ${demo ? "全量指标" : "检索样本统计，空桶表示无样本"}</span></h2>
             <span role="group" aria-label="选择服务">${TR_SVCS.map((s) => `<button class="x-seg" data-trred="${s}" aria-pressed="${s === svc}"${tr.f.svc && s !== svc ? " disabled" : ""}>${s}</button>`).join("")}</span></div>
           <div class="x-obgrid">
             ${card("trQps", "QPS", `${fmtN(last(r.qps))}<small>req/s</small>`, `${svc} 的 QPS ${win}在 ${fmtN(Math.min(...r.qps))} 到 ${fmtN(Math.max(...r.qps))} 之间，当前 ${fmtN(last(r.qps))}`)}
-            ${card("trErr", "错误率", `${last(r.err)}<small>%</small>`, `${svc} 的错误率当前 ${last(r.err)}%，最高 ${Math.max(...r.err)}%，警告线 0.5%、阈值 1%`)}
+            ${card("trErr", "错误率", `${fmtN(last(r.err))}<small>%</small>`, `${svc} 的错误率当前 ${fmtN(last(r.err))}%，警告线 0.5%、阈值 1%`)}
             ${card("trLat", "延迟 P50 / P95 / P99", `${trMs(last(r.p99))}<small>P99</small>`, `${svc} 的延迟当前 P50 ${trMs(last(r.p50))}、P95 ${trMs(last(r.p95))}、P99 ${trMs(last(r.p99))}，SLO 500ms`)}
           </div>`;
       }
@@ -11259,7 +11837,7 @@
       function trRankHTML() {
         const s = tr.sort || (tr.sort = { k: "qps", d: -1 }), eps = trEps().filter((x) => !tr.f.svc || x.svc === tr.f.svc).sort((a, b) => (a[s.k] - b[s.k]) * s.d);
         const th = (k, l) => { const on = s.k === k; return `<th class="x-num"${on ? ` aria-sort="${s.d < 0 ? "descending" : "ascending"}"` : ""}><button class="x-sortb" data-trsort="${k}" aria-label="按${l}排序">${l}<span aria-hidden="true">${on ? (s.d < 0 ? "↓" : "↑") : "↕"}</span></button></th>`; };
-        const entry = TR_TPL.map((t) => t[1]);
+        const entry = TR_OPS;
         return `<section class="x-panel x-setform"><div class="x-sethead" style="margin-bottom:8px"><h2 class="x-h2">接口排行</h2><span class="x-frac">${tr.f.svc ? esc(tr.f.svc) + " · " : ""}${eps.length} 个接口 · 点表头排序</span></div>
           <div style="overflow-x:auto"><table class="x-table x-table--plain"><thead><tr><th>接口</th><th>服务</th>${TR_SORT.map(([k, l]) => th(k, l)).join("")}</tr></thead><tbody>${eps.map((x) => `<tr>
             <td>${entry.includes(x.op) ? `<button class="x-act" style="padding:0" data-trop="${esc(x.op)}" aria-label="查看 ${esc(x.op)} 的链路">${esc(x.op)}</button>` : `<span class="x-name">${esc(x.op)}</span>`}</td><td><span class="x-sv" style="--c:${TR_C[x.svc]}">${esc(x.svc)}</span></td>
@@ -11271,7 +11849,7 @@
         return `<section class="x-panel x-setform"><div class="x-sethead" style="margin-bottom:8px"><h2 class="x-h2">慢调用</h2><span class="x-frac">耗时最长的 ${slow.length} 条 · 点击查看瀑布图</span></div>
           ${slow.length ? `<ol class="x-slow">${slow.map((t) => { const leaf = t.spans.filter((x, j) => !t.spans.some((c) => c.parent === j)), sp = leaf.reduce((m, x) => (x.dur > m.dur ? x : m), leaf[0]);
             return `<li><a href="#/trace/t/${t.id}" aria-label="${esc(t.op)} 耗时 ${trMs(t.dur)}${t.err ? "，错误" : ""}，查看瀑布图"><span class="x-name">${esc(t.op)}</span>
-              <em><span style="color:${t.err ? C_RED : t.dur >= 200 ? "#b54708" : "inherit"}">${trMs(t.dur)}</span><span class="x-dbar" aria-hidden="true" style="margin:0"><i style="width:${Math.max(4, (t.dur / max) * 100)}%;--c:${t.err ? C_RED : t.dur >= 200 ? C_ORG : C_BLUE}"></i></span></em>
+              <em><span style="color:${t.err ? C_RED : t.dur >= 200 ? "#b54708" : "inherit"}">${trMs(t.dur)}</span><span class="x-tr-duration" aria-hidden="true" style="margin:0"><i style="width:${Math.max(4, (t.dur / max) * 100)}%;--c:${t.err ? C_RED : t.dur >= 200 ? C_ORG : C_BLUE}"></i></span></em>
               <small>${obTs(t.ts)} · 最慢 ${esc(sp.svc)} ${esc(sp.op)} ${trMs(sp.dur)}${t.err ? " · 错误" : ""}</small></a></li>`; }).join("")}</ol>` : '<p class="x-empty">该范围内没有链路</p>'}</section>`;
       }
       function trDepsHTML(t) {
@@ -11318,14 +11896,29 @@
           ${tr.tab === "服务依赖" ? `<section class="x-panel x-setform">${trDepsHTML(t)}</section>`
             : `<div class="x-trgrid"><section class="x-panel x-setform x-wf" aria-label="Span 瀑布图"><div class="x-wfhead"><span>服务 · 操作</span><span class="x-wfaxis">${ax}</span></div>${rows}</section>${panel}</div>`}`;
       }
-      function renderTrace(el) {
-        killCharts(); if (!tr.list) trSeed();
-        const [, , kind, arg] = location.hash.split("/"), v = arg && decodeURIComponent(arg);
-        if (kind === "svc" && TR_SVCS.includes(v)) { tr.f = { ...tr.f, svc: v, op: "", tag: "", min: "", st: "" }; history.replaceState(null, "", "#/trace"); }
-        const t = kind === "t" && tr.list.find((x) => x.id === v);
+      async function renderTrace(el) {
+        killCharts();
+        const [route, query = ""] = location.hash.split("?"), [, , kind, arg] = route.split("/"), v = arg && decodeURIComponent(arg);
+        const routeCluster = new URLSearchParams(query).get("cluster");
+        if (routeCluster && routeCluster !== tr.cluster) { tr.cluster = routeCluster; tr.liveKey = ""; }
+        if (kind === "svc" && v && tr.f.svc !== v) { tr.f = { ...tr.f, svc: v, op: "", tag: "", min: "", st: "" }; tr.liveKey = ""; }
+        if (!demo) { const rev = ++pageRenderRev; try { await trLoadLive(rev); } catch (e) { if (rev === pageRenderRev) { tr.note = e.message; tr.list = []; } } if (rev !== pageRenderRev || current() !== "trace") return; }
+        if (!tr.list) tr.list = [];
+        if (kind === "svc" && v) history.replaceState(null, "", "#/trace");
+        let t = kind === "t" && tr.list.find((x) => x.id === v);
+        if (!demo && kind === "t" && tr.source && (!t || t.summaryOnly)) {
+          const rev = pageRenderRev;
+          try {
+            const raw = await XS.get("/observability/traces/" + encodeURIComponent(v) + "?datasource=" + tr.source.ds.id);
+            if (rev !== pageRenderRev || current() !== "trace") return;
+            const label = (tr.source.ds.options || {}).cluster_label || "k8s.cluster.name";
+            if (!tr.source.dedicated && !(raw.spans || []).some((s) => (s.tags || {})[label] === tr.ctx.cluster.name)) throw new Error("链路标签与所选集群不匹配");
+            t = XSObserve.traceRecord(raw, tr.ctx.cluster); const i = tr.list.findIndex((x) => x.id === v); if (i >= 0) tr.list[i] = t; else tr.list.push(t);
+          } catch (e) { tr.note = "链路详情读取失败：" + e.message; t = null; }
+        }
         // a new trace opens on its deepest error span, else the root
         if (t && tr.cur !== t.id) { tr.cur = t.id; const e = t.spans.map((s, j) => (s.err ? j : -1)).filter((j) => j >= 0); tr.span = e.length ? e[e.length - 1] : 0; }
-        el.innerHTML = `<div id="trw">${phead(t ? "链路详情" : "链路追踪", t ? "Span 瀑布图、标签与日志，以及本次请求经过的服务依赖" : "基于 OpenTelemetry 的分布式链路检索，按服务、接口、标签与耗时定位慢调用与错误", "")}${t ? trDetailHTML(t) : trListHTML()}</div>`;
+        el.innerHTML = `<div id="trw">${phead(t ? "链路详情" : "链路追踪", t ? "Span 瀑布图、标签与日志，以及本次请求经过的服务依赖 · " + t.cluster : "基于 OpenTelemetry 的分布式链路检索，按服务、接口、标签与耗时定位慢调用与错误", "")}${t ? trDetailHTML(t) : trListHTML()}</div>`;
         if (!t) { trChart(trHits()); trRedCharts(); }
         const w = $("trw"), redraw = (sel) => { const y = window.scrollY; renderTrace(el); window.scrollTo(0, y); const f = sel && $("trw").querySelector(sel); if (f) f.focus({ preventScroll: true }); };
         w.onclick = (e) => {
@@ -11339,37 +11932,50 @@
         };
         const f = $("trf");
         if (f) {
+          const clusterSelect = $("trcluster"); if (clusterSelect) clusterSelect.onchange = (e) => { e.stopPropagation(); tr.cluster = e.target.value; tr.liveKey = null; tr.f.svc = tr.f.op = tr.f.tag = ""; redraw(); };
           const read = () => { const x = f.elements; tr.f = { svc: x.svc.value, op: x.op.value, tag: x.tag.value.trim(), min: x.min.value, st: x.st.value, win: +x.win.value }; };
-          f.onsubmit = (e) => { e.preventDefault(); read(); redraw('#trf [type="submit"]'); };
+          f.onsubmit = (e) => { e.preventDefault(); read(); tr.liveKey = null; redraw('#trf [type="submit"]'); };
           f.onchange = (e) => { if (e.target.tagName === "SELECT") { read(); redraw(`#trf [name="${e.target.name}"]`); } };
         }
       }
 
       // 通知渠道
       const obMask = (u) => { try { const x = new URL(u); return x.host + (x.pathname + x.search).slice(0, 14) + "…" + u.slice(-4); } catch { return u; } };
-      OB_BODY.channels = () => `<div class="x-chgrid">${ob.ch.map((c, i) => {
+      OB_BODY.channels = () => `<div class="x-channel-tools"><div><strong>通知渠道</strong><p>为告警规则选择发送目标；敏感配置只显示掩码，修改时留空即可保留。</p></div><button class="x-btn" data-channel-add type="button">+ 添加渠道</button></div><div class="x-channel-grid">${ob.ch.map((c, i) => {
         const ok = obConf(c), used = ob.rules.filter((r) => r.ch.includes(c.t)).length;
         const st = !ok ? tfTag("未配置", "x-grey") : c.on ? tfTag("已启用", "x-green") : tfTag("已停用", "x-grey");
         const rows = c.k === "email" ? [["收件人", ok ? esc(c.to) : "—"], ["SMTP", `<span class="x-mono">${esc(c.smtp || "—")}</span>`]]
           : [["地址", ok ? `<span class="x-mono">${esc(obMask(c.url))}</span>` : "—"], [c.k === "webhook" ? "签名" : "加签", c.secret ? "已开启" : "未开启"], ...(c.to ? [[c.k === "webhook" ? "备注" : "群", esc(c.to)]] : [])];
-        return `<section class="x-panel x-ch" aria-labelledby="ch-${c.k}"><div class="x-chhead"><i class="x-chic" style="--g:${c.c}" aria-hidden="true">${esc(c.ic)}</i><div><strong id="ch-${c.k}">${c.t}</strong><span class="x-frac">${c.kind}</span></div>${st}</div>
+        return `<section class="x-panel x-ch" style="--channel-color:${c.c}" aria-labelledby="ch-${i}"><div class="x-chhead">${obChannelIcon(c.k, c.c)}<div><strong id="ch-${i}">${esc(c.t)}</strong><span class="x-frac">${esc(c.kind)}</span></div>${st}</div>
           <dl>${rows.map(([t, v]) => `<dt>${t}</dt><dd>${v}</dd>`).join("")}<dt>关联规则</dt><dd>${used} 条</dd><dt>最近测试</dt><dd>${c.test || '<span class="x-frac">未测试</span>'}</dd></dl>
-          <div class="x-chfoot"><button class="x-btn" data-chtest="${i}">测试发送</button><button class="x-btn" data-chedit="${i}">编辑</button></div></section>`;
+          <div class="x-chfoot"><button class="x-btn" data-chtest="${i}"${ok ? "" : " disabled"}>测试发送</button><button class="x-btn" data-chedit="${i}">${ok ? "编辑" : "配置渠道"}</button></div></section>`;
       }).join("")}</div>`;
 
-      function renderObserve(el) {
+      async function renderObserve(el) {
+        const renderRev = ++pageRenderRev;
         killCharts(); obInit();
         const pg = obCur();
-        el.innerHTML = `<div id="ob">${phead(pg.t, pg.sub, "")}${OB_BODY[pg.k]()}</div>`;
+        let loadError = "";
+        if (!demo) {
+          try {
+            if (pg.k === "metrics") { if (ob.renderEnv !== nav.env) { el.innerHTML = phead(pg.t, pg.sub) + '<section class="x-panel"><p class="x-empty">正在读取所选环境的真实指标…</p></section>'; ob.renderEnv = nav.env; } await obLoadMetrics(renderRev); }
+            if (pg.k === "events") await obLoadEvents(renderRev);
+            if (pg.k === "channels") await obLoadChannels();
+          } catch (e) { loadError = e.message; if (pg.k === "metrics") { ob.liveValues = {}; ob.liveTimes = []; ob.liveNote = e.message; } if (pg.k === "events") ob.ev = []; }
+          if (renderRev !== pageRenderRev || current() !== "observe") return;
+        }
+        el.innerHTML = `<div id="ob">${phead(pg.t, pg.sub, "")}${loadError ? `<p class="x-aerr" role="alert">${esc(loadError)}</p>` : ""}${OB_BODY[pg.k]()}</div>`;
         if (OB_AFTER[pg.k]) OB_AFTER[pg.k](el);
         const w = $("ob");
         w.onclick = (e) => {
+          const alertLink = e.target.closest("[data-alert-open]");
+          if (alertLink) { e.preventDefault(); obOpenAlert(alertLink.dataset.alertOpen); return; }
           const b = e.target.closest("button"); if (!b) return;
           const d = b.dataset;
           if (d.range) { ob.range = d.range; obDraw(`[data-range="${d.range}"]`); }
-          else if (d.obact === "refresh") { obDraw('[data-obact="refresh"]'); toast("指标已刷新"); }
-          else if (d.pq) { ob.q = OB_PQ[d.pq][1]; ob.err = obRun(ob.q); obDraw(`[data-pq="${d.pq}"]`); }
-          else if (d.obact === "run") { ob.err = obRun($("pq").value); obDraw(ob.err ? "#pq" : '[data-obact="run"]'); }
+          else if (d.obact === "refresh") { ob.metricKey = null; obDraw('[data-obact="refresh"]'); }
+          else if (d.pq) { ob.q = OB_PQ[d.pq][1]; if (!demo) obRunLive(ob.q); else { ob.err = obRun(ob.q); obDraw(`[data-pq="${d.pq}"]`); } }
+          else if (d.obact === "run") { if (!demo) obRunLive($("pq").value); else { ob.err = obRun($("pq").value); obDraw(ob.err ? "#pq" : '[data-obact="run"]'); } }
           else if (d.lg) {
             const i = +d.lg, l = ob.logs[i], on = !ob.open.has(i);
             on ? ob.open.add(i) : ob.open.delete(i);
@@ -11380,23 +11986,26 @@
           else if (d.redit) obRuleEdit(ob.rules[d.redit]);
           else if (d.rsil) obSilence(ob.rules[d.rsil], `[data-rsil="${d.rsil}"]`);
           else if (d.evf) { ob.evf = d.evf; obDraw(`[data-evf="${d.evf}"]`); }
-          else if (d.eack) { const x = ob.ev[d.eack]; x.ack = nav.me.name; if (!x.who) x.who = nav.me.name; drawNav(); obDraw(`[data-easn="${d.eack}"]`); toast(`已确认 ${x.app} 的 ${x.p} 告警`); }
-          else if (d.easn) obAssign(ob.ev[d.easn]);
+          else if (d.eack) { const x = ob.ev[d.eack]; XS.post("/observability/alerts/" + x.id + "/ack", {}).then(() => { obDraw(); toast("告警已确认"); }).catch((err) => toast(err.message)); }
+            else if (d.easn) { const a = ob.ev[d.easn]; if (!demo && a.id) toast("当前后端未提供告警指派接口"); else obAssign(a); }
           else if (d.esil) obSilence(obRule(ob.ev[d.esil].rule), `[data-esil="${d.esil}"]`);
           else if (d.chtest) obTest(ob.ch[d.chtest], b);
           else if (d.chedit) obChEdit(ob.ch[d.chedit]);
+          else if (b.hasAttribute("data-channel-add")) obChAdd();
         };
         w.onchange = (e) => {
           const t = e.target, d = obd();
-          if (t.id === "obCl") { ob.cl = t.value; ob.ns = d.clusters[ob.cl].ns[0]; obDraw("#obCl"); }
+          if (t.id === "obCl") { ob.cl = t.value; const cluster = d.clusters && d.clusters[ob.cl]; ob.ns = cluster && Array.isArray(cluster.ns) ? cluster.ns[0] || "" : ""; obDraw("#obCl"); }
           else if (t.id === "obNs") { ob.ns = t.value; obDraw("#obNs"); }
           else if (t.id === "obApp") { ob.app = t.value; obDraw("#obApp"); }
           else if (t.dataset.ron) { const r = ob.rules[t.dataset.ron]; r.on = t.checked; obDraw(`[data-ron="${t.dataset.ron}"]`); toast(`「${r.name}」已${r.on ? "启用" : "停用"}`); }
           else if (t.closest("#lgf") && t.tagName === "SELECT") { const f = $("lgf"); ob.lg = { ...ob.lg, [t.name]: t.name === "win" ? +t.value : t.value, q: f.elements.q.value.trim() }; obDraw(`#lgf [name="${t.name}"]`); }
         };
-        w.onkeydown = (e) => { if (e.target.id === "pq" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); ob.err = obRun(e.target.value); obDraw("#pq"); } };
+        w.onkeydown = (e) => { if (e.target.id === "pq" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (!demo) obRunLive(e.target.value); else { ob.err = obRun(e.target.value); obDraw("#pq"); } } };
         const lf = $("lgf");
         if (lf) lf.onsubmit = (e) => { e.preventDefault(); const el2 = lf.elements; ob.lg = { q: el2.q.value.trim(), lv: el2.lv.value, app: el2.app.value, win: +el2.win.value }; ob.open.clear(); obDraw('#lgf [name="q"]'); };
+        const alertId = location.hash.match(/^#\/observe\/alerts\/(\d+)$/);
+        if (alertId) obOpenAlert(alertId[1]);
       }
 
       function obRuleEdit(r) {
@@ -11523,6 +12132,7 @@
       }
 
       function obAssign(x) {
+        if (!demo) { toast("当前后端未提供告警指派接口，可使用确认功能记录处理人"); return; }
         dlg(`指派告警 · ${esc(x.app)}`, `<form class="x-form" id="oba" novalidate>
             <p class="x-frac" style="margin:0">${x.p} · ${esc(x.msg)}</p>
             <label><span>处理人</span><select class="x-select" name="who">${opt(OB_WHO, x.who || nav.me.name)}</select></label>
@@ -11532,42 +12142,61 @@
         f.onsubmit = (e) => { e.preventDefault(); x.who = f.elements.who.value; closeAll(); obDraw(); toast(`已指派给 ${x.who}，将通过飞书通知`); };
       }
 
-      function obTest(c, b) {
+      async function obTest(c, b) {
         if (!obConf(c)) { toast(`请先配置${c.t}${c.k === "email" ? "收件人" : "地址"}`); return obChEdit(c); }
         b.disabled = true; b.textContent = "发送中…";
-        setTimeout(() => {
-          c.test = `成功 · ${hm(new Date())}`;
-          if (current() === "observe" && obCur().k === "channels") obDraw(`[data-chtest="${ob.ch.indexOf(c)}"]`);
-          toast(`测试消息已发送到${c.t}${c.to ? "「" + c.to + "」" : ""}`);
-        }, 1200);
+        try { await XS.post("/observability/channels/" + c.id + "/test", {}); c.test = "成功 · " + hm(new Date()); toast("测试消息已发送"); }
+        catch (e) { c.test = "失败 · " + esc(e.message); toast("发送失败：" + e.message); }
+        finally { b.disabled = false; b.textContent = "测试发送"; if (current() === "observe" && obCur().k === "channels") obDraw(); }
       }
 
+      function obChAdd() {
+        const types = [["feishu", "飞书", C_BLUE], ["dingtalk", "钉钉", C_CYAN], ["wecom", "企业微信", C_GREEN], ["email", "邮件", C_ORG]];
+        dlg("添加通知渠道", `<div class="x-channel-types">${types.map(([k,t,c]) => `<button type="button" data-newchannel="${k}">${obChannelIcon(k,c)}<span><strong>${t}</strong><small class="x-channel-help" style="display:block">${k === "email" ? "通过 SMTP 发送邮件" : "通过群机器人接收告警"}</small></span></button>`).join("")}</div>`, '<button class="x-btn" data-close>取消</button>');
+        $("modal").querySelectorAll("[data-newchannel]").forEach((b) => b.onclick = () => { const [k,t,c] = types.find(([k]) => k === b.dataset.newchannel); obChEdit({ k, t, c, kind: t, url: "", to: "", on: true, config: {}, envs: [], severities: [] }); });
+      }
       function obChEdit(c) {
-        const mail = c.k === "email", hook = c.k === "webhook";
+        const mail = c.k === "email", hook = c.k === "webhook", cfg = c.config || {}, existing = !!c.id;
         const body = mail
-          ? `<label><span class="x-req">收件人</span><input class="x-input" name="to" value="${esc(c.to)}" placeholder="多个地址用逗号分隔" autocomplete="off" /></label>
-             <label><span class="x-req">SMTP 服务器</span><input class="x-input" name="smtp" value="${esc(c.smtp || "")}" placeholder="smtp.example.com:465" autocomplete="off" /></label>`
-          : `<label><span class="x-req">${hook ? "回调地址" : "机器人 Webhook 地址"}</span><input class="x-input" name="url" value="${esc(c.url)}" placeholder="https://" autocomplete="off" /></label>
-             <label><span>${hook ? "签名密钥" : "加签密钥"}</span><input class="x-input" type="password" name="key" placeholder="${c.secret ? "已设置，留空则不修改" : "可选"}" autocomplete="new-password" /></label>
-             <label><span>${hook ? "备注" : "群名称"}</span><input class="x-input" name="to" value="${esc(c.to || "")}" maxlength="30" autocomplete="off" /></label>`;
-        dlg(`编辑通知渠道 · ${c.t}`, `<form class="x-form" id="obc" novalidate>${body}
-            <label class="x-switch"><input type="checkbox" role="switch" name="on"${c.on || !obConf(c) ? " checked" : ""} /> 启用该渠道</label>
-            <span class="x-err" id="obcerr" hidden></span></form>`, tfFoot("obc", "保存"));
+          ? `<fieldset><legend>邮件服务器</legend><div class="x-row2"><label><span class="x-req">SMTP 服务器</span><input class="x-input" name="host" value="${esc(cfg.host || "")}" placeholder="smtp.example.com" autocomplete="off" /></label><label><span class="x-req">端口</span><input class="x-input" name="port" type="number" min="1" max="65535" value="${esc(cfg.port || 465)}" inputmode="numeric" /><small>465 使用 TLS；其他端口在服务支持时使用 STARTTLS。</small></label></div>
+             <label><span class="x-req">发件人邮箱</span><input class="x-input" name="from" type="email" value="${esc(cfg.from || "")}" placeholder="alerts@example.com" autocomplete="off" /></label>
+             <div class="x-row2"><label><span>SMTP 用户名</span><input class="x-input" name="username" value="${esc(cfg.username || "")}" placeholder="邮箱账号" autocomplete="off" /></label><label><span>SMTP 密码 / 授权码</span><input class="x-input" type="password" name="password" placeholder="${cfg.password ? "已设置，留空保留" : "填写邮箱授权码"}" autocomplete="new-password" /></label></div></fieldset>
+             <fieldset><legend>接收人</legend><label><span class="x-req">收件人邮箱</span><textarea class="x-input" name="to" placeholder="ops@example.com, oncall@example.com" autocomplete="off">${esc(c.to || "")}</textarea><small>多个邮箱用逗号、空格或换行分隔。</small></label></fieldset>`
+          : `<fieldset><legend>机器人连接</legend><label><span class="x-req">${hook ? "回调地址" : "机器人 Webhook 地址"}</span><input class="x-input" name="url" type="url" value="" placeholder="${existing ? "已保存地址，留空保留；粘贴新地址可替换" : "https://"}" autocomplete="off" spellcheck="false" /><small>${existing ? "当前地址：" + esc(obMask(c.url)) + "。完整地址不会回填到浏览器。" : "在对应群聊中添加自定义机器人，复制其 Webhook 地址到这里。"}</small></label>
+             ${c.k !== "wecom" ? `<label><span>${hook ? "签名密钥" : "加签密钥"}（可选）</span><input class="x-input" type="password" name="key" placeholder="${c.secret ? "已设置，留空保留" : "启用机器人签名校验时填写"}" autocomplete="new-password" /><small>与群机器人安全设置中的密钥保持一致。</small></label>` : '<p class="x-channel-help">企业微信群机器人通过 Webhook 中的 key 校验，请妥善保管地址。</p>'}</fieldset>`;
+        const severities = [["critical", "严重"], ["warning", "警告"], ["info", "信息"], ["none", "其他"]];
+        const envs = [...new Set(["prod", "staging", "test", "dev", ...(c.envs || [])])];
+        dlg(`${existing ? "编辑" : "配置"}通知渠道`, `<div class="x-channel-intro" style="--channel-color:${c.c}">${obChannelIcon(c.k,c.c)}<div><strong>${esc(c.kind || c.t)}</strong><p class="x-channel-help">${mail ? "使用现有 SMTP 账号，将告警发送到值班邮箱。" : "连接群机器人，让团队在群聊中接收告警。"}</p></div></div><form class="x-form" id="obc" novalidate><label><span class="x-req">渠道名称</span><input class="x-input" name="channelName" maxlength="64" value="${esc(c.t)}" placeholder="例如：生产值班群" autocomplete="off" /></label>${body}
+            <fieldset><legend>接收范围</legend><p class="x-channel-help">不勾选表示接收全部环境 / 级别；选择后仅匹配所选范围。</p><div class="x-radios">${envs.map((v) => `<label><input type="checkbox" name="env" value="${esc(v)}"${(c.envs || []).includes(v) ? " checked" : ""} />${esc(({prod:"生产",staging:"预发",test:"测试",dev:"开发"})[v] || v)}</label>`).join("")}</div><div class="x-radios">${severities.map(([v,t]) => `<label><input type="checkbox" name="severity" value="${v}"${(c.severities || []).includes(v) ? " checked" : ""} />${t}</label>`).join("")}</div></fieldset>
+            <label class="x-channel-enabled"><span><strong>启用通知</strong><small>保存后允许该渠道接收匹配范围内的告警。</small></span><input type="checkbox" role="switch" name="on"${c.on || !existing ? " checked" : ""} /></label>
+            <span class="x-err" id="obcerr" role="alert" hidden></span></form>`, tfFoot("obc", "保存配置"));
+        $("modal").classList.add("x-channel-editor");
         const f = $("obc"), el = f.elements;
-        (el.url || el.to).focus();
-        f.onsubmit = (e) => {
+        el.channelName.focus();
+        f.onsubmit = async (e) => {
           e.preventDefault();
+          const name = el.channelName.value.trim(), next = { ...cfg };
+          if (!name) return tfErr("obcerr", "请填写渠道名称", el.channelName);
           if (mail) {
             const to = el.to.value.split(/[,，\s]+/).filter(Boolean);
             if (!to.length || to.some((m) => !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(m))) return tfErr("obcerr", "请输入有效的邮箱地址，多个用逗号分隔", el.to);
-            if (!/^[a-z0-9.-]+\.[a-z]{2,}:\d{2,5}$/i.test(el.smtp.value.trim())) return tfErr("obcerr", "SMTP 服务器格式为 主机:端口，如 smtp.exmail.qq.com:465", el.smtp);
-            c.to = to.join(", "); c.smtp = el.smtp.value.trim();
+            const host = el.host.value.trim(), port = Number(el.port.value), from = el.from.value.trim();
+            if (!host || /[\s/:]/.test(host)) return tfErr("obcerr", "请输入 SMTP 主机名或 IPv4 地址，不含协议和端口", el.host);
+            if (!Number.isInteger(port) || port < 1 || port > 65535) return tfErr("obcerr", "端口必须在 1–65535 之间", el.port);
+            if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(from)) return tfErr("obcerr", "请输入有效的发件人邮箱", el.from);
+            Object.assign(next, { host, port, from, to, username: el.username.value.trim(), password: el.password.value });
           } else {
             const url = el.url.value.trim();
-            if (!/^https:\/\/[^\s/]+\.[^\s/]+/i.test(url)) return tfErr("obcerr", "请输入 https:// 开头的有效地址", el.url);
-            c.url = url; c.to = el.to.value.trim(); if (el.key.value) c.secret = true;
+            if (!url && !existing) return tfErr("obcerr", "请粘贴机器人 Webhook 地址", el.url);
+            if (url) { try { const u = new URL(url); if (u.protocol !== "https:" || !u.hostname || u.username || u.password) throw Error(); } catch { return tfErr("obcerr", "请输入 https:// 开头的有效地址", el.url); } }
+            next.webhook = url; next.secret = el.key ? el.key.value : "";
           }
-          c.on = el.on.checked; closeAll(); obDraw(); toast(`${c.t}渠道已保存`);
+          const selected = (n) => [...f.querySelectorAll(`[name="${n}"]:checked`)].map((x) => x.value);
+          const body = { name, type: c.k, config: next, enabled: el.on.checked, severities: selected("severity"), envs: selected("env") };
+          const submit = document.querySelector('[form="obc"][type="submit"]'); if (submit) submit.disabled = true;
+          try { if (c.id) await XS.put("/observability/channels/" + c.id, body); else await XS.post("/observability/channels", body); closeAll(); obDraw(); toast(`「${name}」已保存`); }
+          catch (err) { tfErr("obcerr", err.message, null); }
+          finally { if (submit) submit.disabled = false; }
         };
       }
 
@@ -11786,7 +12415,47 @@
         return `<div class="x-npres" role="status"><p class="x-h2">${tag(r.ok)} ${esc(npName(s))} → ${esc(npName(d))}:${t.port}</p>${tbl(["检查项", "结果", "匹配策略", "说明"], rows)}</div>`;
       }
 
+      async function renderNetpolLive(el) {
+        const pg = npCur(), page = netPanelPage(el, pg, "netpol");
+        try {
+          const ctx = await netContext();
+          if (page.rev !== pageRenderRev) return;
+          if (!ctx.cluster) { page.draw(ctx, '<p class="x-empty">当前环境没有已接入的集群。</p>'); return; }
+          const root = `/clusters/${encodeURIComponent(ctx.cluster.id)}`;
+          const pr = await XS.get(root + "/network/policies");
+          const policies = netItems(pr);
+          if (pg.k !== "graph") {
+            const selector = (p) => Object.entries((p.pod_selector || {}).matchLabels || (p.pod_selector || {}).match_labels || {}).map(([k, v]) => `${k}=${v}`).join(", ") || "所有 Pod";
+            if (pg.k === "list") {
+              const rows = policies.map((p) => [esc(`${p.namespace}/${p.name}`), esc(selector(p)), esc((p.policy_types || []).join(", ") || "Ingress"),
+                `入站 ${(p.ingress || []).length} 条 · 出站 ${(p.egress || []).length} 条`, `<button class="x-act" type="button" data-netpol-yaml="${esc(p.namespace + "/" + p.name)}">查看 YAML</button>`]);
+              const body = rows.length ? tbl(["NetworkPolicy", "目标 Pod selector", "策略方向", "规则", "详情"], rows) : '<p class="x-empty">当前集群未配置 NetworkPolicy。</p>';
+              page.draw(ctx, `<div class="x-tbar"><span class="x-frac">${esc(ctx.cluster.name)} · ${policies.length} 条实际 NetworkPolicy</span></div>${body}`);
+              el.querySelectorAll("[data-netpol-yaml]").forEach((button) => {
+                button.onclick = () => { const policy = policies.find((p) => `${p.namespace}/${p.name}` === button.dataset.netpolYaml); if (policy) dlg(`NetworkPolicy · ${esc(policy.namespace)}/${esc(policy.name)}`, `<pre class="x-log">${esc(JSON.stringify(policy, null, 2))}</pre>`, '<button class="x-btn" data-close>关闭</button>', true); };
+              });
+            } else {
+              const message = pg.k === "test" ? "当前后端没有提供集群连通性探测接口，不能用静态策略计算冒充真实连通性测试。" : "当前后端没有提供集群出网白名单配置接口；此处不显示本地样例条目。";
+              page.draw(ctx, `<div class="x-tbar"><span class="x-frac">${esc(ctx.cluster.name)} · ${policies.length} 条实际 NetworkPolicy</span></div><p class="x-empty">${message}</p>`);
+            }
+            return;
+          }
+          const [sr, wr, nr] = await Promise.all([
+            XS.get(root + "/network/services"), XS.get(root + "/workloads/pods?page_size=1000"), XS.get(root + "/namespaces?page_size=1000")
+          ]);
+          if (page.rev !== pageRenderRev) return;
+          const services = netItems(sr), pods = netItems(wr), namespaces = netItems(nr);
+          const heading = `<div class="x-tbar"><span class="x-frac">${esc(ctx.cluster.name)} · ${services.length} 个 Service · ${pods.length} 个 Pod · ${policies.length} 条 NetworkPolicy</span></div>`;
+          page.draw(ctx, heading + netPolicyGraph(services, policies, pods, namespaces, ctx.cluster.id));
+        } catch (err) {
+          if (page.rev === pageRenderRev) page.draw(await netContext().catch(() => ({ clusters: [], cluster: null })), `<p class="x-aerr" role="alert">读取真实网络策略失败：${esc(err.message || err)}</p>`);
+        }
+      }
       function renderNetpol(el) {
+        if (!demo && window.XS && XS.mode === "live") return renderNetpolLive(el);
+        const offlinePage = npCur();
+        el.innerHTML = `<div>${phead(offlinePage.t, offlinePage.sub)}<section class="x-panel"><p class="x-empty">后端未连接，无法读取集群 NetworkPolicy 数据。</p></section></div>`;
+        return;
         const pg = npCur(), key = npHash(pg);
         el.innerHTML = `<div id="npw">${phead(pg.t, pg.sub)}${pg.bar ? bar(key, pg.bar) : ""}${NP_BODY[pg.k]()}</div>`;
         if (pg.bar) bindBar(el, key);
@@ -12349,24 +13018,11 @@ ${AI_RULES}`],
       const aiNew = (o) => ({ name: "", base: "", key: "", model: "", ctx: 32768, max: 4096, temp: 0.2, tags: ["对话"], note: "", ...o, k: "m" + ++aiSeq, st: "", ms: 0, why: "" });
       const AI_NONE = { k: "", name: "未配置模型", model: "—", temp: "—", st: "none" };
       const aiDef = () => ai.models.find((p) => p.k === ai.def) || ai.models[0] || AI_NONE;
-      const aiBase = (b) => String(b || "").trim().replace(/\/+$/, "");
-      const AI_DEMO = [
-        { name: "通义千问 Plus", base: "https://dashscope.aliyuncs.com/compatible-mode/v1", key: "sk-3b71c0e95d2241a8", model: "qwen-plus", ctx: 131072, max: 4096, temp: 0.3, tags: ["对话", "分析"], note: "告警与监控分析" },
-        { name: "DeepSeek Chat", base: "https://api.deepseek.com/v1", key: "sk-9e2f4a71c0d84b36", model: "deepseek-chat", ctx: 65536, max: 8192, temp: 0.2, tags: ["代码", "对话"], note: "部署与需求开发" },
-      ];
-      // Adds the two sample models (skips ones already present); returns how many were added
-      function aiSeedDemo() {
-        const add = AI_DEMO.filter((d) => !ai.models.some((m) => m.model === d.model && aiBase(m.base) === aiBase(d.base))).map((d) => aiNew({ ...d, tags: [...d.tags] }));
-        ai.models.push(...add);
-        if (!ai.models.some((m) => m.k === ai.def) && ai.models[0]) ai.def = ai.models[0].k;
-        return add.length;
-      }
-      if (demo) aiSeedDemo();
       const aiCite = (h, t) => `<a class="x-tag x-blue" href="${h}">${t}</a>`;
       const aiDraw = () => { try { if (current() === "ai") renderAI($("view")); } catch (err) { console.error(err); toast("页面加载出错，请刷新重试"); } };
       // A failed demo trace whose error sits on errSvc and that passes through via
-      const aiTrace = (errSvc, via) => { if (!tr.list) trSeed(); return tr.list.find((t) => t.err && t.svcs.includes(via || errSvc) && t.spans.some((s) => s.err && s.svc === errSvc && !t.spans.some((c) => c.parent === t.spans.indexOf(s)))); };
-      const aiOkTrace = (op) => { if (!tr.list) trSeed(); return tr.list.find((t) => !t.err && t.op === op); };
+      const aiTrace = (errSvc, via) => tr.list && tr.list.find((t) => t.err && t.svcs.includes(via || errSvc) && t.spans.some((s) => s.err && s.svc === errSvc && !t.spans.some((c) => c.parent === t.spans.indexOf(s))));
+      const aiOkTrace = (op) => tr.list && tr.list.find((t) => !t.err && t.op === op);
       const aiTLink = (t, label) => (t ? aiCite("#/trace/t/" + t.id, `${label} · ${t.id.slice(0, 8)}`) : "");
       const AI_NP_YAML = `apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -12571,7 +13227,7 @@ spec:
       };
       AI_BODY.chat = () => {
         const p = aiDef(), al = liveAlerts();
-        if (!tr.list) trSeed();
+        if (!tr.list) tr.list = [];
         const err = tr.list.filter((t) => t.err).length;
         return `<div class="x-ocgrid"><section class="x-panel"><div class="x-aichat" data-aichat></div></section>
           <div class="x-ocside"><section class="x-panel x-ocnow" aria-label="当前模型"><header><b>当前模型</b>${aiStatus(p)}</header>
@@ -12796,12 +13452,10 @@ spec:
           if (on) aiInit();
           d.classList.remove("x-drawer--wide"); d.setAttribute("aria-label", "AI 助手");
           d.innerHTML = `<div class="x-dhead x-aihd">${ic("spark")}<span>AI 助手 · 智能诊断</span><a class="x-act" href="#/ai/chat">在页面中打开</a><button class="x-x" data-close aria-label="关闭">×</button></div>
-            <div class="x-dbody x-aidr">${on ? '<div class="x-aichat" data-aichat></div>' : `<div class="x-nodata">${NODATA_ILL}<strong>尚未接入集群</strong><p>接入 K8s 集群后，AI 助手才能引用告警、链路与日志。</p><div class="x-nodata__acts"><label class="x-switch"><input type="checkbox" role="switch" data-aidemo /> 加载演示数据</label></div></div>`}</div>`;
+            <div class="x-dbody x-aidr">${on ? '<div class="x-aichat" data-aichat></div>' : `<div class="x-nodata">${NODATA_ILL}<strong>尚未接入集群</strong><p>接入 K8s 集群后，AI 助手才能引用告警、链路与日志。</p></div>`}</div>`;
           d.querySelector(".x-dbody")?.scrollTo(0, 0);
         d.querySelectorAll("[data-close]").forEach((b) => (b.onclick = closeAll));
           d.querySelector('.x-aihd a').onclick = () => closeAll();
-          const sw = d.querySelector("[data-aidemo]");
-          if (sw) sw.onchange = () => { setDemo(true); aiDrawer(); };
           const box = d.querySelector("[data-aichat]");
           if (box) aiMount(box);
           $("mask").hidden = false;
@@ -13231,8 +13885,14 @@ spec:
       const ENTRIES = CONSOLES.flatMap((w) => w.items);
       const leaves = (w) => w.items.flatMap((e) => e.kids || [e]);
       const LEAVES = CONSOLES.flatMap(leaves);
-      // 顶栏环境切换：全部 + 集群环境标签（含自定义标签），按标签筛选集群、节点与主机
-      const ENVS_ALL = () => [["全部", "#bfbfbf"], ...ENV_TAGS];
+      // 顶栏环境切换：全部 + 集群环境标签（含自定义标签）+ 实时集群里出现的自定义环境值，按标签筛选集群、节点与主机
+      const ENVS_ALL = () => {
+        const l = [["全部", "#bfbfbf"]];
+        const add = (n, c) => { const e = envNorm(n); if (e && !l.some((x) => x[0] === e)) l.push([e, c]); };
+        ENV_TAGS.forEach(([n, c]) => add(n, c));
+        clMenuEnvs().forEach((e) => add(e, "#8c8c8c"));
+        return l;
+      };
       // Sidebar starts full width; every group's open state is remembered, by default short groups open and long ones (5+ pages) closed
       const FOLD_KEY = "xs-nav-fold", longG = (e) => e.kids.length > 4, fKey = (e) => e.w.k + ":" + e.t;
       const foldMem = (() => { try { return JSON.parse(localStorage.getItem(FOLD_KEY)) || {}; } catch { return {}; } })();
@@ -13244,7 +13904,7 @@ spec:
       const rk = (h) => h.slice(2).split("/")[0];
       // The menu item for the current page: its own test, else the longest matching hash, else any item on the same route
       function curLeaf() {
-        const k = current(), h = hashNow(), c = LEAVES.filter((l) => rk(l.h) === k);
+        const k = current(), h = hashNow().replace(/^#\/observe\/alerts(?=\/|$)/, "#/observe/events"), c = LEAVES.filter((l) => rk(l.h) === k);
         return c.find((l) => l.a && l.a()) || c.filter((l) => !l.a && (h === l.h || h.startsWith(l.h + "/"))).sort((x, y) => y.h.length - x.h.length)[0] || c.find((l) => !l.a) || c[0] || null;
       }
       const mobile = () => matchMedia("(max-width: 767px)").matches;
@@ -13437,9 +14097,9 @@ spec:
       let popFor = null;
       const pop = $("pop");
       const POPS = {
-        env: () => `<p class="x-poph">切换环境 <small>按集群环境标签筛选</small></p>${ENVS_ALL().map(([e, c]) => `<button class="x-mi" role="menuitemradio" aria-checked="${e === nav.env}" data-env="${esc(e)}"><i class="x-edot" style="--d:${c}"></i>${e === "全部" ? "全部环境" : esc(e)}<small style="margin-left:auto;color:var(--x-sub);font-size:12px">${e === "全部" ? clAll().length : clAll().filter((x) => envNorm(x.env) === e).length} 个集群</small></button>`).join("")}`,
+        env: () => `<p class="x-poph">切换环境 <small>按集群环境标签筛选</small></p>${ENVS_ALL().map(([e, c]) => `<button class="x-mi" role="menuitemradio" aria-checked="${e === nav.env}" data-env="${esc(e)}"><i class="x-edot" style="--d:${c}"></i>${e === "全部" ? "全部环境" : esc(e)}<small style="margin-left:auto;color:var(--x-sub);font-size:12px">${clCountTxt(clEnvCount(e))}</small></button>`).join("")}`,
         bell: () => { const l = notes(); return `<p class="x-poph">通知 <small>${nav.read ? "已全部读过" : l.length + " 条未读"}</small>${nav.read ? "" : '<button data-act="read">全部已读</button>'}</p>${l.length ? l.map((x) => `<a class="x-mi x-note${nav.read ? " read" : ""}" role="menuitem" href="${x.h}"><i class="x-edot" style="--d:${x.c}"></i><span>${esc(x.t)}<small>${esc(x.d)}</small><small>${x.w}</small></span></a>`).join("") : '<p class="x-subnone">暂无通知</p>'}`; },
-        me: () => `<p class="x-poph">${esc(nav.me.name)} <small>${ROLE}</small></p><hr /><button class="x-mi" role="menuitem" data-act="profile">${ic("user")}个人设置</button><button class="x-mi" role="menuitem" data-ws="${wsOther().k}">${ic("swap")}切换控制台<small style="margin-left:auto;color:var(--x-sub);font-size:12px">${wsOther().t}</small></button><hr /><button class="x-mi" role="menuitemcheckbox" aria-checked="${demo}" data-act="demo">${ic("box")}加载演示数据<i class="x-msw" aria-hidden="true"></i></button><hr /><button class="x-mi" role="menuitem" data-act="logout">${ic("logout")}退出</button>`,
+        me: () => `<p class="x-poph">${esc(nav.me.name)} <small>${ROLE}</small></p><hr /><button class="x-mi" role="menuitem" data-act="profile">${ic("user")}个人设置</button><button class="x-mi" role="menuitem" data-ws="${wsOther().k}">${ic("swap")}切换控制台<small style="margin-left:auto;color:var(--x-sub);font-size:12px">${wsOther().t}</small></button><hr /><button class="x-mi" role="menuitem" data-act="logout">${ic("logout")}退出</button>`,
       };
       function openPop(btn, kind) {
         if (popFor === btn) return closePop();
@@ -13451,6 +14111,10 @@ spec:
         if (btn.closest("#nav")) { pop.style.left = Math.max(8, r.left) + "px"; pop.style.top = Math.min(r.bottom + 6, innerHeight - h - 8) + "px"; }
         else { pop.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + "px"; pop.style.top = r.bottom + 6 + "px"; }
         pop.querySelector("button, a")?.focus();
+        // 环境菜单：清单没就绪时按需拉一次（复用 /clusters），拿到后原地刷新计数
+        if (kind === "env" && !clMenuReady()) {
+          clMenuLoad().then(() => { if (popFor === btn && !pop.hidden) pop.innerHTML = POPS.env(); });
+        }
       }
       function closePop() {
         if (!popFor) return;
@@ -13462,7 +14126,7 @@ spec:
         if (b.dataset.ws) { closePop(); return switchWs(b.dataset.ws); }
         if (b.dataset.env) {
           nav.env = b.dataset.env; sre.env = nav.env === "开发" ? "dev" : nav.env; closePop(); drawTop();
-          if (current() === "sre" || current() === "cluster") render();
+          render();
           return toast(nav.env === "全部" ? "已切换到全部环境" : `已切换到 ${nav.env} 环境`);
         }
         closePop();
@@ -13555,13 +14219,16 @@ spec:
       window.addEventListener("hashchange", () => { closeAll(); try { applySub(); } catch (err) { console.error(err); } safeRender(); });
       try { applySub(); } catch (err) { console.error(err); }
       bootAuth();
-    </script>
-    <script>
-      // 独立脚本（xs-live-*.js）通过 window 访问主脚本的全局词法绑定。
-      try {
-        window.routes = routes; window.CONSOLES = CONSOLES; window.LEAVES = LEAVES;
-        window.ENTRIES = ENTRIES; window.nav = nav;
-      } catch (e) { console.error("expose globals", e); }
+      // 顶栏环境菜单计数：等后端模式确定后先取一次实时集群清单（避免首次打开菜单还要等），
+      // 登录/登出后再取一次，保证计数跟着真实清单走
+      if (window.XS && typeof XS.on === "function") {
+        XS.on("mode", () => clMenuPrewarm());
+        XS.on("auth", () => {
+          if (CL_LIVE.status === "loading") return;
+          CL_LIVE.items = null; CL_LIVE.status = "idle"; clMenuPrewarm();
+        });
+      }
+      setTimeout(clMenuPrewarm, 0);
     </script>
     <script>
       (function () {

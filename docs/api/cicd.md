@@ -67,6 +67,34 @@
 
 - `GET /cicd/applications?page=1&size=20` — `cicd:read`，分页 `{items,total,page,size}`
 - `GET /cicd/applications/:id` — `cicd:read`
+- `GET /cicd/applications/:id/inventory?env=prod` — `cicd:read`，读取应用环境在目标集群中的实时运行清单。返回 Deployment、匹配 Pod、容器状态与匹配 Service；`env` 为空时使用应用配置的第一个环境。
+
+```json
+{
+  "application": "web",
+  "environment": "prod",
+  "target_id": 2,
+  "namespace": "web-prod",
+  "observed_at": "2026-10-24T09:00:00Z",
+  "workloads": [
+    {"kind":"Deployment","name":"web","namespace":"web-prod","desired":3,"ready":3,"available":3,
+     "images":["harbor.example.com/team/web:3f2a9c1"],"selector":{"app":"web"},
+     "created_at":"...","observed_generation":12}
+  ],
+  "pods": [
+    {"name":"web-7d9f-abc","namespace":"web-prod","phase":"Running","status":"Running",
+     "ready":"1/1","restarts":0,"node":"node-1","pod_ip":"10.0.0.10",
+     "owner":"ReplicaSet/web-7d9f","created_at":"...","containers":[]}
+  ],
+  "services": [
+    {"name":"web","namespace":"web-prod","type":"ClusterIP","cluster_ip":"10.96.0.10",
+     "external_ips":[],"ports":[],"selector":{"app":"web"}}
+  ],
+  "warnings": []
+}
+```
+
+该接口只读取应用已配置的 Deployment 或 Helm release 目标，不扫描或猜测其它应用的资源；无目标资源时通过 `warnings` 返回可读提示。
 - `PUT /cicd/applications/:id` — `cicd:manage`，请求体同创建；`git_token` 为空或 `********` 时保留原值
 - `DELETE /cicd/applications/:id` — `cicd:manage`（级联删除流水线、运行、发布记录）
 - `POST /cicd/applications/:id/webhook-secret` — `cicd:manage`，轮换密钥：`{"webhook_secret":"…","url":"/api/v1/cicd/webhooks/3"}`

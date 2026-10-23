@@ -87,6 +87,35 @@ StrategicMerge patch `spec.unschedulable`。返回 `null`。
 - `POST /clusters/:id/namespaces`  `namespace:write`（审批）`{"name":"team-a","labels":{"owner":"a"}}`
 - `DELETE /clusters/:id/namespaces/:ns`  `namespace:write`（审批）→ `{"name":"team-a"}`
 
+## 网络只读查询
+
+网络视图使用集群当前 Kubernetes 对象，不生成虚拟拓扑关系。两个接口都校验集群环境范围与 `workload:read` 权限，支持 `namespace` 和 `label_selector` 查询参数。
+
+### GET /clusters/:id/network/services
+
+返回 Service 的命名空间、类型、ClusterIP、外部 IP、端口、selector、标签和创建时间：
+
+```json
+{"items":[
+  {"namespace":"web-prod","name":"web","type":"ClusterIP","cluster_ip":"10.96.0.10",
+   "external_ips":[],"ports":[],"selector":{"app":"web"},"labels":{},"created_at":"..."}
+],"total":1}
+```
+
+### GET /clusters/:id/network/policies
+
+返回 NetworkPolicy 的 selector、策略类型、Ingress/Egress 声明、标签和创建时间：
+
+```json
+{"items":[
+  {"namespace":"web-prod","name":"web-default","labels":{},
+   "pod_selector":{"matchLabels":{"app":"web"}},"policy_types":["Ingress"],
+   "ingress":[],"egress":[],"created_at":"..."}
+],"total":1}
+```
+
+当前版本只提供真实只读数据；NetworkPolicy 创建/修改、Istio 流量治理和跨集群聚合仍未实现。
+
 ## 工作负载
 
 `:kind` 取值 `deployments|statefulsets|daemonsets|jobs|cronjobs|pods`（也接受 deploy/sts/ds/job/cj/pod 等别名）。

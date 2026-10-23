@@ -123,6 +123,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.PUT("/applications/:id", manage, m.updateApp)
 	g.DELETE("/applications/:id", manage, m.deleteRow("cicd_applications", "application"))
 	g.POST("/applications/:id/webhook-secret", manage, m.rotateWebhookSecret)
+	g.GET("/applications/:id/inventory", read, m.applicationInventory)
 	g.GET("/applications/:id/releases", read, m.listReleases)
 	g.POST("/applications/:id/deploy", deploy, m.deployHTTP)
 	g.POST("/applications/:id/rollback", deploy, m.rollbackHTTP)

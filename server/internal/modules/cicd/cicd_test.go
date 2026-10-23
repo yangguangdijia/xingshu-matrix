@@ -136,6 +136,45 @@ func TestPatchImageAndRollout(t *testing.T) {
 	}
 }
 
+func TestCollectApplicationInventoryUsesWorkloadSelector(t *testing.T) {
+	replicas := int32(2)
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "checkout", Namespace: "shop"},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": "checkout"}},
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/name": "checkout"}},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "registry/checkout:v2"}}}},
+		},
+		Status: appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1, ObservedGeneration: 3},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "checkout-abc", Namespace: "shop", Labels: map[string]string{"app.kubernetes.io/name": "checkout"},
+			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "checkout-abc", Controller: ptr(true)}}},
+		Spec:   corev1.PodSpec{NodeName: "worker-1", Containers: []corev1.Container{{Name: "app", Image: "registry/checkout:v2"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.8", ContainerStatuses: []corev1.ContainerStatus{{Name: "app", Ready: true, RestartCount: 2, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}},
+	}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "checkout", Namespace: "shop"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app.kubernetes.io/name": "checkout"}, Ports: []corev1.ServicePort{{Port: 8080}}}}
+	unrelated := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "billing", Namespace: "shop"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app.kubernetes.io/name": "billing"}}}
+	cs := fake.NewSimpleClientset(deployment, pod, service, unrelated)
+
+	got, err := collectApplicationInventory(context.Background(), cs, "checkout", EnvTarget{Name: "prod", Namespace: "shop", Deployment: "checkout"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Workloads) != 1 || got.Workloads[0].Name != "checkout" || got.Workloads[0].Ready != 1 {
+		t.Fatalf("unexpected workloads: %+v", got.Workloads)
+	}
+	if len(got.Pods) != 1 || got.Pods[0].Name != "checkout-abc" || got.Pods[0].Restarts != 2 || got.Pods[0].Node != "worker-1" {
+		t.Fatalf("unexpected pods: %+v", got.Pods)
+	}
+	if len(got.Services) != 1 || got.Services[0].Name != "checkout" {
+		t.Fatalf("unrelated service leaked into inventory: %+v", got.Services)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
 func TestRunJobSucceeds(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	a := &Application{RepoURL: "https://git.example/app.git", ImageRepo: "reg/app", Dockerfile: "Dockerfile", ContextDir: "."}

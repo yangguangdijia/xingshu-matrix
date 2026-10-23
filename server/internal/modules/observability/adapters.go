@@ -658,6 +658,10 @@ type jaegerTrace struct {
 	} `json:"spans"`
 	Processes map[string]struct {
 		ServiceName string `json:"serviceName"`
+		Tags        []struct {
+			Key   string `json:"key"`
+			Value any    `json:"value"`
+		} `json:"tags"`
 	} `json:"processes"`
 }
 
@@ -666,14 +670,20 @@ func (jt *jaegerTrace) normalize() Trace {
 	for _, s := range jt.Spans {
 		sp := Span{SpanID: s.SpanID, Operation: s.OperationName, Start: time.UnixMicro(s.StartTime).UTC(),
 			DurationUs: s.Duration, Service: jt.Processes[s.ProcessID].ServiceName, Tags: map[string]string{}}
+		// OpenTelemetry resource attributes (including k8s.cluster.name) are
+		// represented as Jaeger process tags, rather than span tags.
+		for _, tg := range jt.Processes[s.ProcessID].Tags {
+			sp.Tags[tg.Key] = fmt.Sprint(tg.Value)
+		}
 		for _, r := range s.References {
 			if r.RefType == "CHILD_OF" || sp.ParentID == "" {
 				sp.ParentID = r.SpanID
 			}
 		}
 		for _, tg := range s.Tags {
-			sp.Tags[tg.Key] = fmt.Sprint(tg.Value)
-			if tg.Key == "error" && fmt.Sprint(tg.Value) == "true" {
+			value := fmt.Sprint(tg.Value)
+			sp.Tags[tg.Key] = value
+			if (tg.Key == "error" && value == "true") || (tg.Key == "otel.status_code" && strings.EqualFold(value, "ERROR")) || (tg.Key == "http.status_code" && strings.HasPrefix(value, "5")) {
 				sp.Error = true
 			}
 		}

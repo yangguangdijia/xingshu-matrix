@@ -15,6 +15,18 @@ func testDS(typ, u string) *DataSource {
 		Options: map[string]any{"index": "logs-*"}}
 }
 
+func TestJaegerResourceClusterTags(t *testing.T) {
+	var jt jaegerTrace
+	err := json.Unmarshal([]byte(`{"traceID":"trace-a","processes":{"p1":{"serviceName":"api","tags":[{"key":"k8s.cluster.name","value":"dev-a"},{"key":"service.version","value":"1.2"}]}},"spans":[{"spanID":"span-a","processID":"p1","operationName":"GET /","startTime":1700000000000000,"duration":1500,"tags":[{"key":"service.version","value":"1.3"},{"key":"otel.status_code","value":"ERROR"}]}]}`), &jt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trace := jt.normalize()
+	if len(trace.Spans) != 1 || trace.Spans[0].Tags["k8s.cluster.name"] != "dev-a" || trace.Spans[0].Tags["service.version"] != "1.3" || !trace.Spans[0].Error {
+		t.Fatalf("resource attributes lost or span override ignored: %+v", trace)
+	}
+}
+
 func TestPromRangeValidationAndProxy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer tok" {
