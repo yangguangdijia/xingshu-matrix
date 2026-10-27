@@ -160,6 +160,32 @@ func TestAssetOptionsSizeLimit(t *testing.T) {
 	}
 }
 
+func TestAccessRequestValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		in   accessRequestInput
+		want bool
+	}{
+		{"valid", accessRequestInput{AssetID: 1, AccountID: 2, DurationMinutes: 30, Reason: " 排查服务故障 "}, false},
+		{"missing asset", accessRequestInput{AccountID: 2, DurationMinutes: 30, Reason: "investigate"}, true},
+		{"short duration", accessRequestInput{AssetID: 1, AccountID: 2, DurationMinutes: 4, Reason: "investigate"}, true},
+		{"long duration", accessRequestInput{AssetID: 1, AccountID: 2, DurationMinutes: 481, Reason: "investigate"}, true},
+		{"short reason", accessRequestInput{AssetID: 1, AccountID: 2, DurationMinutes: 30, Reason: "故障"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := tc.in
+			err := in.check()
+			if tc.want != (err != nil) {
+				t.Fatalf("check() error = %v, want error %t", err, tc.want)
+			}
+			if err == nil && in.Reason != strings.TrimSpace(tc.in.Reason) {
+				t.Fatalf("reason was not normalized: %q", in.Reason)
+			}
+		})
+	}
+}
+
 func TestGuacdUnreachable(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -197,7 +197,7 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 	m := metrics.New()
 	deps := &app.Deps{
 		DB: pool, Cfg: cfg, Crypto: cipher, Audit: recorder, Approval: approvalSvc,
-		AITools: tools, Logger: log, RBAC: rbacSvc, Settings: settingsSvc,
+		AITools: tools, AI: aiSvc, Logger: log, RBAC: rbacSvc, Settings: settingsSvc,
 		Metrics: m.Registry, Redis: rdb,
 	}
 	engine := server.New(deps, server.Core{

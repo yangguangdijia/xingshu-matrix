@@ -2,9 +2,12 @@ package cicd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -60,24 +63,74 @@ func (m *Module) queryReleases(ctx context.Context, q string, args ...any) ([]*R
 
 // deployPayload is the approval ticket payload of type cicd.deploy.
 type deployPayload struct {
-	Mode     string `json:"mode"` // stage: a pipeline run waits; direct: deploy/rollback API
-	RunID    int64  `json:"run_id,omitempty"`
-	StageIdx int    `json:"stage_idx,omitempty"`
-	AppID    int64  `json:"app_id"`
-	App      string `json:"app"`
-	Env      string `json:"env"`
-	Image    string `json:"image"`
-	Kind     string `json:"kind"`
+	Mode         string `json:"mode"` // stage: a pipeline run waits; direct: deploy/rollback API
+	RunID        int64  `json:"run_id,omitempty"`
+	StageIdx     int    `json:"stage_idx,omitempty"`
+	AppID        int64  `json:"app_id"`
+	App          string `json:"app"`
+	Env          string `json:"env"`
+	TargetID     int64  `json:"target_id"`
+	TargetConfig string `json:"target_config"`
+	Image        string `json:"image"`
+	Kind         string `json:"kind"`
 }
 
 type deployHandler struct{ m *Module }
+
+func envTargetFingerprint(env *EnvTarget) string {
+	if env == nil {
+		return ""
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
 
 func (h *deployHandler) OnApproved(ctx context.Context, t *approval.Ticket) (any, error) {
 	var p deployPayload
 	if err := t.DecodePayload(&p); err != nil {
 		return nil, err
 	}
+	if h == nil || h.m == nil || h.m.d == nil || h.m.d.RBAC == nil || t == nil {
+		return nil, httpx.Conflict("RBAC service unavailable")
+	}
 	if p.Mode == "stage" {
+		run, err := h.m.loadRun(ctx, p.RunID)
+		if err != nil {
+			return nil, err
+		}
+		if run.TriggeredByID != t.ApplicantID || run.AppID != p.AppID {
+			return nil, httpx.Forbidden("pipeline approval applicant or target changed")
+		}
+		pipe, err := h.m.loadPipe(ctx, run.PipelineID)
+		if err != nil {
+			return nil, err
+		}
+		if p.StageIdx < 0 || p.StageIdx >= len(pipe.Stages) {
+			return nil, httpx.Conflict("pipeline approval stage no longer exists")
+		}
+		stage := pipe.Stages[p.StageIdx]
+		if stage.Type != "deploy" || stage.DeployEnv != p.Env || p.Env != t.Env {
+			return nil, httpx.Conflict("pipeline approval target environment changed")
+		}
+		a, err := h.m.loadApp(ctx, run.AppID)
+		if err != nil {
+			return nil, err
+		}
+		env, err := a.env(stage.DeployEnv)
+		if err != nil || env.Name != t.Env || env.TargetID != p.TargetID ||
+			envTargetFingerprint(env) == "" || envTargetFingerprint(env) != p.TargetConfig {
+			return nil, httpx.Conflict("pipeline approval application target changed")
+		}
+		if err := h.m.validateDeploymentTarget(ctx, env); err != nil {
+			return nil, err
+		}
+		if err := h.reauthorize(ctx, t, t.Env); err != nil {
+			return nil, err
+		}
 		tag, err := h.m.db.Exec(ctx, `UPDATE cicd_run_stages SET status='approved' WHERE run_id=$1 AND idx=$2 AND status='awaiting_approval'`, p.RunID, p.StageIdx)
 		if err != nil {
 			return nil, err
@@ -95,9 +148,36 @@ func (h *deployHandler) OnApproved(ctx context.Context, t *approval.Ticket) (any
 	if err != nil {
 		return nil, err
 	}
+	if t.Env != env.Name || p.App != a.Name {
+		return nil, httpx.Conflict("deployment approval target changed")
+	}
+	if env.TargetID != p.TargetID || envTargetFingerprint(env) == "" || envTargetFingerprint(env) != p.TargetConfig {
+		return nil, httpx.Conflict("deployment destination changed after approval was requested")
+	}
+	if err := h.m.validateDeploymentTarget(ctx, env); err != nil {
+		return nil, err
+	}
+	if err := h.reauthorize(ctx, t, env.Name); err != nil {
+		return nil, err
+	}
 	return h.m.doDeploy(ctx, a, env, p.Image, nil, p.Kind, t.ApplicantName, func(f string, x ...any) {
 		h.m.log.Info("deploy", "ticket", t.ID, "msg", fmt.Sprintf(f, x...))
 	})
+}
+
+func (h *deployHandler) reauthorize(ctx context.Context, t *approval.Ticket, env string) error {
+	if h == nil || h.m == nil || h.m.d == nil || h.m.d.RBAC == nil {
+		return httpx.Conflict("RBAC service unavailable")
+	}
+	_, permissions, scope, err := h.m.d.RBAC.UserAccess(ctx, t.ApplicantID)
+	if err != nil {
+		return err
+	}
+	p := &rbac.Principal{UserID: t.ApplicantID, Username: t.ApplicantName, Permissions: permissions, EnvScope: scope}
+	if !p.Can("cicd:deploy") || !p.CanEnv(env) {
+		return httpx.Forbidden("applicant deployment permission or environment scope was revoked")
+	}
+	return nil
 }
 
 func (h *deployHandler) OnRejected(ctx context.Context, t *approval.Ticket) error {
@@ -116,15 +196,26 @@ func (m *Module) deployStage(ctx context.Context, run *Run, a *Application, s St
 	if err != nil {
 		return err
 	}
+	if err := m.validateDeploymentTarget(ctx, env); err != nil {
+		return err
+	}
+	targetConfig := envTargetFingerprint(env)
+	if targetConfig == "" {
+		return httpx.Conflict("deployment destination could not be pinned")
+	}
 	image := s.Image
 	if image == "" {
 		image = a.ImageRepo + ":" + run.ImageTag
 	}
 	p := &rbac.Principal{UserID: run.TriggeredByID, Username: run.TriggeredBy}
+	if m.d.Approval == nil {
+		return httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "审批服务不可用，部署已拒绝")
+	}
 	t, pending, err := m.d.Approval.Gate(ctx, p, approval.CreateInput{
 		Type: "cicd.deploy", Title: fmt.Sprintf("部署 %s → %s (%s)", a.Name, env.Name, image), Env: env.Name,
-		Reason:  fmt.Sprintf("pipeline run #%d", run.ID),
-		Payload: deployPayload{Mode: "stage", RunID: run.ID, StageIdx: idx, AppID: a.ID, App: a.Name, Env: env.Name, Image: image, Kind: "deploy"},
+		Reason: fmt.Sprintf("pipeline run #%d", run.ID),
+		Payload: deployPayload{Mode: "stage", RunID: run.ID, StageIdx: idx, AppID: a.ID, App: a.Name, Env: env.Name,
+			TargetID: env.TargetID, TargetConfig: targetConfig, Image: image, Kind: "deploy"},
 	})
 	if err != nil {
 		return err
@@ -153,6 +244,19 @@ func (m *Module) deployStage(ctx context.Context, run *Run, a *Application, s St
 				return errRejected
 			}
 		}
+		current, err := m.loadApp(ctx, a.ID)
+		if err != nil {
+			return err
+		}
+		currentEnv, err := current.env(s.DeployEnv)
+		if err != nil || currentEnv.TargetID != env.TargetID ||
+			envTargetFingerprint(currentEnv) != targetConfig {
+			return httpx.Conflict("pipeline deployment destination changed after approval")
+		}
+		if err := m.validateDeploymentTarget(ctx, currentEnv); err != nil {
+			return err
+		}
+		a, env = current, currentEnv
 	}
 	runID := run.ID
 	_, err = m.doDeploy(ctx, a, env, image, &runID, "deploy", run.TriggeredBy, logf)
@@ -161,11 +265,32 @@ func (m *Module) deployStage(ctx context.Context, run *Run, a *Application, s St
 
 // doDeploy records a release and performs it synchronously.
 func (m *Module) doDeploy(ctx context.Context, a *Application, env *EnvTarget, image string, runID *int64, kind, by string, logf func(string, ...any)) (*Release, error) {
+	if err := m.validateDeploymentTarget(ctx, env); err != nil {
+		return nil, err
+	}
 	id, err := m.newRelease(ctx, a, env, image, runID, kind, by)
 	if err != nil {
 		return nil, err
 	}
 	return m.execRelease(ctx, id, a, env, image, logf)
+}
+
+func (m *Module) validateDeploymentTarget(ctx context.Context, env *EnvTarget) error {
+	if env == nil || env.TargetID <= 0 || strings.TrimSpace(env.Name) == "" {
+		return httpx.Conflict("deployment target is incomplete")
+	}
+	var targetEnv string
+	if err := m.db.QueryRow(ctx, `SELECT env FROM cicd_targets WHERE id=$1`, env.TargetID).Scan(&targetEnv); err != nil {
+		return fmt.Errorf("deployment target %d: %w", env.TargetID, notFound(err))
+	}
+	if !targetEnvMatches(targetEnv, env.Name) {
+		return httpx.Conflict("deployment target environment does not match application environment")
+	}
+	return nil
+}
+
+func targetEnvMatches(targetEnv, applicationEnv string) bool {
+	return strings.TrimSpace(targetEnv) != "" && strings.TrimSpace(targetEnv) == strings.TrimSpace(applicationEnv)
 }
 
 func (m *Module) newRelease(ctx context.Context, a *Application, env *EnvTarget, image string, runID *int64, kind, by string) (int64, error) {
@@ -176,6 +301,9 @@ func (m *Module) newRelease(ctx context.Context, a *Application, env *EnvTarget,
 }
 
 func (m *Module) execRelease(ctx context.Context, id int64, a *Application, env *EnvTarget, image string, logf func(string, ...any)) (*Release, error) {
+	if err := m.validateDeploymentTarget(ctx, env); err != nil {
+		return nil, err
+	}
 	prev, err := m.applyImage(ctx, a, env, image, id, logf)
 	status, msg := "succeeded", "rolled out"
 	if err != nil {
@@ -305,6 +433,9 @@ func splitImage(img string) (repo, tag string) {
 // (in the target's runner namespace) using the target kubeconfig.
 func helmDeploy(ctx context.Context, cs kubeIface, runnerNS string, kubeconfig []byte, env *EnvTarget, image string, releaseID int64, timeout time.Duration, logf func(string, ...any)) error {
 	h := env.Helm
+	if err := validateHelmSet([]EnvTarget{*env}); err != nil {
+		return err
+	}
 	rc := &runnerCtx{cs: cs, ns: runnerNS, secret: fmt.Sprintf("cicd-helm-%d", releaseID)}
 	if err := rc.createSecret(ctx, map[string]string{"config": string(kubeconfig)}, 0); err != nil {
 		return fmt.Errorf("create kubeconfig secret: %w", err)
@@ -320,7 +451,7 @@ func helmDeploy(ctx context.Context, cs kubeIface, runnerNS string, kubeconfig [
 	if tk == "" {
 		tk = "image.tag"
 	}
-	args := []string{"upgrade", "--install", h.Release, h.Chart, "-n", env.Namespace, "--wait",
+	args := []string{"upgrade", "--install", h.Release, h.Chart, "-n", env.Namespace, "--wait", "--hide-notes",
 		"--timeout", fmt.Sprintf("%ds", int(timeout.Seconds())), "--set", rk + "=" + repo, "--set", tk + "=" + tag}
 	if h.Repo != "" {
 		args = append(args, "--repo", h.Repo)
@@ -338,7 +469,8 @@ func helmDeploy(ctx context.Context, cs kubeIface, runnerNS string, kubeconfig [
 			Env:          []corev1.EnvVar{{Name: "KUBECONFIG", Value: "/kube/config"}},
 			VolumeMounts: []corev1.VolumeMount{{Name: "kube", MountPath: "/kube", ReadOnly: true}}}},
 	}
-	logf("helm %s", strings.Join(args, " "))
+	logf("helm deployment release=%s namespace=%s version=%s extra_values=%d",
+		h.Release, env.Namespace, h.Version, len(h.Set))
 	return runJob(ctx, cs, runnerNS, fmt.Sprintf("cicd-helm-%d", releaseID), 0, spec, int(timeout.Seconds())+300, logf)
 }
 
@@ -391,6 +523,14 @@ func (m *Module) deployOrRollback(c *gin.Context, kind string) {
 		httpx.Fail(c, err)
 		return
 	}
+	if err := m.validateDeploymentTarget(c, env); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if err := validateHelmSet([]EnvTarget{*env}); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	p := rbac.PrincipalFrom(c)
 	if !p.CanEnv(env.Name) {
 		httpx.Fail(c, httpx.Forbidden("environment not in your scope: "+env.Name))
@@ -421,10 +561,15 @@ func (m *Module) deployOrRollback(c *gin.Context, kind string) {
 		httpx.Fail(c, httpx.Validation("image required"))
 		return
 	}
+	if m.d.Approval == nil {
+		httpx.Fail(c, httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "审批服务不可用，部署已拒绝"))
+		return
+	}
 	t, pending, err := m.d.Approval.Gate(c, p, approval.CreateInput{
 		Type: "cicd.deploy", Title: fmt.Sprintf("%s %s → %s (%s)", map[string]string{"deploy": "部署", "rollback": "回滚"}[kind], a.Name, env.Name, image),
 		Env: env.Name, Reason: in.Reason,
-		Payload: deployPayload{Mode: "direct", AppID: a.ID, App: a.Name, Env: env.Name, Image: image, Kind: kind},
+		Payload: deployPayload{Mode: "direct", AppID: a.ID, App: a.Name, Env: env.Name,
+			TargetID: env.TargetID, TargetConfig: envTargetFingerprint(env), Image: image, Kind: kind},
 	})
 	if err != nil {
 		httpx.Fail(c, err)

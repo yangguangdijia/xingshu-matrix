@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"regexp"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -50,6 +51,12 @@ type Deps struct {
 	// AITools is the AI tool-calling registry; register read tools freely and
 	// mark state-changing tools RequiresConfirmation.
 	AITools *ai.ToolRegistry
+	// AI is the shared model service. Background diagnoses disable tool calls.
+	AI *ai.Service
+	// HostDiagnostics exposes bounded, read-only telemetry from enrolled agents.
+	HostDiagnostics HostDiagnosticProvider
+	// HostDiagnosticInspector runs the agent's fixed, bounded, read-only host inspection.
+	HostDiagnosticInspector HostDiagnosticInspectionProvider
 	// Logger is a structured logger scoped with module=<Name()>.
 	Logger *slog.Logger
 
@@ -65,6 +72,55 @@ type Deps struct {
 	Metrics prometheus.Registerer
 	// Redis is the shared cache/lock client; nil when redis.addr is not configured.
 	Redis *redis.Client
+}
+
+// HostDiagnosticProvider maps Kubernetes node addresses to enrolled agents and
+// returns their latest bounded telemetry. Implementations must not run commands.
+type HostDiagnosticProvider interface {
+	Snapshot(ctx context.Context, env string, nodeIPs []string) (HostDiagnosticLookup, error)
+}
+
+type HostDiagnosticInspectionProvider interface {
+	Inspect(ctx context.Context, env string, nodeIPs []string) (HostDiagnosticInspection, error)
+}
+
+type HostDiagnosticInspection struct {
+	Status     string
+	CapturedAt time.Time
+	Output     string
+}
+
+type HostDiagnosticLookup struct {
+	Status   string
+	Snapshot HostDiagnosticSnapshot
+}
+
+type HostDiagnosticSnapshot struct {
+	Name         string
+	IP           string
+	AgentVersion string
+	LastSeenAt   time.Time
+	OS           string
+	Platform     string
+	PlatformVer  string
+	Kernel       string
+	Arch         string
+	CPUCores     int
+	CPUPercent   float64
+	Load1        float64
+	MemTotal     uint64
+	MemUsed      uint64
+	MemPercent   float64
+	Uptime       uint64
+	Disks        []HostDiagnosticDisk
+}
+
+type HostDiagnosticDisk struct {
+	Mount   string
+	FSType  string
+	Total   uint64
+	Used    uint64
+	Percent float64
 }
 
 // Module is a pluggable feature module.

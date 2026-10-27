@@ -1,4 +1,4 @@
-/* 星枢 Matrix · 实时核心页适配器（xs-live-core.js）
+/* 星枢 Matrix   实时核心页适配器（xs-live-core.js）
  * ---------------------------------------------------------------------------
  * 作用：把「用户与权限 / 变更审批 / 主机纳管 / 集群状态 / 总览 / 团队协作」
  *       这些核心页面接到真实 matrix-server API。后端不可用时完全不覆盖原有
@@ -71,6 +71,20 @@
       sub: segs[1] ? decodePart(segs[1]) : "",
       sel: segs[2] ? decodePart(segs[2]) : ""
     };
+  }
+
+  function clusterResourceHash(routeKey, routeSub, clusterId) {
+    var key = String(routeKey || "cluster").replace(/[^a-z0-9-]/gi, "");
+    var sub = String(routeSub || "").replace(/[^a-z0-9-]/gi, "");
+    var hash = "#/" + (key || "cluster");
+    if (sub) hash += "/" + sub;
+    if (clusterId != null && String(clusterId)) hash += "/" + encodeURIComponent(String(clusterId));
+    return hash;
+  }
+
+  function networkResourcePlan(view) {
+    if (view === "expose") return { title: "对外服务", endpoint: "ingresses", resource: "Ingress" };
+    return { title: "Service", endpoint: "services", resource: "Service" };
   }
 
   // 兼容数组 / {items:[]} / {data:[]} 三种列表返回
@@ -300,11 +314,99 @@
     return groups;
   }
 
+  var AI_SENSITIVE_KEY = /(?:password|passwd|token|credential|private[_-]?key|api[_-]?key|authorization|secret[_-]?(?:value|data|token))/i;
+
+  function aiPromptContainsSensitiveValue(text, strictNoValues) {
+    var s = String(text || "");
+    if (/(?:password|passwd|token|credential|private[_ -]?key|api[_ -]?key|authorization|密码|口令|令牌|凭据|私钥|密钥)\s*["']?\s*(?:=|:|：|为|是)\s*["']?\S{4,}/i.test(s) ||
+        /(?:bearer)\s+[A-Za-z0-9._~+/-]{12,}/i.test(s)) return true;
+    return !!strictNoValues && /(?:value|值)\s*["']?\s*(?:=|:|：|为|是)\s*["']?\S{4,}/i.test(s);
+  }
+
+  function aiDraftTree(value, depth) {
+    if (depth > 12) return undefined;
+    if (value === null || typeof value === "boolean" || typeof value === "number") {
+      return typeof value === "number" && !isFinite(value) ? undefined : value;
+    }
+    if (typeof value === "string") return value.length <= 4000 ? value : undefined;
+    if (Array.isArray(value)) {
+      if (value.length > 100) return undefined;
+      var list = [];
+      for (var i = 0; i < value.length; i++) {
+        var next = aiDraftTree(value[i], depth + 1);
+        if (next === undefined) return undefined;
+        list.push(next);
+      }
+      return list;
+    }
+    if (!value || typeof value !== "object") return undefined;
+    var out = {};
+    var keys = Object.keys(value);
+    if (keys.length > 100) return undefined;
+    for (var j = 0; j < keys.length; j++) {
+      var key = keys[j];
+      if (AI_SENSITIVE_KEY.test(key) || key === "__proto__" || key === "constructor" || key === "prototype") continue;
+      var child = aiDraftTree(value[key], depth + 1);
+      if (child !== undefined) Object.defineProperty(out, key, { value: child, enumerable: true, configurable: true, writable: true });
+    }
+    return out;
+  }
+
+  function sanitizeAIDraft(fields, allowlist) {
+    if (!fields || typeof fields !== "object" || Array.isArray(fields) || !allowlist || typeof allowlist !== "object") return {};
+    var out = {};
+    Object.keys(allowlist).forEach(function (key) {
+      var rule = allowlist[key] || {};
+      if (rule.sensitive || AI_SENSITIVE_KEY.test(key) || !Object.prototype.hasOwnProperty.call(fields, key)) return;
+      var value = fields[key], next;
+      if (rule.type === "string" || rule.type === "enum") {
+        if (typeof value !== "string") return;
+        next = value.trim();
+        if (rule.maxLength && next.length > rule.maxLength) return;
+        if (!next && !rule.allowEmpty) return;
+        if (rule.type === "enum" && (rule.values || []).indexOf(next) < 0) return;
+      } else if (rule.type === "boolean") {
+        if (typeof value !== "boolean") return;
+        next = value;
+      } else if (rule.type === "array") {
+        if (!Array.isArray(value)) return;
+        next = aiDraftTree(value, 0);
+        if (!Array.isArray(next)) return;
+        if (rule.values) {
+          next = next.filter(function (item, index, list) {
+            return typeof item === "string" && rule.values.indexOf(item) >= 0 && list.indexOf(item) === index;
+          });
+        }
+        if (!next.length && !rule.allowEmpty) return;
+      } else if (rule.type === "string_map") {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return;
+        next = {};
+        Object.keys(value).forEach(function (mapKey) {
+          var mapValue = value[mapKey];
+          if (!AI_SENSITIVE_KEY.test(mapKey) && mapKey !== "__proto__" && mapKey !== "constructor" &&
+              mapKey !== "prototype" && typeof mapValue === "string" && mapValue.length <= 4000) {
+            Object.defineProperty(next, mapKey, { value: mapValue, enumerable: true, configurable: true, writable: true });
+          }
+        });
+        if (!Object.keys(next).length && !rule.allowEmpty) return;
+      } else if (rule.type === "object") {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return;
+        next = aiDraftTree(value, 0);
+        if (!next || Array.isArray(next)) return;
+        if (!Object.keys(next).length && !rule.allowEmpty) return;
+      } else return;
+      Object.defineProperty(out, key, { value: next, enumerable: true, configurable: true, writable: true });
+    });
+    return out;
+  }
+
   function approvalScopeDefault(canReadAll) { return canReadAll ? "all" : "todo"; }
 
   var PURE = {
     esc: escLocal,
     parseHash: parseHash,
+    clusterResourceHash: clusterResourceHash,
+    networkResourcePlan: networkResourcePlan,
     itemsOf: itemsOf,
     totalOf: totalOf,
     fmtTime: fmtTime,
@@ -327,6 +429,8 @@
     summarizeAlerts: summarizeAlerts,
     roleMembers: roleMembers,
     groupPermissions: groupPermissions,
+    aiPromptContainsSensitiveValue: aiPromptContainsSensitiveValue,
+    sanitizeAIDraft: sanitizeAIDraft,
     envMatchLocal: envMatchLocal,
     approvalScopeDefault: approvalScopeDefault,
     prettyJSON: prettyJSON
@@ -465,6 +569,7 @@
   if (typeof LIVE.repaint !== "function") LIVE.repaint = function () { repaint(); };
 
   var SEQ = 0;
+  var IAM_USERS = [], IAM_ROLES = [];
   var WAITERS = [];
   var REFRESHING = false;
 
@@ -535,29 +640,20 @@
 
   function mono(s) { return '<span class="x-mono">' + gEsc(s) + '</span>'; }
 
-  function selfTag() {
-    return '<span class="x-tag x-green x-pill" title="数据来自 matrix-server 实时接口">实时数据</span>';
-  }
-
   function refreshButton(label) {
     return '<button type="button" class="x-btn" data-live-refresh>' + gEsc(label || "刷新") + '</button>';
   }
 
-  function refreshBase() {
-    return '<span class="x-frac" style="margin:0 8px 0 auto;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' +
-      gEsc("API base：" + apiBase()) + '">' + gEsc(apiBase()) + '</span>';
-  }
-
   function shell(title, desc, actions) {
-    return pheadSafe(title, desc, selfTag() + refreshBase() + (actions || "") + refreshButton());
+    return pheadSafe(title, desc, (actions || "") + refreshButton());
   }
 
   function loadingPanel(text) {
-    return '<section class="x-panel" aria-busy="true"><p class="x-frac" style="margin:0">' + gEsc(text || "正在从 matrix-server 加载…") + '</p></section>';
+    return '<section class="x-panel" aria-busy="true"><p class="x-frac" style="margin:0">' + gEsc(text || "正在加载…") + '</p></section>';
   }
 
   function errorPanel(err, retryLabel) {
-    var msg = (err && err.message) || String(err || "请求失败");
+    var msg = errText(err);
     return '<section class="x-panel"><p class="x-aerr" role="alert" style="margin:0 0 12px">' + gEsc(msg) + '</p>' +
       '<button type="button" class="x-btn" data-live-retry>' + gEsc(retryLabel || "重试") + '</button></section>';
   }
@@ -643,14 +739,12 @@
     });
   }
 
-  function bindTabs(el) {
-    Array.prototype.forEach.call(el.querySelectorAll("[data-live-tab]"), function (b) {
-      b.onclick = function (e) { e.preventDefault(); goHash(b.getAttribute("data-live-tab")); };
-    });
+  function bindClusterSelect(el) {
     Array.prototype.forEach.call(el.querySelectorAll("[data-live-cluster-select]"), function (s) {
       s.onchange = function () {
+        var routeKey = s.getAttribute("data-route-key") || "cluster";
         var sub = s.getAttribute("data-sub") || "nodes";
-        goHash("#/cluster/" + sub + "/" + encodeURIComponent(s.value));
+        goHash(clusterResourceHash(routeKey, sub, s.value));
       };
     });
   }
@@ -712,7 +806,11 @@
   function errText(err) {
     if (!err) return "请求失败";
     if (isAuthErr(err)) return "登录已过期，请重新登录";
-    return err.message || ("请求失败（HTTP " + (err.status || "?") + "）");
+    var message = String(err.message || "");
+    if (/\/(?:api\/)?v\d+(?:\/|$)|\b(?:GET|POST|PUT|PATCH|DELETE|HEAD)\s+\/\S+/i.test(message)) {
+      return "管理服务暂时无法完成请求" + (err.status ? "（HTTP " + err.status + "）" : "") + "，请稍后重试";
+    }
+    return message || ("请求失败（HTTP " + (err.status || "?") + "）");
   }
 
   var KICKING = false;
@@ -748,10 +846,10 @@
     if (!x) return Promise.reject(new Error("xs-api.js 未加载，无法访问后端"));
     return x.put(path, body === undefined ? null : body);
   }
-  function apiDel(path) {
+  function apiDel(path, body) {
     var x = xs();
     if (!x) return Promise.reject(new Error("xs-api.js 未加载，无法访问后端"));
-    return x.del(path);
+    return x.del(path, body === undefined ? undefined : { body: body });
   }
 
   // 写操作：202 -> 「已提交审批」，401 -> 回登录，其它错误 toast；成功回调
@@ -812,9 +910,10 @@
     if (ok) ok.onclick = function () { closeModal(); onOk(); };
   }
 
-  function formDialog(title, bodyHtml, okLabel, onSubmit) {
+  function formDialog(title, bodyHtml, okLabel, onSubmit, aiDraft) {
     var m = openModal(title,
       '<form class="x-form" id="liveForm" novalidate>' + bodyHtml +
+      (aiDraft ? aiDraftHtml(aiDraft) : "") +
       '<span class="x-err" id="liveErr" role="alert" hidden></span></form>',
       '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="liveForm">' + gEsc(okLabel || "确定") + "</button>");
     if (!m) return null;
@@ -829,9 +928,139 @@
       e.preventDefault();
       try { onSubmit(f, bad); } catch (err) { console.error("[xs-live-core] form", err); bad(errText(err)); }
     };
+    if (aiDraft) bindAIDraft(f, aiDraft);
     var first = f.querySelector("input,textarea,select");
     if (first) { try { first.focus(); } catch (e) {} }
     return f;
+  }
+
+  function aiDraftHtml(config) {
+    var x = xs();
+    var allowed = !!(x && typeof x.can === "function" && x.can("ai:chat"));
+    var note = allowed
+      ? "AI 只会收到这句话和表单允许字段，不会读取当前表单内容；生成后请检查，再单独提交。"
+      : "需要 ai:chat 权限才能使用，仍可手动填写。";
+    if (config.noSecrets) note += " 不要在描述中输入密码、令牌或其他密钥值。";
+    return '<div class="x-ai-formdraft" data-live-ai-draft style="border-top:1px solid var(--x-line);margin-top:4px;padding-top:12px">' +
+      '<div class="x-row2" style="align-items:end"><label><span>AI 帮填草稿</span><input class="x-input" type="text" data-live-ai-instruction maxlength="2000" autocomplete="off" placeholder="' +
+      gEsc(config.placeholder || config.example || "用一句话描述要创建的资源") + '"' + (allowed ? "" : " disabled") + " /></label>" +
+      '<div><button class="x-btn" type="button" data-live-ai-generate' + (allowed ? "" : ' disabled title="需要 ai:chat 权限"') + '>生成草稿</button></div></div>' +
+      '<p class="x-frac" style="margin:6px 0 0">' + gEsc(note + (config.example ? " 示例：" + config.example : "")) + '</p>' +
+      '<p class="x-frac" data-live-ai-status role="status" aria-live="polite" style="margin:4px 0 0"></p></div>';
+  }
+
+  function aiDraftSchema(fields) {
+    var schema = {};
+    Object.keys(fields || {}).forEach(function (key) {
+      var rule = fields[key] || {};
+      if (rule.sensitive || AI_SENSITIVE_KEY.test(key) || !rule.description) return;
+      var description = rule.description;
+      if (rule.type === "enum" && rule.values) description += "；只能取：" + rule.values.join("、");
+      if (rule.type === "array" && rule.values) description += "；可选值：" + rule.values.join("、");
+      Object.defineProperty(schema, key, { value: rule.type + "，" + description, enumerable: true, configurable: true, writable: true });
+    });
+    return schema;
+  }
+
+  function aiField(type, description, options) {
+    var field = { type: type, description: description };
+    Object.keys(options || {}).forEach(function (key) { field[key] = options[key]; });
+    return field;
+  }
+
+  function aiDraftConfig(scene, example, fields, noSecrets, strictNoValues) {
+    return {
+      scene: scene,
+      example: example,
+      fields: fields,
+      noSecrets: !!noSecrets,
+      strictNoValues: !!strictNoValues
+    };
+  }
+
+  function setAIDraftField(form, name, value, rule) {
+    if (rule.ui === "checks") {
+      var selected = Array.isArray(value) ? value : [];
+      Array.prototype.forEach.call(form.querySelectorAll('input[name="' + name + '"]'), function (input) {
+        input.checked = selected.indexOf(input.value) >= 0;
+      });
+      return true;
+    }
+    var control = form.elements[name];
+    if (!control) return false;
+    if (rule.type === "boolean") {
+      control.checked = value;
+      return true;
+    }
+    if (rule.ui === "json") control.value = JSON.stringify(value, null, 2);
+    else if (rule.ui === "lines") control.value = Array.isArray(value) ? value.join("\n") : String(value);
+    else control.value = value;
+    if (control.tagName === "SELECT" && typeof control.dispatchEvent === "function") {
+      try { control.dispatchEvent(new Event("change", { bubbles: true })); } catch (e) {}
+    }
+    return true;
+  }
+
+  function bindAIDraft(form, config) {
+    var root = form.querySelector("[data-live-ai-draft]");
+    var input = root && root.querySelector("[data-live-ai-instruction]");
+    var button = root && root.querySelector("[data-live-ai-generate]");
+    var status = root && root.querySelector("[data-live-ai-status]");
+    if (!root || !input || !button || !status) return;
+    var setStatus = function (message, error) {
+      status.textContent = message;
+      status.setAttribute("role", error ? "alert" : "status");
+    };
+    var generate = async function () {
+      var instruction = String(input.value || "").trim();
+      if (!instruction) { setStatus("先用一句话描述资源用途和关键要求。", true); input.focus(); return; }
+      if (config.noSecrets && aiPromptContainsSensitiveValue(instruction, config.strictNoValues)) {
+        setStatus("描述中疑似包含密钥值。请删除具体值，只描述资源用途和名称。", true);
+        input.focus();
+        return;
+      }
+      var api = xs();
+      if (!api || typeof api.get !== "function" || typeof api.post !== "function") {
+        setStatus("AI 接口未连接，仍可手动填写。", true);
+        return;
+      }
+      if (typeof api.can !== "function" || !api.can("ai:chat")) {
+        setStatus("当前账号没有 ai:chat 权限，仍可手动填写。", true);
+        return;
+      }
+      button.disabled = true;
+      button.textContent = "检查模型...";
+      setStatus("正在检查已启用的 AI 模型...");
+      try {
+        var models = itemsOf(await apiGet("/ai/models/options"));
+        if (!models.length) throw new Error("尚未配置已启用的 AI 模型，请先到 AI 设置中接入模型。");
+        button.textContent = "生成中...";
+        setStatus("正在生成草稿...");
+        var response = await api.post("/ai/assist", {
+          scene: config.scene,
+          instruction: instruction,
+          schema: aiDraftSchema(config.fields)
+        });
+        var draft = sanitizeAIDraft(response && response.fields, config.fields);
+        var keys = Object.keys(draft);
+        if (!keys.length) throw new Error("没有生成可用字段，请补充资源名称、用途或约束后重试。");
+        keys.forEach(function (key) { setAIDraftField(form, key, draft[key], config.fields[key]); });
+        setStatus("已填入 " + keys.length + " 个字段草稿，请检查后再单独提交。");
+      } catch (err) {
+        if (isAuthErr(err)) kickLogin();
+        setStatus(errText(err) || "生成失败，请重试或手动填写。", true);
+      } finally {
+        button.disabled = false;
+        button.textContent = "生成草稿";
+      }
+    };
+    button.onclick = generate;
+    input.onkeydown = function (event) {
+      if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        generate();
+      }
+    };
   }
 
   function resultDialog(title, bodyHtml) {
@@ -937,20 +1166,20 @@
         };
         var html = shell("总览", "集群容量、节点负载、变更与告警", refreshButton("刷新"));
         html += '<div class="x-cards x-cards5">' +
-          kpi("集群数", String(clusters.length), clusters.length ? clusters.map(function (c) { return c.env || "—"; }).join(" · ") : "尚未接入", "#/cluster/list") +
+          kpi("集群数", String(clusters.length), clusters.length ? clusters.map(function (c) { return c.env || "—"; }).join("   ") : "尚未接入", "#/cluster/list") +
           kpi("节点 Ready / 总数", nodesAll.length ? ready + " / " + nodesAll.length : "—", nodesAll.length ? (nodesAll.length - ready) + " 个 NotReady" : "未接入集群", "#/cluster/nodes") +
-          kpi("Pod 运行 / 总数", podsKnown ? String(podsTotal) : "—", podsKnown ? "来自 /workloads/pods" : "未接入", "#/cluster/workloads") +
+          kpi("Pod 运行 / 总数", podsKnown ? String(podsTotal) : "—", podsKnown ? "已统计 Pod 清单" : "未接入", "#/cluster/workloads") +
           kpi("CPU 使用率", "—", metricsOK ? "metrics-server 已就绪" : "metrics-server 未安装", "#/observe") +
           kpi("内存使用率", "—", metricsOK ? "metrics-server 已就绪" : "metrics-server 未安装", "#/observe") +
           "</div>";
 
         // 24h 曲线：没有 Prometheus 时保留卡片与图例，内部显示未接入
-        html += '<section class="x-panel x-setform"><div class="x-sethead"><h2 class="x-h2">集群资源使用 · 24h</h2>' +
-          '<span class="x-frac">CPU / 内存 · 全部集群均值</span></div>' +
+        html += '<section class="x-panel x-setform"><div class="x-sethead"><h2 class="x-h2">集群资源使用   24h</h2>' +
+          '<span class="x-frac">CPU / 内存   全部集群均值</span></div>' +
           '<div class="x-tbar" style="margin:0 0 8px"><span class="x-tag x-blue">CPU</span><span class="x-tag x-green">内存</span>' +
           '<span class="x-grow"></span><button class="x-btn" type="button" data-goto="#/settings">配置数据源</button></div>' +
           '<div class="x-ochart" style="display:grid;place-items:center">' +
-          '<div style="text-align:center"><strong>尚未接入 Prometheus</strong><p class="x-frac" style="margin:6px 0 0">在「设置 › 系统接入」配置 Prometheus 地址后，这里显示 24h CPU/内存曲线。</p></div>' +
+          '<div style="text-align:center"><strong>尚未接入 Prometheus</strong><p class="x-frac" style="margin:6px 0 0">在「系统设置」配置 Prometheus 地址后，这里显示 24h CPU/内存曲线。</p></div>' +
           "</div></section>";
 
         var topRows = nodesAll.slice(0, 5).map(function (x) {
@@ -967,7 +1196,7 @@
           return '<div class="x-listitem" style="padding:8px 0;border-bottom:1px solid var(--x-line)">' +
             '<div style="display:flex;gap:8px;align-items:center">' + (n.pinned ? '<span class="x-tag x-blue">置顶</span>' : "") +
             '<strong>' + gEsc(n.title) + "</strong><span class=\"x-grow\"></span>" +
-            '<span class="x-frac">' + gEsc((n.created_by || "") + " · " + fmtTime(n.created_at)) + "</span>" +
+            '<span class="x-frac">' + gEsc((n.created_by || "") + "   " + fmtTime(n.created_at)) + "</span>" +
             '<button class="x-btn" type="button" data-ndel="' + gEsc(n.id) + '">删除</button></div>' +
             (n.body ? '<p class="x-frac" style="margin:4px 0 0">' + gEsc(n.body) + "</p>" : "") + "</div>";
         }).join("");
@@ -986,7 +1215,7 @@
 
         var alertRows = alerts.slice(0, 6).map(function (a) {
           return '<li><span class="x-tag x-red">' + gEsc(a.severity || "P?") + "</span><span class=\"x-name\">" + gEsc(a.summary || a.name || a.alertname || "告警") +
-            '</span><span class="x-frac">' + gEsc(a.status || "firing") + " · " + gEsc(fmtAgo(a.starts_at || a.created_at)) + "</span></li>";
+            '</span><span class="x-frac">' + gEsc(a.status || "firing") + "   " + gEsc(fmtAgo(a.starts_at || a.created_at)) + "</span></li>";
         }).join("");
         html += '<div class="x-two" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">' +
           '<section class="x-panel"><div class="x-sethead"><h2 class="x-h2">最近变更</h2>' +
@@ -1049,14 +1278,14 @@
 
   function iamUsersLive(el) {
     var seq = bump();
-    mount(el, shell("用户管理", "平台账号、角色与登录状态（/users · /roles）", "") + loadingPanel("正在加载用户…"));
+    mount(el, shell("用户管理", "平台账号、角色与登录状态", "") + loadingPanel("正在加载用户…"));
 
     Promise.all([wrap(apiGet("/users", { page_size: 200 })), wrap(apiGet("/roles"))]).then(function (rs) {
       if (!alive(seq, el)) return;
       var uR = rs[0], rR = rs[1];
       if (!uR.ok) {
         if (isAuthErr(uR.err)) return kickLogin();
-        mount(el, shell("用户管理", "平台账号、角色与登录状态（/users · /roles）", "") + errorPanel(uR.err));
+        mount(el, shell("用户管理", "平台账号、角色与登录状态", "") + errorPanel(uR.err));
         return;
       }
       var users = itemsOf(uR.data), total = totalOf(uR.data, users);
@@ -1085,9 +1314,9 @@
             '<span class="x-kacts">' + ops + "</span>"
           ];
         })
-      ) : emptyPanel("暂无用户数据", "/users 返回空列表");
+      ) : emptyPanel("暂无用户数据", "当前没有可展示的用户。");
 
-      var html = shell("用户管理", "平台账号、角色与登录状态（/users · /roles）", "") +
+      var html = shell("用户管理", "平台账号、角色与登录状态", "") +
         statCards([
           { label: "用户总数", value: String(total), sub: "含内置账号" },
           { label: "正常账号", value: String(users.filter(function (u) { return u.status === "active"; }).length), sub: "status=active" },
@@ -1157,7 +1386,7 @@
       '<label><span>姓名</span><input class="x-input" name="display_name" /></label>' +
       '<label><span>邮箱</span><input class="x-input" name="email" type="email" /></label>' +
       '<fieldset class="x-radios" style="display:grid;gap:6px"><legend>角色</legend>' +
-      (checks || '<span class="x-frac">没有可分配的角色（请先在 #/iam/roles 创建）</span>') + "</fieldset>",
+      (checks || '<span class="x-frac">没有可分配的角色，请先创建角色。</span>') + "</fieldset>",
       "创建", function (f, bad) {
         var name = String(f.elements.username.value || "").trim();
         if (!/^[A-Za-z][A-Za-z0-9_.\-]{2,63}$/.test(name)) return bad("用户名需以字母开头，3-64 位字母/数字/._-", f.elements.username);
@@ -1182,7 +1411,7 @@
 
   function iamGroupsLive(el) {
     var seq = bump();
-    mount(el, shell("部门与用户组", "按角色聚合的成员与可授予权限目录（/users · /roles · /permissions）", "") +
+    mount(el, shell("部门与用户组", "按角色聚合的成员与可授予权限目录", "") +
       loadingPanel("正在加载角色与权限…"));
 
     Promise.all([
@@ -1194,7 +1423,7 @@
       var uR = rs[0], rR = rs[1], pR = rs[2];
       if (!uR.ok) {
         if (isAuthErr(uR.err)) return kickLogin();
-        mount(el, shell("部门与用户组", "按角色聚合的成员与可授予权限目录（/users · /roles · /permissions）", "") + errorPanel(uR.err));
+        mount(el, shell("部门与用户组", "按角色聚合的成员与可授予权限目录", "") + errorPanel(uR.err));
         return;
       }
       var users = itemsOf(uR.data);
@@ -1235,8 +1464,8 @@
         }));
       }
 
-      mount(el, shell("部门与用户组", "按角色聚合的成员与可授予权限目录（/users · /roles · /permissions）", "") +
-        '<p class="x-frac" style="margin:0 0 12px">后端暂未提供部门/用户组 API；本页按角色聚合成员（/users 的角色字段）并展示可授予权限目录（/permissions）。</p>' +
+      mount(el, shell("部门与用户组", "按角色聚合的成员与可授予权限目录", "") +
+        '<p class="x-frac" style="margin:0 0 12px">当前按成员角色聚合展示，并列出可授予的权限目录。</p>' +
         panelHtml("按角色聚合的用户组", roles.length + " 个角色", roleBody) +
         panelHtml("权限目录", perms.length + " 项权限", permBody));
     }, function (err) {
@@ -1247,7 +1476,7 @@
 
   function iamRolesLive(el) {
     var seq = bump();
-    mount(el, shell("角色权限", "角色、环境范围与环境变更审批策略（/roles · /env-policies）", "") +
+    mount(el, shell("角色权限", "角色、环境范围与环境变更审批策略", "") +
       loadingPanel("正在加载角色与环境策略…"));
 
     Promise.all([wrap(apiGet("/roles")), wrap(apiGet("/env-policies"))]).then(function (rs) {
@@ -1255,7 +1484,7 @@
       var rR = rs[0], eR = rs[1];
       if (!rR.ok) {
         if (isAuthErr(rR.err)) return kickLogin();
-        mount(el, shell("角色权限", "角色、环境范围与环境变更审批策略（/roles · /env-policies）", "") + errorPanel(rR.err));
+        mount(el, shell("角色权限", "角色、环境范围与环境变更审批策略", "") + errorPanel(rR.err));
         return;
       }
       IAM_ROLES = itemsOf(rR.data);
@@ -1293,7 +1522,7 @@
         }));
       }
 
-      mount(el, shell("角色权限", "角色、环境范围与环境变更审批策略（/roles · /env-policies）", "") +
+      mount(el, shell("角色权限", "角色、环境范围与环境变更审批策略", "") +
         panelHtml("角色", IAM_ROLES.length + " 个", roleBody) +
         panelHtml("环境变更策略（生产审批）", policies.length + " 条", polBody));
 
@@ -1308,7 +1537,7 @@
               return '<span class="x-tag x-grey x-tag--s">' + gEsc(p.code) + "</span>";
             }).join(" ") + "</p>";
         }).join("");
-        resultDialog("角色权限 · " + (role.name || role.code || id), body || '<p class="x-frac" style="margin:0">该角色没有任何权限。</p>');
+        resultDialog("角色权限   " + (role.name || role.code || id), body || '<p class="x-frac" style="margin:0">该角色没有任何权限。</p>');
       });
     }, function (err) {
       loadFail(el, seq, err);
@@ -1318,7 +1547,7 @@
 
   function iamLogsLive(el) {
     var seq = bump();
-    mount(el, shell("登录日志", "登录审计与活跃会话（/audit-logs · /auth/sessions）", "") + loadingPanel("正在加载登录日志与会话…"));
+    mount(el, shell("登录日志", "登录审计与活跃会话", "") + loadingPanel("正在加载登录日志与会话…"));
 
     Promise.all([
       wrap(apiGet("/audit-logs", { path: "/api/v1/auth/login", page_size: 100 })),
@@ -1367,7 +1596,7 @@
         }));
       }
 
-      mount(el, shell("登录日志", "登录审计与活跃会话（/audit-logs · /auth/sessions）", "") +
+      mount(el, shell("登录日志", "登录审计与活跃会话", "") +
         toolbarHtml(searchInput("搜索用户 / IP / 结果") +
           selectHtml([{ v: "", t: "全部结果" }, { v: "success", t: "成功" }, { v: "failure", t: "失败" }], "", 'data-live-filter data-attr="result" aria-label="按结果筛选"') +
           '<span class="x-frac" data-live-none hidden>无匹配记录</span>') +
@@ -1407,7 +1636,7 @@
     if (scope === "todo" && !APPROVALS.status) APPROVALS.status = "pending";
     var status = APPROVALS.status;
 
-    var base = shell("变更审批", "审批单列表与处理（/approvals）；生产变更返回 202 时会自动创建审批单", "");
+    var base = shell("变更审批", "审批单列表与处理；生产变更按环境审批策略执行", "");
     mount(el, base + loadingPanel("正在加载审批单…"));
 
     var query = { scope: scope, page_size: 100 };
@@ -1456,7 +1685,7 @@
           ? "你还没有发起过审批单。生产环境变更被拦截时会自动创建审批单。"
           : "没有符合条件的审批单。") + "</p>";
 
-      mount(el, shell("变更审批", "审批单列表与处理（/approvals）；生产变更返回 202 时会自动创建审批单", "") +
+      mount(el, shell("变更审批", "审批单列表与处理；生产变更按环境审批策略执行", "") +
         toolbarHtml(tabsHtml + statusSel + '<span class="x-frac">共 ' + total + " 条</span>") +
         panelHtml("审批单", scope === "todo" ? "待我审批" : scope === "mine" ? "我的申请" : "全部", body));
 
@@ -1518,7 +1747,7 @@
 
   function renderHostsLive(el) {
     var seq = bump();
-    mount(el, shell("主机纳管", "主机清单、注册令牌与批量任务（/hosts）", "") + loadingPanel("正在加载主机…"));
+    mount(el, shell("主机纳管", "主机清单、注册令牌与批量任务", "") + loadingPanel("正在加载主机…"));
 
     Promise.all([
       wrap(apiGet("/hosts", { page_size: 200 })),
@@ -1548,7 +1777,7 @@
               '<br /><span class="x-mono">' + gEsc(h.ip || "—") + "</span>",
             gEsc(h.env || "—"),
             gEsc(f.os || f.platform || "—") + (f.arch ? " / " + gEsc(f.arch) : ""),
-            gEsc((f.cpu_cores || "?") + "C") + " · " + gEsc(fmtBytes(f.mem_total)),
+            gEsc((f.cpu_cores || "?") + "C") + "   " + gEsc(fmtBytes(f.mem_total)),
             mono(h.agent_version || "—"),
             h.online ? tagHtml("在线", "ok") : tagHtml("离线", "muted"),
             '<span class="x-frac">' + gEsc(fmtAgo(h.last_seen_at)) + "</span>",
@@ -1576,14 +1805,13 @@
         }));
       }
 
-      mount(el, shell("主机纳管", "主机清单、注册令牌与批量任务（/hosts）", "") +
+      mount(el, shell("主机纳管", "主机清单、注册令牌与批量任务", "") +
         statCards([
           { label: "主机总数", value: hR.ok ? String(hosts.length) : "—", sub: "host:read" },
           { label: "在线主机", value: hR.ok ? String(online) : "—", sub: "agent 心跳 90s 内" },
           { label: "注册令牌", value: tR.ok ? String(HOST_TOKENS.length) : "—", sub: "host:write" },
           { label: "离线主机", value: hR.ok ? String(hosts.length - online) : "—", sub: "待排查" }
         ]) +
-        '<div class="x-tbar">' + clusterTabsHtml("hosts", null) + "</div>" +
         toolbarHtml(
           searchInput("搜索主机 / IP / 环境") +
           selectHtml(envOptions(envs), "", 'data-live-filter data-attr="env" aria-label="按环境筛选"') +
@@ -1600,8 +1828,6 @@
         if (h) tr.setAttribute("data-f-env", String(h.env || ""));
       });
       filterTable(el);
-      bindTabs(el);
-
       bindActs(el, function (act, id) {
         if (act === "host-batch") return batchExecDialog(HOSTS);
         if (act === "token-new") return newTokenDialog();
@@ -1629,8 +1855,8 @@
   }
 
   function hostExecDialog(h) {
-    formDialog("在主机执行命令 · " + (h.name || h.ip),
-      '<p class="x-frac" style="margin:0 0 8px">目标：' + gEsc(h.name || "") + "（" + gEsc(h.ip || "—") + "）· 环境 " + gEsc(h.env || "—") +
+    formDialog("在主机执行命令   " + (h.name || h.ip),
+      '<p class="x-frac" style="margin:0 0 8px">目标：' + gEsc(h.name || "") + "（" + gEsc(h.ip || "—") + "）  环境 " + gEsc(h.env || "—") +
       "；需要 host:exec 权限，生产环境执行可能转为审批。</p>" +
       '<label><span class="x-req">命令</span><textarea class="x-input" name="command" rows="4" placeholder="如 uptime / systemctl status nginx" spellcheck="false"></textarea></label>' +
       '<label><span>超时（秒）</span><input class="x-input" name="timeout" type="number" min="1" max="3600" value="60" /></label>',
@@ -1647,15 +1873,15 @@
 
   function taskResultDialog(h, task) {
     var st = hostTaskStatus(task.status);
-    resultDialog("命令结果 · " + (h.name || h.ip),
-      '<p style="margin:0 0 8px">状态：' + statusTag(st) + " · 退出码：" + mono(task.exit_code == null ? "—" : task.exit_code) +
-      " · 任务 #" + gEsc(task.id) + "</p>" +
+    resultDialog("命令结果   " + (h.name || h.ip),
+      '<p style="margin:0 0 8px">状态：' + statusTag(st) + "   退出码：" + mono(task.exit_code == null ? "—" : task.exit_code) +
+      "   任务 #" + gEsc(task.id) + "</p>" +
       '<pre class="x-log" style="max-height:46vh;overflow:auto;margin:0" aria-label="命令输出">' +
       gEsc(task.output || task.error || "（无输出）") + "</pre>");
   }
 
   function hostTasksDialog(h) {
-    var m = openModal("任务记录 · " + (h.name || h.ip), '<div class="x-form"><p class="x-frac" style="margin:0">正在加载任务记录…</p></div>',
+    var m = openModal("任务记录   " + (h.name || h.ip), '<div class="x-form"><p class="x-frac" style="margin:0">正在加载任务记录…</p></div>',
       '<button class="x-btn" data-close>关闭</button>');
     if (!m) return;
     apiGet("/hosts/" + h.id + "/tasks", { page_size: 20 }).then(function (data) {
@@ -1704,7 +1930,7 @@
           var tok = data.token || {};
           var cmd = data.install_command || "";
           resultDialog("注册令牌已创建",
-            '<p style="margin:0 0 6px">名称：<b>' + gEsc(tok.name || "—") + "</b> · 环境 " + gEsc(tok.env || "—") + "</p>" +
+            '<p style="margin:0 0 6px">名称：<b>' + gEsc(tok.name || "—") + "</b>   环境 " + gEsc(tok.env || "—") + "</p>" +
             '<p style="margin:0 0 6px">令牌（只显示一次）：</p><p class="x-mono" style="margin:0 0 12px;font-size:15px">' + gEsc(tok.token || "—") + "</p>" +
             (cmd ? '<p style="margin:0 0 6px">在目标主机执行：</p><pre class="x-log" style="margin:0 0 12px;overflow:auto">' + gEsc(cmd) + "</pre>" : "") +
             '<button type="button" class="x-btn" id="liveCopyTok">复制安装命令</button>');
@@ -1718,7 +1944,7 @@
     if (!hosts || !hosts.length) { toastMsg("没有可执行的主机"); return; }
     var list = hosts.map(function (h) {
       return '<label style="display:block"><input type="checkbox" name="host" value="' + gEsc(h.id) + '"' + (h.online ? "" : " disabled") + " /> " +
-        gEsc(h.name || h.ip) + ' <span class="x-frac">' + gEsc(h.ip || "") + " · " + gEsc(h.env || "") + (h.online ? "" : " · 离线") + "</span></label>";
+        gEsc(h.name || h.ip) + ' <span class="x-frac">' + gEsc(h.ip || "") + "   " + gEsc(h.env || "") + (h.online ? "" : "   离线") + "</span></label>";
     }).join("");
     formDialog("批量执行命令",
       '<p class="x-frac" style="margin:0 0 8px">选择目标主机（仅在线主机可执行；生产环境可能需要审批）：</p>' +
@@ -1784,7 +2010,7 @@
   }
 
   /* ================================================================
-   * 9. 集群状态 #/cluster/<sub> —— /clusters/:id/{nodes,namespaces,workloads,events}
+   * 9. 集群状态 #/cluster/<sub> —— live Kubernetes inventory and operations
    * ================================================================ */
 
   var CLUSTERS = [];
@@ -1794,37 +2020,27 @@
   var CLUSTER_TITLES = {
     list: "集群列表",
     nodes: "节点",
+    nodepools: "节点分组",
     namespaces: "命名空间",
     workloads: "工作负载",
+    storage: "存储",
+    hpa: "弹性伸缩",
+    cron: "定时任务",
+    backup: "备份恢复",
+    network: "Service",
+    expose: "对外服务",
+    config: "配置与密钥",
     events: "事件",
     logs: "Pod 日志",
     hosts: "主机纳管"
   };
 
-  var CLUSTER_TABS = [
-    ["list", "集群列表", "#/cluster/list"],
-    ["nodes", "节点", "#/cluster/nodes"],
-    ["namespaces", "命名空间", "#/cluster/namespaces"],
-    ["workloads", "工作负载", "#/cluster/workloads"],
-    ["events", "事件", "#/cluster/events"],
-    ["logs", "日志", "#/cluster/logs"],
-    ["hosts", "主机", "#/cluster/hosts"]
-  ];
-
-  function clusterTabsHtml(active, cluster) {
-    return '<div class="x-tabs" role="tablist">' + CLUSTER_TABS.map(function (t) {
-      var href = t[2];
-      if (cluster && t[0] !== "list" && t[0] !== "hosts") href += "/" + cluster.id;
-      return '<button type="button" role="tab" class="' + (active === t[0] ? "on" : "") + '" data-live-tab="' + href +
-        '" aria-selected="' + (active === t[0]) + '">' + t[1] + "</button>";
-    }).join("") + "</div>";
-  }
-
-  function clusterSelHtml(clusters, cluster, sub) {
+  function clusterSelHtml(clusters, cluster, sub, routeKey) {
     if (!clusters || !clusters.length) return "";
     return selectHtml(clusters.map(function (c) {
-      return { v: c.id, t: (c.name || "#" + c.id) + (c.env ? " · " + c.env : "") };
-    }), cluster ? cluster.id : "", 'data-live-cluster-select data-sub="' + sub + '" aria-label="选择集群"');
+      return { v: c.id, t: (c.name || "#" + c.id) + (c.env ? "   " + c.env : "") };
+    }), cluster ? cluster.id : "", 'data-live-cluster-select data-route-key="' + gEsc(routeKey || "cluster") +
+      '" data-sub="' + gEsc(sub || "nodes") + '" aria-label="选择集群"');
   }
 
   function renderClusterLive(el) {
@@ -1835,18 +2051,22 @@
     return clDataPage(el, sub, r.sel);
   }
 
+  function renderTrafficLiveRoute(el) {
+    var r = routeOf();
+    var R = routesRef(), route = R && R.traffic;
+    return route && typeof route.__xsLiveOrig === "function" ? route.__xsLiveOrig(el) : undefined;
+  }
+
   function clListPage(el) {
     var seq = bump();
-    mount(el, shell("集群列表", "已接入的 Kubernetes 集群（/clusters）", "") + loadingPanel("正在加载集群列表…"));
+    mount(el, shell("集群列表", "已接入的 Kubernetes 集群", "") + loadingPanel("正在加载集群列表…"));
     apiGet("/clusters", { page_size: 200 }).then(function (data) {
       if (!alive(seq, el)) return;
       CLUSTERS = itemsOf(data);
       window.XS_CLUSTERS = CLUSTERS; // 供主脚本的环境计数/筛选用
-      var html = shell("集群列表", "已接入的 Kubernetes 集群（/clusters）；点「节点」查看实时资源", "") +
-        '<div class="x-tbar">' + clusterTabsHtml("list", null) + "</div>";
+      var html = shell("集群列表", "已接入的 Kubernetes 集群", '<button class="x-btn" type="button" data-cljobs>部署任务</button><button class="x-btn" type="button" data-clprovision>部署新集群</button><button class="x-btn x-btn--pri" type="button" data-climport>接入集群</button>');
       if (!CLUSTERS.length) {
-        mount(el, html + emptyPanel("尚未接入集群", "通过 POST /api/v1/clusters 提交 kubeconfig 接入集群；接入后这里会显示节点、命名空间、工作负载与事件。"));
-        bindTabs(el);
+        mount(el, html + emptyPanel("尚未接入集群", "使用右上方“接入集群”添加 kubeconfig，接入后可查看节点、命名空间、工作负载与事件。"));
         return;
       }
       var rows = CLUSTERS.map(function (c) {
@@ -1865,7 +2085,6 @@
       html += toolbarHtml(searchInput("搜索集群 / 环境 / API") + '<span class="x-frac" data-live-none hidden>无匹配集群</span>') +
         panelHtml("集群", CLUSTERS.length + " 个", tableHtml(["集群", "环境", "版本", "状态", "最近检查", "创建人", "操作"], rows));
       mount(el, html);
-      bindTabs(el);
       bindActs(el, function (act, id) {
         var c = byId(CLUSTERS, id);
         if (!c) return;
@@ -1876,8 +2095,8 @@
             tags.map(function (t) { return '<option value="' + gEsc(t) + '"' + (t === curEnv ? " selected" : "") + ">" + gEsc(t) + "</option>"; }).join("") +
             '</select></label><p class="x-frac" style="margin:8px 0 0">环境决定权限范围与生产审批策略（生产环境默认需要审批）。</p></form>';
           var foot = '<button class="x-btn" data-close type="button">取消</button><button class="x-btn x-btn--pri" id="ceok" type="button">保存</button>';
-          if (typeof dlg === "function") dlg("调整集群环境 · " + gEsc(c.name), body, foot);
-          else openModal("调整集群环境 · " + gEsc(c.name), body, foot);
+          if (typeof dlg === "function") dlg("调整集群环境   " + gEsc(c.name), body, foot);
+          else openModal("调整集群环境   " + gEsc(c.name), body, foot);
           var ok = $id("ceok");
           if (ok) ok.onclick = function () {
             var sel = $id("cef").querySelector("select[name=env]");
@@ -1894,7 +2113,7 @@
         if (act === "cl-test") {
           return doAction(apiPost("/clusters/" + c.id + "/test", null), null, function (res) {
             if (!res) return;
-            if (res.ok) toastMsg("连接成功 · Kubernetes " + (res.version || ""));
+            if (res.ok) toastMsg("连接成功   Kubernetes " + (res.version || ""));
             else toastMsg("连接失败：" + (res.error || "未知错误"));
           });
         }
@@ -1911,33 +2130,43 @@
     });
   }
 
-  function clDataPage(el, sub, sel) {
+  function clDataPage(el, sub, sel, pageRoute) {
+    var routeKey = pageRoute && pageRoute.routeKey || "cluster";
+    var routeSub = pageRoute && pageRoute.routeSub || sub;
+    var bodySub = pageRoute && pageRoute.bodySub || sub;
     var seq = bump();
-    var title = CLUSTER_TITLES[sub] || "集群状态";
-    mount(el, shell(title, "集群实时数据（/clusters/:id/…）", "") + loadingPanel("正在加载集群列表…"));
+    var title = pageRoute && pageRoute.title || CLUSTER_TITLES[sub] || "集群状态";
+    mount(el, shell(title, "查看所选集群中的 Kubernetes 资源", "") + loadingPanel("正在加载集群列表…"));
     apiGet("/clusters", { page_size: 200 }).then(function (data) {
       if (!alive(seq, el)) return;
       CLUSTERS = itemsOf(data);
       window.XS_CLUSTERS = CLUSTERS; // 供主脚本的环境计数/筛选用
       if (!CLUSTERS.length) {
-        mount(el, shell(title, "集群实时数据（/clusters/:id/…）", "") + '<div class="x-tbar">' + clusterTabsHtml(sub, null) + "</div>" +
-          emptyPanel("尚未接入集群", "集群接入后，节点、命名空间、工作负载、事件与 Pod 日志会显示在这里。"));
-        bindTabs(el);
+        mount(el, shell(title, "查看所选集群中的 Kubernetes 资源", "") +
+          emptyPanel("尚未接入集群", "接入集群后，这里会显示对应的 Kubernetes 资源。"));
         return;
       }
       var cur = resolveCluster(CLUSTERS, sel) || CLUSTERS[0];
       CL_SELECTED = cur;
       if (String(sel || "") !== String(cur.id)) {
-        try { history.replaceState(null, "", "#/cluster/" + sub + "/" + cur.id); } catch (e) {}
+        try { history.replaceState(null, "", clusterResourceHash(routeKey, routeSub, cur.id)); } catch (e) {}
       }
-      mount(el, shell(title, "集群 " + (cur.name || "#" + cur.id) + " 的实时数据（/clusters/:id/…）", "") +
-        '<div class="x-tbar">' + clusterSelHtml(CLUSTERS, cur, sub) + clusterTabsHtml(sub, cur) + "</div>" +
+      var summary = "集群 " + (cur.name || "#" + cur.id);
+      if (sub === "storage") {
+        summary += storageCanWrite()
+          ? "   支持创建/修改/删除，写入统一经过集群变更审批网关"
+          : "   只读清单，当前账号没有 storage:write 权限";
+      } else if (sub === "config" || sub === "nodepools") {
+        summary += "   只读清单，当前页面未开放写操作";
+      }
+      mount(el, shell(title, summary, "") +
+        '<div class="x-tbar">' + clusterSelHtml(CLUSTERS, cur, routeSub, routeKey) + "</div>" +
         '<div id="liveClusterBody">' + loadingPanel("正在加载…") + "</div>");
-      bindTabs(el);
+      bindClusterSelect(el);
       var box = $id("liveClusterBody");
-      var renderBody = CLUSTER_BODY[sub];
+      var renderBody = CLUSTER_BODY[bodySub];
       if (!renderBody) {
-        if (box) box.innerHTML = emptyPanel("该子页面尚未接入实时数据", "当前实时适配覆盖：集群列表、节点、命名空间、工作负载、事件、Pod 日志与主机。");
+        if (box) box.innerHTML = emptyPanel("页面暂不可用", "请刷新页面后重试，或联系平台管理员。");
         return;
       }
       renderBody(el, seq, cur, box);
@@ -1949,19 +2178,35 @@
 
   // 节点详情：live 模式下的"点开查看"。数据来自 GET /clusters/:id/nodes/:name，
   // 不再依赖演示数据；监控/Pod/事件在没有对应数据源时显示"未上报"而不是伪造数字。
-  function clNodeDetail(el, cur, box, name, nodeRowData) {
-    var host = $id("liveNodeDetail");
-    if (!host) {
-      host = document.createElement("div");
-      host.id = "liveNodeDetail";
-      box.parentNode.insertBefore(host, box.nextSibling);
-    }
-    host.innerHTML = loadingPanel("正在加载节点 " + gEsc(name) + " …");
+  function clNodeDetail(cur, name) {
+    var host = $id("drawer");
+    if (!host) return;
+    var requestKey = String(cur.id) + "/" + String(name);
+    host.classList.add("x-drawer--wide");
+    host.setAttribute("role", "dialog");
+    host.setAttribute("aria-modal", "true");
+    host.setAttribute("aria-label", "节点 " + name + " 详情");
+    host.setAttribute("data-live-node", requestKey);
+    host.innerHTML =
+      '<div class="x-dhead"><span class="x-tag x-blue">Node</span><span>' + gEsc(name) + '</span><button class="x-x" type="button" data-close aria-label="关闭">×</button></div>' +
+      '<div class="x-dbody" aria-live="polite">' + loadingPanel("正在加载节点详情…") + "</div>" +
+      '<div class="x-dfoot"><button class="x-btn" type="button" data-close>关闭</button></div>';
+    var close = function () {
+      if (typeof closeAll === "function") closeAll();
+      else host.classList.remove("open");
+    };
+    Array.prototype.forEach.call(host.querySelectorAll("[data-close]"), function (button) { button.onclick = close; });
+    host.classList.add("open");
+    var detailBody = host.querySelector(".x-dbody");
+    var isCurrent = function () {
+      return host.classList.contains("open") && host.getAttribute("data-live-node") === requestKey;
+    };
     apiGet("/clusters/" + cur.id + "/nodes/" + encodeURIComponent(name)).then(function (res) {
+      if (!isCurrent()) return;
       // 后端返回 {node:{…}, metrics_available:bool}
       var n = (res && res.node) || res;
       var metricsOk = !!(res && res.metrics_available);
-      if (!n || !n.name) { host.innerHTML = emptyPanel("节点不存在", name); return; }
+      if (!n || !n.name) { detailBody.innerHTML = emptyPanel("节点不存在", name); return; }
       var cap = n.capacity || {}, alloc = n.allocatable || {};
       var kv = function (k) { return (alloc[k] || cap[k] || "—"); };
       var labels = Object.keys(n.labels || {}).sort();
@@ -1969,11 +2214,8 @@
       var conds = n.conditions || [];
       var usage = n.usage || null;
       var row = function (k, v) { return "<dt>" + gEsc(k) + "</dt><dd>" + v + "</dd>"; };
-      var detail =
-        '<div class="x-tbar" style="margin:0 0 12px"><h2 class="x-h2" style="margin:0">节点 ' + gEsc(n.name) + '</h2>' +
-        (n.ready ? tagHtml("Ready", "ok") : tagHtml(n.status || "NotReady", "bad")) +
+      var detail = (n.ready ? tagHtml("Ready", "ok") : tagHtml(n.status || "NotReady", "bad")) +
         (n.unschedulable ? tagHtml("已封锁", "warn") : "") +
-        '<span class="x-grow"></span><button class="x-btn" type="button" data-ndclose>关闭</button></div>' +
         '<dl class="x-sum">' +
         row("角色", gEsc((n.roles || []).join("、") || "worker")) +
         row("内网 IP", mono(n.internal_ip || "—")) +
@@ -2001,12 +2243,10 @@
           return '<span class="x-tag x-orange">' + gEsc(t.key) + (t.value ? "=" + gEsc(t.value) : "") + ":" + gEsc(t.effect) + "</span>";
         }).join("") + "</div>" : '<p class="x-frac" style="margin:0">无</p>') +
         (!metricsOk ? '<p class="x-frac" style="margin:16px 0 0">CPU/内存使用率未上报：集群未安装 metrics-server。</p>' : "");
-      host.innerHTML = '<section class="x-panel">' + detail + "</section>";
-      var close = host.querySelector("[data-ndclose]");
-      if (close) close.onclick = function () { host.remove(); };
-      host.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      detailBody.innerHTML = detail;
+      detailBody.scrollTo(0, 0);
     }, function (err) {
-      host.innerHTML = errorPanel(err);
+      if (isCurrent()) detailBody.innerHTML = errorPanel(err);
     });
   }
 
@@ -2034,13 +2274,13 @@
           ];
         })
       ) : '<p class="x-frac" style="margin:0">该集群没有节点数据。</p>';
-      box.innerHTML = panelHtml("节点", items.length + " 个" + (metricsOk ? "" : " · metrics-server 不可用（无 CPU/内存使用率）"), body);
+      box.innerHTML = panelHtml("节点", items.length + " 个" + (metricsOk ? "" : "   metrics-server 不可用（无 CPU/内存使用率）"), body);
       [].slice.call(el.querySelectorAll("[data-node]")).forEach(function (a) {
-        a.onclick = function () { clNodeDetail(el, cur, box, a.getAttribute("data-node")); };
+        a.onclick = function () { clNodeDetail(cur, a.getAttribute("data-node")); };
       });
       bindActs(el, function (act, id) {
         var basePath = "/clusters/" + cur.id + "/nodes/" + encodeURIComponent(id);
-        if (act === "node-detail") clNodeDetail(el, cur, box, id);
+        if (act === "node-detail") clNodeDetail(cur, id);
         else if (act === "node-cordon") doAction(apiPost(basePath + "/cordon", null), "已封锁节点 " + id, repaint);
         else if (act === "node-uncordon") doAction(apiPost(basePath + "/uncordon", null), "已解除封锁 " + id, repaint);
         else if (act === "node-drain") {
@@ -2103,7 +2343,7 @@
           var b2 = '<dl class="x-sum"><dt>名称</dt><dd>' + mono(item.name) + "</dd><dt>状态</dt><dd>" + tagHtml(item.status || "—", "ok") +
             "</dd><dt>创建时间</dt><dd>" + gEsc(fmtTime(item.created_at)) + "</dd><dt>标签</dt><dd>" + (labels || '<span class="x-frac">无</span>') + "</dd></dl>";
           var f2 = '<button class="x-btn" type="button" data-close>关闭</button>';
-          if (typeof dlg === "function") dlg("命名空间 · " + gEsc(item.name), b2, f2); else openModal("命名空间", b2, f2);
+          if (typeof dlg === "function") dlg("命名空间   " + gEsc(item.name), b2, f2); else openModal("命名空间", b2, f2);
           return;
         }
         if (act === "ns-del") {
@@ -2201,7 +2441,7 @@
             var y = (d && d.yaml) || "# 无内容";
             var body = '<pre class="x-mono" style="max-height:64vh;overflow:auto;white-space:pre-wrap;margin:0">' + gEsc(y) + "</pre>";
             var foot = '<button class="x-btn" type="button" data-close>关闭</button>';
-            if (typeof dlg === "function") dlg(kind + "/" + gEsc(name) + " · YAML", body, foot);
+            if (typeof dlg === "function") dlg(kind + "/" + gEsc(name) + "   YAML", body, foot);
             else openModal("YAML", body, foot);
           }, function (err) { toast(errText(err)); });
           return;
@@ -2210,7 +2450,7 @@
           var sbody = '<form class="x-form" id="scf" novalidate><label><span>副本数</span><input class="x-input" type="number" min="0" step="1" name="replicas" value="1" required /></label>' +
             '<p class="x-frac" style="margin:8px 0 0">将调整 ' + gEsc(kind + "/" + name) + " 的期望副本数。</p></form>";
           var sfoot = '<button class="x-btn" type="button" data-close>取消</button><button class="x-btn x-btn--pri" type="button" id="scok">保存</button>';
-          if (typeof dlg === "function") dlg("扩缩容 · " + gEsc(name), sbody, sfoot); else openModal("扩缩容", sbody, sfoot);
+          if (typeof dlg === "function") dlg("扩缩容   " + gEsc(name), sbody, sfoot); else openModal("扩缩容", sbody, sfoot);
           var sok = $id("scok");
           if (sok) sok.onclick = function () {
             var v = parseInt($id("scf").querySelector("[name=replicas]").value, 10);
@@ -2352,10 +2592,1242 @@
     });
   }
 
+  var STORAGE_ACCESS_MODES = [
+    { v: "ReadWriteOnce", t: "ReadWriteOnce（单节点读写）" },
+    { v: "ReadOnlyMany", t: "ReadOnlyMany（多节点只读）" },
+    { v: "ReadWriteMany", t: "ReadWriteMany（多节点读写）" },
+    { v: "ReadWriteOncePod", t: "ReadWriteOncePod（单 Pod 读写）" }
+  ];
+
+  function storageCanWrite() {
+    var x = xs();
+    return !!(x && typeof x.can === "function" && x.can("storage:write"));
+  }
+
+  function storageAccessChecks(selected) {
+    var values = selected && selected.length ? selected : ["ReadWriteOnce"];
+    return '<fieldset class="x-radios" style="display:grid;gap:6px"><legend>访问模式</legend>' +
+      STORAGE_ACCESS_MODES.map(function (m) {
+        return '<label><input type="checkbox" name="access_modes" value="' + gEsc(m.v) + '"' +
+          (values.indexOf(m.v) >= 0 ? " checked" : "") + " /> " + gEsc(m.t) + "</label>";
+      }).join("") + "</fieldset>";
+  }
+
+  function storageSelectedModes(f, bad) {
+    var modes = Array.prototype.slice.call(f.querySelectorAll('input[name="access_modes"]:checked')).map(function (el) { return el.value; });
+    if (!modes.length) { bad("至少选择一个访问模式"); return null; }
+    return modes;
+  }
+
+  function storageLabelsField(labels) {
+    return '<label><span>标签 JSON</span><textarea class="x-input x-mono" name="labels" rows="3" spellcheck="false">' +
+      gEsc(JSON.stringify(labels || {}, null, 2)) + "</textarea></label>";
+  }
+
+  function storageJSONObject(f, field, label, bad) {
+    var input = f.elements[field];
+    var raw = String(input && input.value || "").trim();
+    if (!raw) return {};
+    var value;
+    try { value = JSON.parse(raw); } catch (e) {
+      bad(label + " 必须是有效 JSON", input);
+      return null;
+    }
+    if (!value || Array.isArray(value) || typeof value !== "object") {
+      bad(label + " 必须是 JSON 对象", input);
+      return null;
+    }
+    var badKey = Object.keys(value).filter(function (k) { return typeof value[k] !== "string"; })[0];
+    if (badKey !== undefined) {
+      bad(label + " 的值必须是字符串（" + badKey + "）", input);
+      return null;
+    }
+    return value;
+  }
+
+  function storageLines(text) {
+    return String(text || "").split(/[\n,]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  function storageClassSelect(classes, value, emptyLabel, attrs) {
+    var items = [{ v: "", t: emptyLabel || "不指定" }].concat((classes || []).map(function (c) { return { v: c.name, t: c.name }; }));
+    if (value && !(classes || []).some(function (c) { return c.name === value; })) items.push({ v: value, t: value });
+    return selectHtml(items, value || "", (attrs ? attrs + " " : "") + 'name="storage_class"');
+  }
+
+  function storageSubmit(promise, okMsg) {
+    return doAction(promise, null, function (data) {
+      closeModal();
+      repaint();
+      if (data) toastMsg(okMsg);
+    });
+  }
+
+  function storageMissingIdentity(item) {
+    if (!item || !item.uid || !item.resource_version) {
+      toastMsg("缺少 UID 或 resource_version，请刷新后重试");
+      return true;
+    }
+    return false;
+  }
+
+  function storageClassDialog(item, ctx) {
+    var editing = !!item;
+    if (editing && !item.resource_version) return toastMsg("缺少 resource_version，请刷新后重试");
+    var name = editing ? item.name : "";
+    var provisioner = editing ? item.provisioner : "";
+    var reclaim = editing ? item.reclaim_policy : "Delete";
+    var binding = editing ? item.volume_binding_mode : "Immediate";
+    var allow = editing ? !!item.allow_volume_expansion : true;
+    var isDefault = editing ? !!item.default : false;
+    var parameters = JSON.stringify((editing && item.parameters) || {}, null, 2);
+    var mounts = ((editing && item.mount_options) || []).join("\n");
+    var body =
+      '<div class="x-row2">' +
+      '<label><span class="x-req">名称</span><input class="x-input x-mono" name="name" required maxlength="253" pattern="[a-z0-9]([-a-z0-9.]*[a-z0-9])?" value="' +
+      gEsc(name) + '"' + (editing ? " readonly" : "") + " /></label>" +
+      '<label><span class="x-req">Provisioner</span><input class="x-input x-mono" name="provisioner" required maxlength="253" value="' +
+      gEsc(provisioner) + '"' + (editing ? " readonly" : "") + " /></label></div>" +
+      '<div class="x-row2">' +
+      '<label><span>回收策略</span>' + selectHtml([{ v: "Delete", t: "Delete（删除后端存储）" }, { v: "Retain", t: "Retain（保留）" }], reclaim, (editing ? 'disabled title="StorageClass 创建后不可修改"' : "") + ' name="reclaim_policy"') + "</label>" +
+      '<label><span>绑定模式</span>' + selectHtml([{ v: "Immediate", t: "Immediate" }, { v: "WaitForFirstConsumer", t: "WaitForFirstConsumer" }], binding, editing ? "disabled name=\"volume_binding_mode\"" : 'name="volume_binding_mode"') + "</label></div>" +
+      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="allow_volume_expansion"' + (allow ? " checked" : "") + " />允许卷扩容</label>" +
+      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="is_default"' + (isDefault ? " checked" : "") + " />设为默认 StorageClass</label>" +
+      '<label><span>参数 JSON</span><textarea class="x-input x-mono" name="parameters" rows="5" spellcheck="false"' + (editing ? " readonly" : "") + ">" + gEsc(parameters) + "</textarea></label>" +
+      '<label><span>挂载选项</span><textarea class="x-input x-mono" name="mount_options" rows="2" spellcheck="false" placeholder="每行一个">' + gEsc(mounts) + "</textarea></label>" +
+      '<p class="x-frac">' + (editing ? "StorageClass 创建后 Provisioner、回收策略、绑定模式和参数不可修改；如需变更请新建 StorageClass。" : "仅写入 Kubernetes 原生 StorageClass。") + "生产环境由集群变更审批策略决定是否生成审批单。</p>";
+    formDialog(editing ? "编辑 StorageClass   " + name : "创建 StorageClass", body, editing ? "保存变更" : "创建", function (f, bad) {
+      if (!f.reportValidity()) return;
+      var parsed = storageJSONObject(f, "parameters", "参数", bad);
+      if (parsed === null) return;
+      var nextName = String(f.elements.name.value || "").trim();
+      var nextProvisioner = String(f.elements.provisioner.value || "").trim();
+      if (!nextName) return bad("名称不能为空", f.elements.name);
+      if (!nextProvisioner) return bad("Provisioner 不能为空", f.elements.provisioner);
+      var payload = {
+        name: nextName,
+        provisioner: nextProvisioner,
+        reclaim_policy: f.elements.reclaim_policy.value,
+        volume_binding_mode: f.elements.volume_binding_mode.value,
+        allow_volume_expansion: !!f.elements.allow_volume_expansion.checked,
+        is_default: !!f.elements.is_default.checked,
+        parameters: parsed,
+        mount_options: storageLines(f.elements.mount_options.value)
+      };
+      if (editing) payload.resource_version = item.resource_version;
+      var url = ctx.base + "classes" + (editing ? "/" + encodeURIComponent(item.name) : "");
+      storageSubmit(editing ? apiPut(url, payload) : apiPost(url, payload),
+        editing ? "已更新 StorageClass " + nextName : "已创建 StorageClass " + nextName);
+    }, !editing ? aiDraftConfig("k8s.storageclass.create", "创建一个默认 StorageClass，使用 CSI 提供器，延迟绑定并保留卷。", {
+      name: aiField("string", "StorageClass 名称，使用小写字母和短横线", { maxLength: 253 }),
+      provisioner: aiField("string", "已安装 CSI 驱动提供的 Provisioner 标识", { maxLength: 253 }),
+      reclaim_policy: aiField("enum", "卷删除后的回收策略", { values: ["Delete", "Retain"] }),
+      volume_binding_mode: aiField("enum", "卷绑定时机", { values: ["Immediate", "WaitForFirstConsumer"] }),
+      allow_volume_expansion: aiField("boolean", "是否允许扩容"),
+      is_default: aiField("boolean", "是否设为集群默认 StorageClass"),
+      parameters: aiField("string_map", "驱动支持的非敏感参数键值对象", { ui: "json" }),
+      mount_options: aiField("array", "每项一个挂载参数")
+    }, true) : null);
+  }
+
+  function storageClassDelete(item, ctx) {
+    if (storageMissingIdentity(item)) return;
+    var body = '<p>确认删除 StorageClass <b>' + gEsc(item.name) + "</b>？该操作不可恢复。</p>" +
+      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="confirm" required />我确认删除该 StorageClass</label>' +
+      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="force" />即使仍被 PV/PVC 引用也强制删除（可能导致存储不可用）</label>' +
+      '<p class="x-frac">默认在检测到引用时拒绝删除；force 只应在确认无数据依赖后使用。</p>';
+    formDialog("删除 StorageClass   " + item.name, body, "删除", function (f) {
+      if (!f.reportValidity()) return;
+      storageSubmit(apiDel(ctx.base + "classes/" + encodeURIComponent(item.name), {
+        uid: item.uid,
+        resource_version: item.resource_version,
+        force: !!f.elements.force.checked
+      }),
+        "已删除 StorageClass " + item.name);
+    });
+  }
+
+  function storagePVCDialog(item, ctx) {
+    var editing = !!item;
+    if (editing && !item.resource_version) return toastMsg("缺少 resource_version，请刷新后重试");
+    var namespace = editing ? item.namespace : "";
+    var name = editing ? item.name : "";
+    var size = editing ? item.requested : "";
+    var body =
+      '<div class="x-row2">' +
+      '<label><span class="x-req">命名空间</span><input class="x-input x-mono" name="namespace" required maxlength="63" value="' +
+      gEsc(namespace) + '"' + (editing ? " readonly" : "") + " /></label>" +
+      '<label><span class="x-req">名称</span><input class="x-input x-mono" name="name" required maxlength="253" value="' +
+      gEsc(name) + '"' + (editing ? " readonly" : "") + " /></label></div>" +
+      '<div class="x-row2">' +
+      '<label><span class="x-req">申请容量</span><input class="x-input x-mono" name="size" required placeholder="例如 10Gi" value="' + gEsc(size) + '" /></label>' +
+      '<label><span>StorageClass</span>' + storageClassSelect(ctx.classes, editing ? item.storage_class : "", "使用默认 StorageClass", editing ? "disabled" : "") + "</label></div>" +
+      (editing
+        ? '<p class="x-frac">PVC 仅支持扩容与标签修改；访问模式、StorageClass 与绑定 PV 不能在此修改。</p>'
+        : storageAccessChecks(item && item.access_modes) +
+          '<div class="x-row2"><label><span>卷模式</span>' + selectHtml([{ v: "Filesystem", t: "Filesystem" }, { v: "Block", t: "Block" }], "Filesystem", 'name="volume_mode"') + "</label>" +
+          '<label><span>绑定已有 PV（可选）</span><input class="x-input x-mono" name="volume_name" placeholder="留空由调度器绑定" /></label></div>') +
+      storageLabelsField(editing ? item.labels : {}) +
+      '<p class="x-frac">创建与更新均调用现有 PVC 接口；生产环境写入会进入审批网关。</p>';
+    formDialog(editing ? "编辑 PVC   " + namespace + "/" + name : "创建 PersistentVolumeClaim", body, editing ? "保存变更" : "创建", function (f, bad) {
+      if (!f.reportValidity()) return;
+      var labels = storageJSONObject(f, "labels", "标签", bad);
+      if (labels === null) return;
+      var nextSize = String(f.elements.size.value || "").trim();
+      if (!nextSize) return bad("容量不能为空", f.elements.size);
+      if (editing) {
+        storageSubmit(apiPut(ctx.base + "claims/" + encodeURIComponent(namespace) + "/" + encodeURIComponent(name), {
+          size: nextSize,
+          labels: labels,
+          resource_version: item.resource_version
+        }), "已更新 PVC " + namespace + "/" + name);
+        return;
+      }
+      var modes = storageSelectedModes(f, bad);
+      if (!modes) return;
+      var nextNamespace = String(f.elements.namespace.value || "").trim();
+      var nextName = String(f.elements.name.value || "").trim();
+      if (!nextNamespace) return bad("命名空间不能为空", f.elements.namespace);
+      if (!nextName) return bad("名称不能为空", f.elements.name);
+      storageSubmit(apiPost(ctx.base + "claims", {
+        name: nextName,
+        namespace: nextNamespace,
+        storage_class: f.elements.storage_class.value,
+        access_modes: modes,
+        size: nextSize,
+        volume_mode: f.elements.volume_mode.value,
+        volume_name: String(f.elements.volume_name.value || "").trim(),
+        labels: labels
+      }), "已创建 PVC " + nextNamespace + "/" + nextName);
+    }, !editing ? aiDraftConfig("k8s.pvc.create", "在 prod 命名空间为 web 创建 10Gi 的块存储 PVC，使用 fast-ssd，单节点读写。", {
+      namespace: aiField("string", "目标 Kubernetes 命名空间", { maxLength: 63 }),
+      name: aiField("string", "PVC 名称，使用小写字母和短横线", { maxLength: 253 }),
+      size: aiField("string", "申请容量，例如 10Gi"),
+      storage_class: aiField("enum", "现有 StorageClass；空字符串表示使用默认类", {
+        values: [""].concat((ctx.classes || []).map(function (c) { return c.name; }))
+      }),
+      access_modes: aiField("array", "访问模式，可选择一个或多个", {
+        values: STORAGE_ACCESS_MODES.map(function (mode) { return mode.v; }),
+        ui: "checks"
+      }),
+      volume_mode: aiField("enum", "卷模式", { values: ["Filesystem", "Block"] }),
+      volume_name: aiField("string", "可选的预绑定 PV 名称；未指定时留空"),
+      labels: aiField("string_map", "Kubernetes 标签键值对象", { ui: "json" })
+    }, true) : null);
+  }
+
+  function storagePVCDelete(item, ctx) {
+    if (storageMissingIdentity(item)) return;
+    var key = item.namespace + "/" + item.name;
+    var body = '<p>确认删除 PVC <b>' + gEsc(key) + "</b>？删除后工作负载可能立即失去存储。</p>" +
+      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="confirm" required />我确认删除该 PVC</label>' +
+      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="allow_reclaim_delete" />若绑定 PV 的回收策略为 Delete，允许连带删除卷（数据将丢失）</label>' +
+      '<p class="x-frac">默认拒绝连带删除回收策略为 Delete 的卷；只有确认数据可丢弃时才勾选第二项。</p>';
+    formDialog("删除 PVC   " + key, body, "删除", function (f) {
+      if (!f.reportValidity()) return;
+      storageSubmit(apiDel(ctx.base + "claims/" + encodeURIComponent(item.namespace) + "/" + encodeURIComponent(item.name), {
+        uid: item.uid,
+        resource_version: item.resource_version,
+        confirm: key,
+        allow_reclaim_delete: !!f.elements.allow_reclaim_delete.checked
+      }), "已删除 PVC " + key);
+    });
+  }
+
+  function storagePVDialog(item, ctx) {
+    var editing = !!item;
+    if (editing && (!item.uid || !item.resource_version)) return toastMsg("缺少 UID 或 resource_version，请刷新后重试");
+    if (editing && !item.host_path && !item.nfs) return toastMsg("该 PV 的卷来源不是 HostPath/NFS，暂不支持编辑");
+    var sourceSummary = editing
+      ? (item.host_path ? "HostPath " + item.host_path : "NFS " + item.nfs.server + ":" + item.nfs.path + (item.nfs.read_only ? "（只读）" : ""))
+      : "";
+    var body =
+      '<div class="x-row2">' +
+      '<label><span class="x-req">名称</span><input class="x-input x-mono" name="name" required maxlength="253" value="' +
+      gEsc(editing ? item.name : "") + '"' + (editing ? " readonly" : "") + " /></label>" +
+      '<label><span class="x-req">容量</span><input class="x-input x-mono" name="capacity" required placeholder="例如 20Gi" value="' +
+      gEsc(editing ? item.capacity : "") + '" /></label></div>' +
+      storageAccessChecks(editing ? item.access_modes : []) +
+      '<div class="x-row2">' +
+      '<label><span>回收策略</span>' + selectHtml([{ v: "Retain", t: "Retain（保留）" }, { v: "Delete", t: "Delete（删除后端存储）" }], editing ? item.reclaim_policy : "Retain", 'name="reclaim_policy"') + "</label>" +
+      '<label><span>StorageClass</span>' + storageClassSelect(ctx.classes, editing ? item.storage_class : "", "不指定（静态 PV）") + "</label></div>" +
+      '<div class="x-row2">' +
+      '<label><span>卷模式</span>' + selectHtml([{ v: "Filesystem", t: "Filesystem" }, { v: "Block", t: "Block" }], editing ? item.volume_mode : "Filesystem", 'name="volume_mode"') + "</label>" +
+      (editing
+        ? '<label><span>卷来源（不可修改）</span><input class="x-input x-mono" value="' + gEsc(sourceSummary) + '" readonly /></label>'
+        : '<label><span>卷来源</span>' + selectHtml([{ v: "host_path", t: "HostPath" }, { v: "nfs", t: "NFS" }], "host_path", 'name="source_type"') + "</label>") +
+      "</div>" +
+      (editing
+        ? '<p class="x-frac">PV 来源不可修改；仅可调整容量、访问模式、回收策略、StorageClass、卷模式与标签。</p>'
+        : '<div data-storage-src="host_path"><label><span class="x-req">HostPath 路径</span><input class="x-input x-mono" name="host_path" placeholder="/data/volume" /></label></div>' +
+          '<div data-storage-src="nfs" hidden><div class="x-row2"><label><span class="x-req">NFS Server</span><input class="x-input x-mono" name="nfs_server" placeholder="nfs.example" /></label>' +
+          '<label><span class="x-req">NFS Path</span><input class="x-input x-mono" name="nfs_path" placeholder="/export/data" /></label></div>' +
+          '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="nfs_read_only" />只读挂载</label></div>') +
+      storageLabelsField(editing ? item.labels : {}) +
+      '<p class="x-frac">静态 PV 只会以 HostPath 或 NFS 创建；不会自动绑定或伪造 Claim 状态。</p>';
+    var form = formDialog(editing ? "编辑 PV   " + item.name : "创建 PersistentVolume", body, editing ? "保存变更" : "创建", function (f, bad) {
+      if (!f.reportValidity()) return;
+      var labels = storageJSONObject(f, "labels", "标签", bad);
+      if (labels === null) return;
+      var modes = storageSelectedModes(f, bad);
+      if (!modes) return;
+      var nextName = String(f.elements.name.value || "").trim();
+      var capacity = String(f.elements.capacity.value || "").trim();
+      if (!nextName) return bad("名称不能为空", f.elements.name);
+      if (!capacity) return bad("容量不能为空", f.elements.capacity);
+      var payload = {
+        name: nextName,
+        capacity: capacity,
+        access_modes: modes,
+        reclaim_policy: f.elements.reclaim_policy.value,
+        storage_class: f.elements.storage_class.value,
+        volume_mode: f.elements.volume_mode.value,
+        labels: labels
+      };
+      if (editing) {
+        payload.uid = item.uid;
+        payload.resource_version = item.resource_version;
+        if (item.host_path) payload.host_path = item.host_path;
+        if (item.nfs) payload.nfs = { server: item.nfs.server, path: item.nfs.path, read_only: !!item.nfs.read_only };
+        storageSubmit(apiPut(ctx.base + "volumes/" + encodeURIComponent(item.name), payload), "已更新 PV " + nextName);
+        return;
+      }
+      if (f.elements.source_type.value === "nfs") {
+        var server = String(f.elements.nfs_server.value || "").trim();
+        var nfsPath = String(f.elements.nfs_path.value || "").trim();
+        if (!server || !nfsPath) return bad("NFS 需要填写 server 与 path", !server ? f.elements.nfs_server : f.elements.nfs_path);
+        payload.nfs = { server: server, path: nfsPath, read_only: !!f.elements.nfs_read_only.checked };
+      } else {
+        var hostPath = String(f.elements.host_path.value || "").trim();
+        if (!hostPath) return bad("HostPath 路径不能为空", f.elements.host_path);
+        payload.host_path = hostPath;
+      }
+      storageSubmit(apiPost(ctx.base + "volumes", payload), "已创建 PV " + nextName);
+    }, !editing ? aiDraftConfig("k8s.pv.create", "创建一个 20Gi 的静态 NFS PV，地址 nfs.example:/export/data，只读并保留卷。", {
+      name: aiField("string", "PV 名称，使用小写字母和短横线", { maxLength: 253 }),
+      capacity: aiField("string", "PV 容量，例如 20Gi"),
+      access_modes: aiField("array", "访问模式，可选择一个或多个", {
+        values: STORAGE_ACCESS_MODES.map(function (mode) { return mode.v; }),
+        ui: "checks"
+      }),
+      reclaim_policy: aiField("enum", "卷删除后的回收策略", { values: ["Retain", "Delete"] }),
+      storage_class: aiField("enum", "现有 StorageClass；空字符串表示静态卷不指定", {
+        values: [""].concat((ctx.classes || []).map(function (c) { return c.name; }))
+      }),
+      volume_mode: aiField("enum", "卷模式", { values: ["Filesystem", "Block"] }),
+      source_type: aiField("enum", "卷来源", { values: ["host_path", "nfs"] }),
+      host_path: aiField("string", "仅 HostPath 来源使用的节点路径"),
+      nfs_server: aiField("string", "仅 NFS 来源使用的 NFS 主机名或 IP"),
+      nfs_path: aiField("string", "仅 NFS 来源使用的导出路径"),
+      nfs_read_only: aiField("boolean", "NFS 是否只读挂载"),
+      labels: aiField("string_map", "Kubernetes 标签键值对象", { ui: "json" })
+    }, true) : null);
+    if (form && form.elements.source_type) {
+      var syncSource = function () {
+        var nfs = form.elements.source_type.value === "nfs";
+        var hp = form.querySelector('[data-storage-src="host_path"]');
+        var nf = form.querySelector('[data-storage-src="nfs"]');
+        if (hp) hp.hidden = nfs;
+        if (nf) nf.hidden = !nfs;
+      };
+      form.elements.source_type.onchange = syncSource;
+      syncSource();
+    }
+  }
+
+  function storagePVDelete(item, ctx) {
+    if (storageMissingIdentity(item)) return;
+    var body = '<p>确认删除 PV <b>' + gEsc(item.name) + "</b>？回收策略为 <b>" + gEsc(item.reclaim_policy || "—") +
+      "</b>；删除后可能清理后端数据。</p>" +
+      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="confirm" required />我确认删除该 PersistentVolume</label>' +
+      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="force" />PV 仍绑定 Claim 时强制删除（仅在确认 Claim 已移除时使用）</label>' +
+      '<p class="x-frac">默认拒绝删除仍绑定 Claim 的 PV。</p>';
+    formDialog("删除 PV   " + item.name, body, "删除", function (f) {
+      if (!f.reportValidity()) return;
+      storageSubmit(apiDel(ctx.base + "volumes/" + encodeURIComponent(item.name), {
+        uid: item.uid,
+        resource_version: item.resource_version,
+        confirm: item.name,
+        force: !!f.elements.force.checked
+      }), "已删除 PV " + item.name);
+    });
+  }
+
+  function storageSnapshotDialog(ctx) {
+    if (!ctx.snapshotCap || !ctx.snapshotCap.supported) return toastMsg("当前集群未确认 VolumeSnapshot 能力");
+    var sourceOptions = (ctx.claims || []).map(function (c) { return { v: c.namespace + "/" + c.name, t: c.namespace + "/" + c.name }; });
+    var classOptions = (ctx.snapshotCap.classes || []).map(function (c) { return { v: c, t: c }; });
+    var body =
+      '<label><span class="x-req">名称</span><input class="x-input x-mono" name="name" required maxlength="253" pattern="[a-z0-9]([-a-z0-9.]*[a-z0-9])?" /></label>' +
+      '<label><span class="x-req">源 PVC</span>' + selectHtml(sourceOptions, "", 'name="source_pvc"') + "</label>" +
+      (classOptions.length
+        ? '<label><span>VolumeSnapshotClass</span>' + selectHtml([{ v: "", t: "不指定（使用默认类）" }].concat(classOptions), "", 'name="class_name"') + "</label>"
+        : "") +
+      storageLabelsField({}) +
+      '<p class="x-frac">仅提交 VolumeSnapshot 创建请求；就绪状态由 snapshot controller 回报，本页不会伪造。</p>';
+    formDialog("创建 VolumeSnapshot", body, "创建", function (f, bad) {
+      if (!f.reportValidity()) return;
+      var source = String(f.elements.source_pvc.value || "");
+      var parts = source.split("/");
+      if (parts.length !== 2 || !parts[0] || !parts[1]) return bad("请选择源 PVC", f.elements.source_pvc);
+      var labels = storageJSONObject(f, "labels", "标签", bad);
+      if (labels === null) return;
+      var nextName = String(f.elements.name.value || "").trim();
+      if (!nextName) return bad("名称不能为空", f.elements.name);
+      var payload = { namespace: parts[0], name: nextName, source_pvc: parts[1], labels: labels };
+      if (f.elements.class_name) payload.class_name = f.elements.class_name.value;
+      storageSubmit(apiPost(ctx.base + "snapshots", payload), "已创建 VolumeSnapshot " + parts[0] + "/" + nextName);
+    }, aiDraftConfig("k8s.snapshot.create", "为 prod/data 创建一个快照，名称 data-before-upgrade。", {
+      name: aiField("string", "快照名称，使用小写字母和短横线", { maxLength: 253 }),
+      source_pvc: aiField("enum", "要快照的现有 PVC，格式为 namespace/name", {
+        values: sourceOptions.map(function (option) { return option.v; })
+      }),
+      class_name: aiField("enum", "现有 VolumeSnapshotClass；空字符串表示使用默认类", {
+        values: [""].concat(classOptions)
+      }),
+      labels: aiField("string_map", "Kubernetes 标签键值对象", { ui: "json" })
+    }, true));
+  }
+
+  function storageSnapshotDelete(item, ctx) {
+    if (storageMissingIdentity(item)) return;
+    var key = item.namespace + "/" + item.name;
+    var body = '<p>确认删除 VolumeSnapshot <b>' + gEsc(key) + "</b>？恢复点将不可用。</p>" +
+      '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="confirm" required />我确认删除该 VolumeSnapshot</label>';
+    formDialog("删除 VolumeSnapshot   " + key, body, "删除", function (f) {
+      if (!f.reportValidity()) return;
+      storageSubmit(apiDel(ctx.base + "snapshots/" + encodeURIComponent(item.namespace) + "/" + encodeURIComponent(item.name), {
+        uid: item.uid,
+        resource_version: item.resource_version
+      }), "已删除 VolumeSnapshot " + key);
+    });
+  }
+
+  function clStoragePage(el, seq, cur, box) {
+    var base = "/clusters/" + cur.id + "/storage/";
+    Promise.all([
+      wrap(apiGet(base + "capabilities")),
+      wrap(apiGet(base + "classes")),
+      wrap(apiGet(base + "volumes")),
+      wrap(apiGet(base + "claims")),
+      wrap(apiGet(base + "snapshots"))
+    ]).then(function (rs) {
+      if (!alive(seq, el) || !box) return;
+      for (var i = 0; i < rs.length; i++) if (rs[i].err && isAuthErr(rs[i].err)) return kickLogin();
+      var capabilities = rs[0].ok ? (rs[0].data || {}) : {};
+      var classes = rs[1].ok ? itemsOf(rs[1].data) : [];
+      var volumes = rs[2].ok ? itemsOf(rs[2].data) : [];
+      var claims = rs[3].ok ? itemsOf(rs[3].data) : [];
+      var snapshots = rs[4].ok ? itemsOf(rs[4].data) : [];
+      var snapshotCap = capabilities.snapshots || (rs[4].data && rs[4].data.capability) || {};
+      var canWrite = storageCanWrite();
+      var ctx = { base: base, classes: classes, volumes: volumes, claims: claims, snapshotCap: snapshotCap };
+      var actionHead = canWrite ? ["操作"] : [];
+      var actCell = function (html) { return '<span class="x-kacts">' + html + "</span>"; };
+      var section = function (title, result, items, cols, rows, empty, tools) {
+        if (!result.ok) return panelHtml(title, "", '<p class="x-aerr" role="alert" style="margin:0">' + gEsc(errText(result.err)) + "</p>", "");
+        return panelHtml(title, items.length + " 个", items.length ? tableHtml(cols, rows) : '<p class="x-frac" style="margin:0">' + gEsc(empty) + "</p>", tools || "");
+      };
+      var classRows = classes.map(function (x) {
+        var cells = [
+          '<span class="x-name">' + gEsc(x.name) + "</span>" + (x.default ? ' <span class="x-tag x-green x-tag--s">默认</span>' : ""),
+          mono(x.provisioner || "—"), gEsc(x.reclaim_policy || "—"), gEsc(x.volume_binding_mode || "—"),
+          x.allow_volume_expansion ? "支持" : "不支持", gEsc(fmtTime(x.created_at))
+        ];
+        if (canWrite) cells.push(actCell(
+          actBtn("编辑", "storage-sc-edit", x.name, { disabled: !x.resource_version, title: x.resource_version ? "" : "缺少 resource_version，请刷新" }) +
+          actBtn("删除", "storage-sc-del", x.name, { disabled: !x.uid || !x.resource_version, title: x.uid && x.resource_version ? "" : "缺少 UID/resource_version，请刷新" })));
+        return cells;
+      });
+      var pvRows = volumes.map(function (x) {
+        var editable = !!(x.host_path || x.nfs);
+        var cells = [
+          '<span class="x-name">' + gEsc(x.name) + "</span>", tagHtml(x.phase || "—", x.phase === "Bound" ? "ok" : "muted"),
+          gEsc(x.capacity || "—"), gEsc((x.access_modes || []).join(", ") || "—"), gEsc(x.storage_class || "—"),
+          gEsc(x.claim_ref || "—"), gEsc(x.reclaim_policy || "—")
+        ];
+        if (canWrite) cells.push(actCell(
+          actBtn("编辑", "storage-pv-edit", x.name, { disabled: !editable || !x.resource_version, title: editable ? (x.resource_version ? "" : "缺少 resource_version，请刷新") : "仅支持 HostPath/NFS PV 编辑" }) +
+          actBtn("删除", "storage-pv-del", x.name, { disabled: !x.uid || !x.resource_version, title: x.uid && x.resource_version ? "" : "缺少 UID/resource_version，请刷新" })));
+        return cells;
+      });
+      var pvcRows = claims.map(function (x) {
+        var cells = [
+          '<span class="x-name">' + gEsc(x.namespace + "/" + x.name) + "</span>",
+          tagHtml(x.phase || "—", x.phase === "Bound" ? "ok" : "warn"), gEsc(x.requested || "—"),
+          gEsc(x.capacity || "—"), gEsc((x.access_modes || []).join(", ") || "—"),
+          gEsc(x.storage_class || "—"), gEsc(x.volume_name || "—")
+        ];
+        if (canWrite) cells.push(actCell(
+          actBtn("编辑", "storage-pvc-edit", x.namespace + "/" + x.name, { disabled: !x.resource_version, title: x.resource_version ? "" : "缺少 resource_version，请刷新" }) +
+          actBtn("删除", "storage-pvc-del", x.namespace + "/" + x.name, { disabled: !x.uid || !x.resource_version, title: x.uid && x.resource_version ? "" : "缺少 UID/resource_version，请刷新" })));
+        return cells;
+      });
+      var snapshotRows = snapshots.map(function (x) {
+        var cells = [
+          '<span class="x-name">' + gEsc(x.namespace + "/" + x.name) + "</span>",
+          x.ready ? tagHtml("Ready", "ok") : tagHtml(x.error || "Pending", "warn"),
+          gEsc(x.source_pvc || "—"), gEsc(x.class || "—"), gEsc(x.restore_size || "—"), gEsc(fmtTime(x.created_at))
+        ];
+        if (canWrite && snapshotCap.supported) cells.push(actCell(
+          actBtn("删除", "storage-snapshot-del", x.namespace + "/" + x.name, { disabled: !x.uid || !x.resource_version, title: x.uid && x.resource_version ? "" : "缺少 UID/resource_version，请刷新" })));
+        return cells;
+      });
+      var snapshotNote = rs[4].ok
+        ? (snapshotCap.supported ? "快照 API 与存储驱动已发现。" : (snapshotCap.reason || "当前集群未确认快照能力，不能创建快照。"))
+        : errText(rs[4].err);
+      var accessNote = canWrite
+        ? '<p class="x-frac" style="margin:0 0 12px">创建、修改与删除均调用现有集群变更接口；生产环境按审批策略返回待审批。</p>'
+        : '<p class="x-frac" style="margin:0 0 12px">当前账号没有 storage:write 权限，以下为只读清单。</p>';
+      var newClass = canWrite ? '<button class="x-btn x-btn--pri" type="button" data-storage-new="class">+ 新建 StorageClass</button>' : "";
+      var newPVC = canWrite ? '<button class="x-btn x-btn--pri" type="button" data-storage-new="pvc">+ 新建 PVC</button>' : "";
+      var newPV = canWrite ? '<button class="x-btn x-btn--pri" type="button" data-storage-new="pv">+ 新建 PV</button>' : "";
+      var newSnapshot = canWrite && snapshotCap.supported && claims.length
+        ? '<button class="x-btn x-btn--pri" type="button" data-storage-new="snapshot">+ 新建快照</button>'
+        : "";
+      box.innerHTML = accessNote +
+        panelHtml("存储能力", snapshotCap.supported ? "VolumeSnapshot 可用" : "快照未接入",
+          '<p class="x-frac" style="margin:0">' + gEsc(snapshotNote) + "</p>") +
+        section("StorageClass", rs[1], classes, ["名称", "Provisioner", "回收策略", "绑定模式", "扩容", "创建时间"].concat(actionHead), classRows, "集群没有 StorageClass。", newClass) +
+        section("PersistentVolume", rs[2], volumes, ["名称", "状态", "容量", "访问模式", "StorageClass", "Claim", "回收策略"].concat(actionHead), pvRows, "集群没有 PV。", newPV) +
+        section("PersistentVolumeClaim", rs[3], claims, ["命名空间 / 名称", "状态", "申请容量", "已绑定容量", "访问模式", "StorageClass", "PV"].concat(actionHead), pvcRows, "集群没有 PVC。", newPVC) +
+        section("VolumeSnapshot", rs[4], snapshots, ["命名空间 / 名称", "状态", "源 PVC", "快照类", "恢复容量", "创建时间"].concat(canWrite && snapshotCap.supported ? actionHead : []), snapshotRows, snapshotNote, newSnapshot);
+
+      var findClass = function (name) { var found = null; classes.forEach(function (x) { if (x.name === name) found = x; }); return found; };
+      var findPV = function (name) { var found = null; volumes.forEach(function (x) { if (x.name === name) found = x; }); return found; };
+      var findPVC = function (key) { var found = null; claims.forEach(function (x) { if (x.namespace + "/" + x.name === key) found = x; }); return found; };
+      var findSnapshot = function (key) { var found = null; snapshots.forEach(function (x) { if (x.namespace + "/" + x.name === key) found = x; }); return found; };
+
+      bindActs(el, function (act, id) {
+        if (!canWrite) return;
+        var item;
+        if (act === "storage-sc-edit") { item = findClass(id); if (item) storageClassDialog(item, ctx); return; }
+        if (act === "storage-sc-del") { item = findClass(id); if (item) storageClassDelete(item, ctx); return; }
+        if (act === "storage-pv-edit") { item = findPV(id); if (item) storagePVDialog(item, ctx); return; }
+        if (act === "storage-pv-del") { item = findPV(id); if (item) storagePVDelete(item, ctx); return; }
+        if (act === "storage-pvc-edit") { item = findPVC(id); if (item) storagePVCDialog(item, ctx); return; }
+        if (act === "storage-pvc-del") { item = findPVC(id); if (item) storagePVCDelete(item, ctx); return; }
+        if (act === "storage-snapshot-del") { item = findSnapshot(id); if (item) storageSnapshotDelete(item, ctx); }
+      });
+      Array.prototype.forEach.call(el.querySelectorAll("[data-storage-new]"), function (btn) {
+        btn.onclick = function () {
+          if (!storageCanWrite()) return toastMsg("没有 storage:write 权限");
+          var kind = btn.getAttribute("data-storage-new");
+          if (kind === "class") storageClassDialog(null, ctx);
+          else if (kind === "pvc") storagePVCDialog(null, ctx);
+          else if (kind === "pv") storagePVDialog(null, ctx);
+          else if (kind === "snapshot") storageSnapshotDialog(ctx);
+        };
+      });
+      filterTable(box);
+    });
+  }
+
+  function clNetworkPage(el, seq, cur, box, view) {
+    var base = "/clusters/" + cur.id + "/network/";
+    var plan = networkResourcePlan(view);
+    var isService = plan.endpoint === "services";
+    Promise.all([wrap(apiGet(base + plan.endpoint))]).then(function (rs) {
+      if (!alive(seq, el) || !box) return;
+      if (rs[0].err && isAuthErr(rs[0].err)) return kickLogin();
+      var result = rs[0];
+      var services = isService && result.ok ? itemsOf(result.data) : [];
+      var ingresses = !isService && result.ok ? itemsOf(result.data) : [];
+      var api = xs();
+      var canWrite = !!(api && typeof api.can === "function" && api.can("network:write"));
+      var section = function (title, result, items, cols, rows, empty, tools) {
+        if (!result.ok) return panelHtml(title, "", '<p class="x-aerr" role="alert" style="margin:0">' + gEsc(errText(result.err)) + "</p>");
+        return panelHtml(title, items.length + " 个", items.length ? tableHtml(cols, rows) : '<p class="x-frac" style="margin:0">' + gEsc(empty) + "</p>", tools || "");
+      };
+      var serviceRows = services.map(function (x) {
+        var lb = (x.load_balancer || []).map(function (a) { return a.ip || a.hostname; }).filter(Boolean).join(", ");
+        var ports = (x.ports || []).map(function (p) { return (p.port || "") + "/" + (p.protocol || "TCP") + (p.nodePort ? "   node " + p.nodePort : ""); }).join(", ");
+        var cells = [
+          '<span class="x-name">' + gEsc(x.namespace + "/" + x.name) + "</span>", gEsc(x.type || "—"),
+          mono(x.cluster_ip || x.external_name || "—"), gEsc(ports || "—"),
+          gEsc(x.address_status === "pending" ? "等待负载均衡地址" : (lb || (x.external_ips || []).join(", ") || "—")),
+          gEsc(fmtTime(x.created_at))
+        ];
+        if (canWrite) cells.push('<span class="x-kacts">' +
+          actBtn("编辑", "network-service-edit", x.namespace + "/" + x.name, {
+            disabled: !x.uid || !x.resource_version, title: x.uid && x.resource_version ? "" : "缺少 UID/resource_version，请刷新"
+          }) +
+          actBtn("删除", "network-service-del", x.namespace + "/" + x.name, {
+            disabled: !x.uid || !x.resource_version, title: x.uid && x.resource_version ? "" : "缺少 UID/resource_version，请刷新"
+          }) + "</span>");
+        return cells;
+      });
+      var ingressRows = ingresses.map(function (x) {
+        var address = (x.load_balancer || []).map(function (a) { return a.ip || a.hostname; }).filter(Boolean).join(", ");
+        var cells = [
+          '<span class="x-name">' + gEsc(x.namespace + "/" + x.name) + "</span>",
+          gEsc((x.hosts || []).join(", ") || "*"), gEsc(x.class_name || "—"),
+          x.address_status === "ready" ? tagHtml(address || "Ready", "ok") : tagHtml("Pending", "warn"),
+          gEsc((x.tls || []).length + " 个 TLS"), gEsc(fmtTime(x.created_at))
+        ];
+        if (canWrite) cells.push('<span class="x-kacts">' +
+          actBtn("编辑", "network-ingress-edit", x.namespace + "/" + x.name, {
+            disabled: !x.uid || !x.resource_version, title: x.uid && x.resource_version ? "" : "缺少 UID/resource_version，请刷新"
+          }) +
+          actBtn("删除", "network-ingress-del", x.namespace + "/" + x.name, {
+            disabled: !x.uid || !x.resource_version, title: x.uid && x.resource_version ? "" : "缺少 UID/resource_version，请刷新"
+          }) + "</span>");
+        return cells;
+      });
+      var writeNote = canWrite
+        ? isService
+          ? '<p class="x-frac" style="margin:0 0 12px">Service 提供服务发现与四层转发；外部流量策略只控制节点间转发，不等同于 NetworkPolicy 的 Pod 通信规则。写操作按集群审批策略提交。</p>'
+          : '<p class="x-frac" style="margin:0 0 12px">此处配置域名与 HTTP/HTTPS 路由。NetworkPolicy 是作用于 Pod 的 L3/L4 访问控制，请在网络策略页面管理。</p>'
+        : '<p class="x-frac" style="margin:0 0 12px">当前账号没有 network:write 权限，页面为只读。</p>';
+      box.innerHTML = writeNote + (isService
+        ? section(plan.resource, result, services, ["命名空间 / 名称", "类型", "集群地址", "端口", "外部地址", "创建时间"].concat(canWrite ? ["操作"] : []),
+          serviceRows, "集群没有 Service。", canWrite ? '<button class="x-btn x-btn--pri" type="button" data-network-new="service">+ 新建 Service</button>' : "")
+        : section(plan.resource, result, ingresses, ["命名空间 / 名称", "主机", "IngressClass", "负载均衡状态", "TLS", "创建时间"].concat(canWrite ? ["操作"] : []),
+          ingressRows, "集群没有 Ingress。", canWrite ? '<button class="x-btn x-btn--pri" type="button" data-network-new="ingress">+ 新建 Ingress</button>' : ""));
+      var formError = function (bad, message, field) { bad(message, field); };
+      var parseArray = function (form, field, label, bad) {
+        var input = form.elements[field], value;
+        try { value = JSON.parse(String(input && input.value || "[]")); }
+        catch (e) { bad(label + " 必须是有效 JSON 数组", input); return null; }
+        if (!Array.isArray(value)) { bad(label + " 必须是 JSON 数组", input); return null; }
+        return value;
+      };
+      var networkDialog = function (kind, item) {
+        var editing = !!item, isService = kind === "service";
+        if (editing && (!item.uid || !item.resource_version)) return toastMsg("缺少 UID 或 resource_version，请刷新后重试");
+        var title = isService ? (editing ? "编辑 Service" : "创建 Service") : (editing ? "编辑 Ingress" : "创建 Ingress");
+        var namespace = editing ? item.namespace : "default", name = editing ? item.name : "";
+        var body;
+        if (isService) {
+          var serviceType = editing ? item.type : "ClusterIP";
+          var ports = (editing && item.ports) || [{ name: "", port: 80, targetPort: 80, protocol: "TCP" }];
+          body = '<div class="x-row2"><label><span class="x-req">命名空间</span><input class="x-input x-mono" name="namespace" required maxlength="63" value="' + gEsc(namespace) + '"' + (editing ? " readonly" : "") + " /></label>" +
+            '<label><span class="x-req">名称</span><input class="x-input x-mono" name="name" required maxlength="63" pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" value="' + gEsc(name) + '"' + (editing ? " readonly" : "") + " /></label></div>" +
+            '<div class="x-row2"><label><span>类型</span>' + selectHtml([{ v: "ClusterIP", t: "ClusterIP" }, { v: "NodePort", t: "NodePort" }, { v: "LoadBalancer", t: "LoadBalancer" }, { v: "ExternalName", t: "ExternalName" }], serviceType, 'name="type"') + "</label>" +
+            '<label><span>ExternalName（ExternalName 类型）</span><input class="x-input x-mono" name="external_name" value="' + gEsc(item && item.external_name || "") + '" /></label></div>' +
+            '<label><span>端口 JSON</span><textarea class="x-input x-mono" name="ports" rows="4" spellcheck="false">' + gEsc(JSON.stringify(ports, null, 2)) + "</textarea></label>" +
+            '<label><span>Pod 选择器 JSON</span><textarea class="x-input x-mono" name="selector" rows="3" spellcheck="false">' + gEsc(JSON.stringify(item && item.selector || {}, null, 2)) + "</textarea></label>" +
+            '<div class="x-row2"><label><span>外部 IP（逗号分隔）</span><input class="x-input x-mono" name="external_ips" value="' + gEsc((item && item.external_ips || []).join(", ")) + '" /></label>' +
+            '<label><span>LoadBalancer IP</span><input class="x-input x-mono" name="load_balancer_ip" value="' + gEsc(item && item.load_balancer_ip || "") + '" /></label></div>' +
+            '<div class="x-row2"><label><span>LoadBalancer Class</span><input class="x-input x-mono" name="load_balancer_class" value="' + gEsc(item && item.load_balancer_class || "") + '" /></label>' +
+            '<label><span>外部流量策略</span>' + selectHtml([{ v: "", t: "默认" }, { v: "Cluster", t: "Cluster" }, { v: "Local", t: "Local" }], item && item.external_traffic_policy || (serviceType === "NodePort" || serviceType === "LoadBalancer" ? "Cluster" : ""), 'name="external_traffic_policy"') + "</label></div>" +
+            '<label><span>Session Affinity</span>' + selectHtml([{ v: "None", t: "None" }, { v: "ClientIP", t: "ClientIP" }], item && item.session_affinity || "None", 'name="session_affinity"') + "</label>" +
+            '<div class="x-row2">' + storageLabelsField(item && item.labels || {}) + '<label><span>Annotations JSON</span><textarea class="x-input x-mono" name="annotations" rows="3">' + gEsc(JSON.stringify(item && item.annotations || {}, null, 2)) + "</textarea></label></div>";
+        } else {
+          var rules = (editing && item.rules) || [{
+            host: "",
+            http: { paths: [{ path: "/", pathType: "Prefix", backend: { service: { name: "", port: { number: 80 } } } }] }
+          }];
+          body = '<div class="x-row2"><label><span class="x-req">命名空间</span><input class="x-input x-mono" name="namespace" required maxlength="63" value="' + gEsc(namespace) + '"' + (editing ? " readonly" : "") + " /></label>" +
+            '<label><span class="x-req">名称</span><input class="x-input x-mono" name="name" required maxlength="253" value="' + gEsc(name) + '"' + (editing ? " readonly" : "") + " /></label></div>" +
+            '<label><span>IngressClass</span><input class="x-input x-mono" name="class_name" value="' + gEsc(item && item.class_name || "") + '" /></label>' +
+            '<label><span>路由规则 JSON</span><textarea class="x-input x-mono" name="rules" rows="9" spellcheck="false">' + gEsc(JSON.stringify(rules, null, 2)) + "</textarea></label>" +
+            '<label><span>TLS JSON</span><textarea class="x-input x-mono" name="tls" rows="4" spellcheck="false">' + gEsc(JSON.stringify(item && item.tls || [], null, 2)) + "</textarea></label>" +
+            '<div class="x-row2">' + storageLabelsField(item && item.labels || {}) + '<label><span>Annotations JSON</span><textarea class="x-input x-mono" name="annotations" rows="3">' + gEsc(JSON.stringify(item && item.annotations || {}, null, 2)) + "</textarea></label></div>";
+        }
+        body += '<label><span class="x-req">变更原因</span><input class="x-input" name="reason" required maxlength="500" /></label>';
+        formDialog(title + (editing ? "   " + namespace + "/" + name : ""), body, editing ? "保存变更" : "创建", function (f, bad) {
+          if (!f.reportValidity()) return;
+          var labels = storageJSONObject(f, "labels", "标签", bad);
+          var annotations = storageJSONObject(f, "annotations", "Annotations", bad);
+          if (labels === null || annotations === null) return;
+          var nextName = String(f.elements.name.value || "").trim();
+          var nextNamespace = String(f.elements.namespace.value || "").trim();
+          if (!nextName || !nextNamespace) return bad("名称与命名空间不能为空");
+          var payload, path, method;
+          if (isService) {
+            var selector = storageJSONObject(f, "selector", "Pod 选择器", bad);
+            if (selector === null) return;
+            var servicePorts = parseArray(f, "ports", "端口", bad);
+            if (servicePorts === null) return;
+            var nextType = f.elements.type.value;
+            if (nextType === "ExternalName") {
+              servicePorts = [];
+              selector = {};
+            }
+            payload = {
+              name: nextName, namespace: nextNamespace, type: nextType,
+              ports: servicePorts, selector: selector, external_ips: nextType === "ExternalName" ? [] : storageLines(f.elements.external_ips.value),
+              external_name: String(f.elements.external_name.value || "").trim(),
+              load_balancer_ip: String(f.elements.load_balancer_ip.value || "").trim(),
+              external_traffic_policy: nextType === "NodePort" || nextType === "LoadBalancer" ? f.elements.external_traffic_policy.value : "",
+              session_affinity: f.elements.session_affinity.value, labels: labels, annotations: annotations
+            };
+            if (nextType === "ExternalName") {
+              payload.load_balancer_ip = "";
+              payload.external_traffic_policy = "";
+            }
+            var lbClass = String(f.elements.load_balancer_class.value || "").trim();
+            if (lbClass) payload.load_balancer_class = lbClass;
+            if (editing) {
+              payload.uid = item.uid; payload.resource_version = item.resource_version;
+              path = base + "services/" + encodeURIComponent(item.namespace) + "/" + encodeURIComponent(item.name);
+              method = apiPut;
+            } else {
+              path = base + "services"; method = apiPost;
+            }
+          } else {
+            var ingressRules = parseArray(f, "rules", "Ingress 规则", bad);
+            var tls = parseArray(f, "tls", "TLS", bad);
+            if (ingressRules === null || tls === null) return;
+            payload = { name: nextName, namespace: nextNamespace, rules: ingressRules, tls: tls, labels: labels, annotations: annotations };
+            var ingressClass = String(f.elements.class_name.value || "").trim();
+            if (ingressClass) payload.class_name = ingressClass;
+            if (editing) {
+              payload.uid = item.uid; payload.resource_version = item.resource_version;
+              path = base + "ingresses/" + encodeURIComponent(item.namespace) + "/" + encodeURIComponent(item.name);
+              method = apiPut;
+            } else {
+              path = base + "ingresses"; method = apiPost;
+            }
+          }
+          storageSubmit(method(path + (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), payload),
+            (editing ? "已提交更新 " : "已提交创建 ") + nextNamespace + "/" + nextName);
+        }, !editing ? (isService
+          ? aiDraftConfig("k8s.service.create", "在 prod 创建 api Service，选择器 app=api，端口 80 转发到 8080，类型 ClusterIP。", {
+            namespace: aiField("string", "目标 Kubernetes 命名空间", { maxLength: 63 }),
+            name: aiField("string", "Service 名称，使用小写字母和短横线", { maxLength: 63 }),
+            type: aiField("enum", "Service 类型", { values: ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"] }),
+            external_name: aiField("string", "仅 ExternalName 使用的外部 DNS 名称"),
+            ports: aiField("array", "Kubernetes Service 端口对象数组，字段包含 port、targetPort、protocol、name；ExternalName 留空", { ui: "json" }),
+            selector: aiField("string_map", "匹配后端 Pod 的标签选择器；ExternalName 留空", { ui: "json" }),
+            external_ips: aiField("array", "可选的外部 IP 地址列表", { ui: "lines" }),
+            load_balancer_ip: aiField("string", "LoadBalancer 服务申请的外部 IP"),
+            load_balancer_class: aiField("string", "集群中已安装的负载均衡器 class"),
+            external_traffic_policy: aiField("enum", "外部流量转发策略", { values: ["", "Cluster", "Local"] }),
+            session_affinity: aiField("enum", "客户端会话亲和性", { values: ["None", "ClientIP"] }),
+            labels: aiField("string_map", "Kubernetes 标签键值对象", { ui: "json" }),
+            annotations: aiField("string_map", "Kubernetes 注解键值对象", { ui: "json" })
+          }, true)
+          : aiDraftConfig("k8s.ingress.create", "发布 api.example.com 的 /v1 路径到 prod/api 服务 8080 端口，并启用 api-tls。", {
+            namespace: aiField("string", "目标 Kubernetes 命名空间", { maxLength: 63 }),
+            name: aiField("string", "Ingress 名称，使用小写字母和短横线", { maxLength: 253 }),
+            class_name: aiField("string", "集群中已安装并配置的 IngressClass 名称"),
+            rules: aiField("array", "networking.k8s.io/v1 规则数组，后端仅引用已存在的 Service", { ui: "json" }),
+            tls: aiField("array", "TLS 配置数组，只引用已存在的 TLS Secret 名称，不包含证书内容", { ui: "json" }),
+            labels: aiField("string_map", "Kubernetes 标签键值对象", { ui: "json" }),
+            annotations: aiField("string_map", "Ingress 控制器支持的注解键值对象", { ui: "json" })
+          }, true)) : null);
+      };
+      var networkDelete = function (kind, item) {
+        if (!item || !item.uid || !item.resource_version) return toastMsg("缺少 UID 或 resource_version，请刷新后重试");
+        var key = item.namespace + "/" + item.name, isService = kind === "service";
+        var body = '<p>确认删除 ' + (isService ? "Service" : "Ingress") + ' <b>' + gEsc(key) + "</b>？</p>" +
+          '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="confirm" required />我确认删除该资源</label>';
+        formDialog("删除 " + (isService ? "Service" : "Ingress") + "   " + key, body, "删除", function (f) {
+          if (!f.reportValidity()) return;
+          storageSubmit(apiDel(base + (isService ? "services/" : "ingresses/") +
+            encodeURIComponent(item.namespace) + "/" + encodeURIComponent(item.name), {
+              uid: item.uid, resource_version: item.resource_version
+            }), "已提交删除 " + key);
+        });
+      };
+      bindActs(box, function (act, id) {
+        var rows = act.indexOf("service") >= 0 ? services : ingresses;
+        var item = rows.find(function (x) { return x.namespace + "/" + x.name === id; });
+        if (!item) return;
+        if (act === "network-service-edit") networkDialog("service", item);
+        else if (act === "network-service-del") networkDelete("service", item);
+        else if (act === "network-ingress-edit") networkDialog("ingress", item);
+        else if (act === "network-ingress-del") networkDelete("ingress", item);
+      });
+      Array.prototype.forEach.call(box.querySelectorAll("[data-network-new]"), function (button) {
+        button.onclick = function () {
+          if (!canWrite) return toastMsg("没有 network:write 权限");
+          var kind = button.getAttribute("data-network-new");
+          networkDialog(kind, null);
+        };
+      });
+      filterTable(box);
+    });
+  }
+
+  function clConfigPage(el, seq, cur, box) {
+    var base = "/clusters/" + cur.id + "/config/";
+    Promise.all([
+      wrap(apiGet(base + "configmaps")),
+      wrap(apiGet(base + "secrets"))
+    ]).then(function (rs) {
+      if (!alive(seq, el) || !box) return;
+      for (var i = 0; i < rs.length; i++) if (rs[i].err && isAuthErr(rs[i].err)) return kickLogin();
+      var configMaps = rs[0].ok ? itemsOf(rs[0].data) : [];
+      var secrets = rs[1].ok ? itemsOf(rs[1].data) : [];
+      var api = xs();
+      var canWrite = !!(api && typeof api.can === "function" && api.can("config:write"));
+      var configRows = configMaps.map(function (x, i) { return [
+        '<span class="x-name">' + gEsc(x.namespace + "/" + x.name) + "</span>",
+        gEsc((x.keys || []).join(", ") || "无键"), gEsc((x.keys || []).length + " 个"),
+        x.immutable ? "不可变" : "可编辑", gEsc(fmtTime(x.created_at)),
+        '<span class="x-kacts">' + actBtn("查看数据", "cm-detail", String(i)) +
+          (canWrite ? actBtn("编辑", "cm-edit", String(i), {
+            disabled: !x.uid || !x.resource_version,
+            title: x.uid && x.resource_version ? (x.immutable ? "不可变数据只读，可维护标签和注解" : "") : "缺少 UID/resource_version，请刷新"
+          }) + actBtn("删除", "cm-del", String(i), {
+            disabled: !x.uid || !x.resource_version, title: x.uid && x.resource_version ? "" : "缺少 UID/resource_version，请刷新"
+          }) : "") + "</span>"
+      ]; });
+      var secretRows = secrets.map(function (x) { return [
+        '<span class="x-name">' + gEsc(x.namespace + "/" + x.name) + "</span>",
+        gEsc(x.type || "Opaque"), gEsc((x.keys || []).join(", ") || "无键"),
+        gEsc((x.keys || []).length + " 个"), x.immutable ? "不可变" : "可编辑", gEsc(fmtTime(x.created_at)),
+        canWrite ? '<span class="x-kacts">' + actBtn("编辑", "secret-edit", String(x.namespace + "/" + x.name), {
+          disabled: !x.uid || !x.resource_version,
+          title: x.uid && x.resource_version ? (x.immutable ? "不可变数据只读，可维护标签和注解" : "") : "缺少 UID/resource_version，请刷新"
+        }) + actBtn("删除", "secret-del", String(x.namespace + "/" + x.name), {
+          disabled: !x.uid || !x.resource_version, title: x.uid && x.resource_version ? "" : "缺少 UID/resource_version，请刷新"
+        }) + "</span>" : ""
+      ]; });
+      var section = function (title, result, items, cols, rows, empty, tools) {
+        if (!result.ok) return panelHtml(title, "", '<p class="x-aerr" role="alert" style="margin:0">' + gEsc(errText(result.err)) + "</p>");
+        return panelHtml(title, items.length + " 个", items.length ? tableHtml(cols, rows) : '<p class="x-frac" style="margin:0">' + gEsc(empty) + "</p>", tools || "");
+      };
+      var writeNote = canWrite
+        ? '<p class="x-frac" style="margin:0 0 12px">ConfigMap 与 Secret 变更经集群审批网关提交。Secret API 只返回键名等元数据，现有值不会回显。</p>'
+        : '<p class="x-frac" style="margin:0 0 12px">当前账号没有 config:write 权限，页面为只读。</p>';
+      box.innerHTML = writeNote +
+        section("ConfigMap", rs[0], configMaps,
+          ["命名空间 / 名称", "键", "数量", "状态", "创建时间", "操作"], configRows,
+          "集群没有 ConfigMap。", canWrite ? '<button class="x-btn x-btn--pri" type="button" data-config-new="configmap">+ 新建 ConfigMap</button>' : "") +
+        section("Secret", rs[1], secrets,
+          ["命名空间 / 名称", "类型", "键名（仅元数据）", "数量", "状态", "创建时间"].concat(canWrite ? ["操作"] : []), secretRows,
+          "集群没有 Secret。", canWrite ? '<button class="x-btn x-btn--pri" type="button" data-config-new="secret">+ 新建 Secret</button>' : "");
+      var parseData = function (form, field, label, bad) {
+        return storageJSONObject(form, field, label, bad);
+      };
+      var configMapDialog = function (item) {
+        var editing = !!item;
+        if (editing && (!item.uid || !item.resource_version)) return toastMsg("缺少 UID 或资源版本，请刷新后重试");
+        var namespace = editing ? item.namespace : "default";
+        var name = editing ? item.name : "";
+        var dataReadonly = editing && item.immutable ? " readonly" : "";
+        var body =
+          '<div class="x-row2"><label><span class="x-req">命名空间</span><input class="x-input x-mono" name="namespace" required maxlength="63" value="' + gEsc(namespace) + '"' + (editing ? " readonly" : "") + " /></label>" +
+          '<label><span class="x-req">名称</span><input class="x-input x-mono" name="name" required maxlength="253" value="' + gEsc(name) + '"' + (editing ? " readonly" : "") + " /></label></div>" +
+          '<label><span>Data JSON</span><textarea class="x-input x-mono" name="data" rows="6" spellcheck="false"' + dataReadonly + ">" + gEsc(JSON.stringify(item && item.data || {}, null, 2)) + "</textarea></label>" +
+          '<label><span>BinaryData JSON（Base64）</span><textarea class="x-input x-mono" name="binary_data" rows="3" spellcheck="false"' + dataReadonly + ">" + gEsc(JSON.stringify(item && item.binary_data || {}, null, 2)) + "</textarea></label>" +
+          '<div class="x-row2">' + storageLabelsField(item && item.labels || {}) +
+          '<label><span>Annotations JSON</span><textarea class="x-input x-mono" name="annotations" rows="3" spellcheck="false">' + gEsc(JSON.stringify(item && item.annotations || {}, null, 2)) + "</textarea></label></div>" +
+          '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="immutable"' + (item && item.immutable ? " checked disabled" : "") + " />创建为不可变（不可变后不能修改数据）</label>" +
+          (item && item.immutable ? '<p class="x-frac">不可变 ConfigMap 仅允许维护标签与注解，数据字段只读。</p>' : "") +
+          '<label><span>变更原因</span><input class="x-input" name="reason" maxlength="500" /></label>';
+        formDialog(editing ? "编辑 ConfigMap   " + namespace + "/" + name : "创建 ConfigMap", body, editing ? "保存变更" : "创建", function (f, bad) {
+          if (!f.reportValidity()) return;
+          var data = parseData(f, "data", "Data", bad);
+          var binaryData = parseData(f, "binary_data", "BinaryData", bad);
+          var labels = parseData(f, "labels", "标签", bad);
+          var annotations = parseData(f, "annotations", "Annotations", bad);
+          if (data === null || binaryData === null || labels === null || annotations === null) return;
+          var namespace = String(f.elements.namespace.value || "").trim();
+          var name = String(f.elements.name.value || "").trim();
+          if (!namespace || !name) return bad("名称与命名空间不能为空");
+          Object.keys(binaryData).forEach(function (key) {
+            if (Object.prototype.hasOwnProperty.call(data, key)) data = null;
+          });
+          if (data === null) return bad("同一键不能同时出现在 Data 与 BinaryData");
+          var payload = {
+            namespace: namespace, name: name, data: data, binary_data: binaryData,
+            labels: labels, annotations: annotations, immutable: !!f.elements.immutable.checked
+          };
+          var path = base + "configmaps" + (editing ? "/" + encodeURIComponent(namespace) + "/" + encodeURIComponent(name) : "");
+          if (editing) {
+            payload.uid = item.uid;
+            payload.resource_version = item.resource_version;
+          }
+          var method = editing ? apiPut : apiPost;
+          storageSubmit(method(path + (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), payload),
+            (editing ? "已提交更新 " : "已提交创建 ") + namespace + "/" + name);
+        }, !editing ? aiDraftConfig("k8s.configmap.create", "在 prod 创建 web-settings ConfigMap，设置 LOG_LEVEL=info 和 APP_PORT=8080，并添加 team=web 标签。", {
+          namespace: aiField("string", "目标 Kubernetes 命名空间", { maxLength: 63 }),
+          name: aiField("string", "ConfigMap 名称，使用小写字母和短横线", { maxLength: 253 }),
+          data: aiField("string_map", "非敏感的 ConfigMap 文本配置键值对象；不要放密码、令牌或凭据", { ui: "json" }),
+          labels: aiField("string_map", "Kubernetes 标签键值对象", { ui: "json" }),
+          annotations: aiField("string_map", "Kubernetes 注解键值对象", { ui: "json" }),
+          immutable: aiField("boolean", "是否创建为不可变 ConfigMap")
+        }, true) : null);
+      };
+      var deleteConfigMap = function (item) {
+        if (!item.uid || !item.resource_version) return toastMsg("缺少 UID 或 resource_version，请刷新后重试");
+        var key = item.namespace + "/" + item.name;
+        formDialog("删除 ConfigMap   " + key,
+          '<p>确认删除 <b>' + gEsc(key) + "</b>？引用此配置的工作负载可能受到影响。</p>" +
+          '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="confirm" required />我确认删除该 ConfigMap</label>' +
+          '<label><span>变更原因</span><input class="x-input" name="reason" maxlength="500" /></label>', "删除", function (f) {
+            if (!f.reportValidity()) return;
+            storageSubmit(apiDel(base + "configmaps/" + encodeURIComponent(item.namespace) + "/" + encodeURIComponent(item.name) +
+              (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), {
+                uid: item.uid, resource_version: item.resource_version
+              }), "已提交删除 " + key);
+          });
+      };
+      var secretDialog = function (item) {
+        var editing = !!item;
+        if (editing && (!item.uid || !item.resource_version)) return toastMsg("缺少 UID 或资源版本，请刷新后重试");
+        var namespace = editing ? item.namespace : "default";
+        var name = editing ? item.name : "";
+        var secretDataReadonly = editing && item.immutable ? " readonly" : "";
+        var body =
+          '<div class="x-row2"><label><span class="x-req">命名空间</span><input class="x-input x-mono" name="namespace" required maxlength="63" value="' + gEsc(namespace) + '"' + (editing ? " readonly" : "") + " /></label>" +
+          '<label><span class="x-req">名称</span><input class="x-input x-mono" name="name" required maxlength="253" value="' + gEsc(name) + '"' + (editing ? " readonly" : "") + " /></label></div>" +
+          '<label><span>类型</span>' + (editing
+            ? '<input class="x-input x-mono" name="type" value="' + gEsc(item.type || "Opaque") + '" readonly />'
+            : '<input class="x-input x-mono" name="type" value="Opaque" maxlength="253" />') + "</label>" +
+          '<label><span>' + (editing ? "新增或替换键值 JSON" : "键值 JSON") + '</span><textarea class="x-input x-mono" name="data" rows="5" spellcheck="false"' + secretDataReadonly + '>{}</textarea></label>' +
+          (editing ? '<label><span>删除键（逗号或换行分隔）</span><textarea class="x-input x-mono" name="delete_keys" rows="2" spellcheck="false"' + secretDataReadonly + "></textarea></label>" : "") +
+          '<div class="x-row2">' + storageLabelsField(item && item.labels || {}) +
+          '<label><span>Annotations JSON</span><textarea class="x-input x-mono" name="annotations" rows="3" spellcheck="false">' + gEsc(JSON.stringify(item && item.annotations || {}, null, 2)) + "</textarea></label></div>" +
+          (editing ? '<p class="x-frac">' + (item.immutable ? "此 Secret 不可变，仅可维护标签与注解。" : "Secret 旧值不会回显；未填写的键保持原值。仅填写本次新增/替换的键，并单独指定需要删除的键。") + "</p>" :
+            '<p class="x-frac">Secret 值仅在本次提交中输入，接口只返回键名等元数据。</p>') +
+          (editing ? '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="confirm_patch" required />我确认按上述增量修改 Secret</label>' : "") +
+          '<label><span>变更原因</span><input class="x-input" name="reason" maxlength="500" /></label>';
+        formDialog(editing ? "编辑 Secret   " + namespace + "/" + name : "创建 Secret", body, editing ? "提交修改" : "创建", function (f, bad) {
+          if (!f.reportValidity()) return;
+          var data = parseData(f, "data", "Secret 数据", bad);
+          var labels = parseData(f, "labels", "标签", bad);
+          var annotations = parseData(f, "annotations", "Annotations", bad);
+          if (data === null || labels === null || annotations === null) return;
+          var namespace = String(f.elements.namespace.value || "").trim();
+          var name = String(f.elements.name.value || "").trim();
+          var type = String(f.elements.type.value || "Opaque").trim();
+          if (!namespace || !name || !type) return bad("名称、命名空间和类型不能为空");
+          var deleteKeys = editing ? storageLines(f.elements.delete_keys.value) : [];
+          if (editing) {
+            for (var i = 0; i < deleteKeys.length; i++) {
+              if (Object.prototype.hasOwnProperty.call(data, deleteKeys[i])) return bad("同一 Secret 键不能同时替换和删除");
+            }
+          }
+          var payload = { namespace: namespace, name: name, type: type, data: data, labels: labels, annotations: annotations };
+          if (editing) {
+            payload.uid = item.uid;
+            payload.resource_version = item.resource_version;
+            payload.merge = true;
+            payload.delete_keys = deleteKeys;
+          }
+          var path = base + "secrets" + (editing ? "/" + encodeURIComponent(namespace) + "/" + encodeURIComponent(name) : "");
+          storageSubmit((editing ? apiPut : apiPost)(path +
+            (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), payload),
+          (editing ? "已提交更新 " : "已提交创建 ") + namespace + "/" + name);
+        }, !editing ? aiDraftConfig("k8s.secret.create", "创建名为 payment-auth 的 Opaque Secret，供 prod 中的 payment 应用引用。不要填写密钥值。", {
+          namespace: aiField("string", "目标 Kubernetes 命名空间", { maxLength: 63 }),
+          name: aiField("string", "Secret 名称，使用小写字母和短横线", { maxLength: 253 }),
+          type: aiField("string", "Secret 类型，如 Opaque、kubernetes.io/tls 或 kubernetes.io/dockerconfigjson", { maxLength: 253 }),
+          labels: aiField("string_map", "Kubernetes 标签键值对象", { ui: "json" })
+        }, true, true) : null);
+      };
+      var deleteSecret = function (item) {
+        if (!item.uid || !item.resource_version) return toastMsg("缺少 UID 或 resource_version，请刷新后重试");
+        var key = item.namespace + "/" + item.name;
+        formDialog("删除 Secret   " + key,
+          '<p>确认删除 <b>' + gEsc(key) + "</b>？引用此 Secret 的应用可能无法启动或访问凭据。</p>" +
+          '<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="confirm" required />我确认删除该 Secret</label>' +
+          '<label><span>变更原因</span><input class="x-input" name="reason" maxlength="500" /></label>', "删除", function (f) {
+            if (!f.reportValidity()) return;
+            storageSubmit(apiDel(base + "secrets/" + encodeURIComponent(item.namespace) + "/" + encodeURIComponent(item.name) +
+              (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), {
+                uid: item.uid, resource_version: item.resource_version
+              }), "已提交删除 " + key);
+          });
+      };
+      bindActs(box, function (act, id) {
+        if (act.indexOf("cm-") === 0) {
+          var item = configMaps[Number(id)];
+          if (!item) return;
+          if (act === "cm-detail") {
+            var body = '<pre class="x-mono" style="max-height:64vh;overflow:auto;white-space:pre-wrap;margin:0">' +
+              gEsc(prettyJSON({ data: item.data || {}, binary_data_base64: item.binary_data || {} })) + "</pre>";
+            var foot = '<button class="x-btn" type="button" data-close>关闭</button>';
+            if (typeof dlg === "function") dlg("ConfigMap   " + gEsc(item.namespace + "/" + item.name), body, foot);
+            else openModal("ConfigMap", body, foot);
+          } else if (act === "cm-edit") configMapDialog(item);
+          else if (act === "cm-del") deleteConfigMap(item);
+          return;
+        }
+        var secret = secrets.find(function (x) { return x.namespace + "/" + x.name === id; });
+        if (!secret) return;
+        if (act === "secret-edit") secretDialog(secret);
+        else if (act === "secret-del") deleteSecret(secret);
+      });
+      Array.prototype.forEach.call(box.querySelectorAll("[data-config-new]"), function (button) {
+        button.onclick = function () {
+          if (!canWrite) return toastMsg("没有 config:write 权限");
+          if (button.getAttribute("data-config-new") === "secret") secretDialog(null);
+          else configMapDialog(null);
+        };
+      });
+      filterTable(box);
+    });
+  }
+
+  function clNodeGroupsPage(el, seq, cur, box) {
+    apiGet("/clusters/" + cur.id + "/node-groups").then(function (data) {
+      if (!alive(seq, el) || !box) return;
+      var items = itemsOf(data);
+      var api = xs();
+      var canWrite = !!(api && typeof api.can === "function" && api.can("node:write"));
+      var rows = items.map(function (x) {
+        var cells = [
+        '<span class="x-name">' + gEsc(x.name || "未设置") + "</span>",
+        gEsc(x.label_value || "—"), gEsc((x.nodes || []).length + " 个"),
+        gEsc(x.ready + " Ready"), gEsc(x.unschedulable + " 已封锁"),
+        gEsc((x.roles || []).join(", ") || "—"), gEsc((x.taints || []).join(", ") || "—")
+        ];
+        if (canWrite) cells.push('<span class="x-kacts">' +
+          actBtn("批量标签", "nodegroup-label", x.name, { disabled: !(x.nodes || []).length }) +
+          actBtn("新增污点", "nodegroup-taint-add", x.name, { disabled: !(x.nodes || []).length }) +
+          actBtn("移除污点", "nodegroup-taint-remove", x.name, { disabled: !(x.nodes || []).length }) + "</span>");
+        return cells;
+      });
+      box.innerHTML = panelHtml("节点分组", gEsc(data && data.label || "node.xingshu.com/pool"),
+        (canWrite
+          ? '<p class="x-frac" style="margin:0 0 12px">支持按当前分组批量维护节点标签与污点；写操作经集群审批网关提交。' + gEsc(data && data.note || "") + "</p>"
+          : '<p class="x-frac" style="margin:0 0 12px">当前账号没有 node:write 权限。' + gEsc(data && data.note || "") + "</p>") +
+        (items.length ? tableHtml(["分组", "标签值", "节点数", "就绪", "调度状态", "角色", "污点"].concat(canWrite ? ["操作"] : []), rows) :
+          emptyPanel("没有节点", "节点接入后按标签汇总。")));
+      var selectedGroup = function (name) {
+        return items.find(function (x) { return x.name === name; }) || null;
+      };
+      var batchDialog = function (action, group) {
+        var nodes = (group && group.nodes || []).slice();
+        if (!nodes.length) return toastMsg("该分组没有可操作节点");
+        var isLabels = action === "labels";
+        var isAdd = action === "taint-add";
+        var op = isLabels ? "labels" : "taints";
+        var form = isLabels
+          ? '<label><span class="x-req">标签 JSON</span><textarea class="x-input x-mono" name="labels" rows="4" spellcheck="false">{"' + gEsc(data.label || "node.xingshu.com/pool") + '":"' + gEsc(group.label_value || "") + '"}</textarea></label>' +
+            '<p class="x-frac">将标签合并到所选节点；将某个值设置为 null 可移除该标签。</p>'
+          : '<div class="x-row2"><label><span class="x-req">污点键</span><input class="x-input x-mono" name="key" required maxlength="253" /></label>' +
+            '<label><span>污点值</span><input class="x-input x-mono" name="value" maxlength="63" /></label></div>' +
+            '<label><span class="x-req">Effect</span>' + selectHtml([
+              { v: "NoSchedule", t: "NoSchedule" }, { v: "PreferNoSchedule", t: "PreferNoSchedule" }, { v: "NoExecute", t: "NoExecute" }
+            ], "NoSchedule", 'name="effect"') + "</label>" +
+            '<p class="x-frac">' + (isAdd
+              ? "新增污点会保留节点上的其他污点；如同键与 Effect 已存在，则更新其值。"
+              : "仅移除键、值与 Effect 完全匹配的污点，其他污点保持不变。") + "</p>";
+        formDialog((isLabels ? "批量设置节点标签" : (isAdd ? "批量新增节点污点" : "批量移除节点污点")) + "   " + gEsc(group.name),
+          '<p>所选节点：' + gEsc(nodes.join(", ")) + "</p>" + form +
+          '<label><span>变更原因</span><input class="x-input" name="reason" maxlength="500" /></label>',
+          "提交", function (f, bad) {
+            if (!f.reportValidity()) return;
+            var path = "/clusters/" + cur.id + "/node-batch-" + op;
+            if (isLabels) {
+              var input = f.elements.labels, labels;
+              try { labels = JSON.parse(String(input.value || "")); }
+              catch (e) { return bad("标签必须是有效 JSON", input); }
+              if (!labels || Array.isArray(labels) || typeof labels !== "object" || !Object.keys(labels).length) {
+                return bad("标签必须是非空 JSON 对象", input);
+              }
+              var invalid = Object.keys(labels).find(function (key) {
+                return labels[key] !== null && typeof labels[key] !== "string";
+              });
+              if (invalid !== undefined) return bad("标签值必须是字符串或 null", input);
+              storageSubmit(apiPost(path +
+                (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), {
+                  nodes: nodes, labels: labels
+                }), "已提交 " + nodes.length + " 个节点的标签变更");
+              return;
+            }
+            var taint = {
+              key: String(f.elements.key.value || "").trim(),
+              value: String(f.elements.value.value || "").trim(),
+              effect: f.elements.effect.value
+            };
+            if (!taint.key) return bad("污点键不能为空", f.elements.key);
+            var items = nodes.map(function (name) {
+              return { name: name, add: isAdd ? [taint] : [], remove: isAdd ? [] : [taint] };
+            });
+            storageSubmit(apiPut(path +
+              (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), {
+                items: items
+              }), "已提交 " + nodes.length + " 个节点的污点变更");
+          });
+      };
+      bindActs(box, function (act, name) {
+        if (!canWrite) return toastMsg("没有 node:write 权限");
+        var group = selectedGroup(name);
+        if (!group) return;
+        if (act === "nodegroup-label") batchDialog("labels", group);
+        else if (act === "nodegroup-taint-add") batchDialog("taint-add", group);
+        else if (act === "nodegroup-taint-remove") batchDialog("taint-remove", group);
+      });
+      filterTable(box);
+    }, function (err) {
+      if (!alive(seq, el) || !box) return;
+      if (isAuthErr(err)) return kickLogin();
+      box.innerHTML = errorPanel(err);
+    });
+  }
+
+  function clHpaPage(el, seq, cur, box) {
+    var base = "/clusters/" + cur.id + "/hpa";
+    Promise.all([wrap(apiGet(base)), wrap(apiGet("/clusters/" + cur.id + "/namespaces"))]).then(function (rs) {
+      if (!alive(seq, el) || !box) return;
+      var result = rs[0], items = result.ok ? itemsOf(result.data) : [];
+      if (result.err && isAuthErr(result.err)) return kickLogin();
+      var api = xs(), canWrite = !!(api && typeof api.can === "function" && api.can("workload:write"));
+      var rows = items.map(function (x) {
+        var min = x.spec && x.spec.minReplicas != null ? x.spec.minReplicas : "—";
+        var max = x.spec && x.spec.maxReplicas != null ? x.spec.maxReplicas : "—";
+        var current = x.status && x.status.currentReplicas != null ? x.status.currentReplicas : "—";
+        var desired = x.status && x.status.desiredReplicas != null ? x.status.desiredReplicas : "—";
+        var target = x.spec && x.spec.scaleTargetRef ? (x.spec.scaleTargetRef.kind + "/" + x.spec.scaleTargetRef.name) : "—";
+        var cells = ['<span class="x-name">' + gEsc(x.namespace + "/" + x.name) + "</span>", gEsc(target),
+          gEsc(min + " - " + max), gEsc(current + " / " + desired), gEsc((x.spec && x.spec.metrics || []).length + " 项"),
+          gEsc(fmtTime(x.created_at))];
+        if (canWrite) cells.push('<span class="x-kacts">' + actBtn("编辑", "hpa-edit", x.namespace + "/" + x.name,
+          { disabled: !x.uid || !x.resource_version }) + actBtn("删除", "hpa-del", x.namespace + "/" + x.name,
+          { disabled: !x.uid || !x.resource_version }) + "</span>");
+        return cells;
+      });
+      var note = canWrite ? "HPA 使用 autoscaling/v2，写操作经过集群审批网关。" : "当前账号没有 workload:write 权限，页面为只读。";
+      box.innerHTML = '<p class="x-frac" style="margin:0 0 12px">' + gEsc(note) + "</p>" +
+        panelHtml("HorizontalPodAutoscaler", result.ok ? items.length + " 个" : "",
+          result.ok ? (items.length ? tableHtml(["命名空间 / 名称", "目标", "副本范围", "当前 / 期望", "指标", "创建时间"].concat(canWrite ? ["操作"] : []), rows) :
+            '<p class="x-frac" style="margin:0">集群没有 HPA。</p>') : '<p class="x-aerr" role="alert">' + gEsc(errText(result.err)) + "</p>",
+          canWrite ? '<button class="x-btn x-btn--pri" type="button" data-hpa-new>+ 新建 HPA</button>' : "");
+      var find = function (key) { return items.find(function (x) { return x.namespace + "/" + x.name === key; }); };
+      var hpaDialog = function (item) {
+        var edit = !!item, spec = item && item.spec || { scaleTargetRef: { apiVersion: "apps/v1", kind: "Deployment", name: "" }, minReplicas: 1, maxReplicas: 3, metrics: [] };
+        var body = '<div class="x-row2"><label><span class="x-req">命名空间</span><input class="x-input x-mono" name="namespace" required value="' + gEsc(edit ? item.namespace : "default") + '"' + (edit ? " readonly" : "") + ' /></label>' +
+          '<label><span class="x-req">名称</span><input class="x-input x-mono" name="name" required value="' + gEsc(edit ? item.name : "") + '"' + (edit ? " readonly" : "") + " /></label></div>" +
+          '<label><span class="x-req">spec JSON（autoscaling/v2）</span><textarea class="x-input x-mono" name="spec" rows="12" required spellcheck="false">' + gEsc(JSON.stringify(spec, null, 2)) + "</textarea></label>" +
+          '<label><span>标签 JSON</span><textarea class="x-input x-mono" name="labels" rows="3" spellcheck="false">' + gEsc(JSON.stringify(item && item.labels || {}, null, 2)) + "</textarea></label>" +
+          '<label><span>变更原因</span><input class="x-input" name="reason" maxlength="500" /></label>' +
+          '<p class="x-frac">示例指标：Resource CPU/Memory 或 Pods；只提交 Kubernetes 原生 HPA，不生成 VPA 推荐。</p>';
+        formDialog(edit ? "编辑 HPA   " + item.namespace + "/" + item.name : "创建 HPA", body, edit ? "保存" : "创建", function (f, bad) {
+          if (!f.reportValidity()) return;
+          var parsed, labels;
+          try { parsed = JSON.parse(f.elements.spec.value); labels = JSON.parse(f.elements.labels.value || "{}"); } catch (e) { return bad("spec 与标签必须是有效 JSON"); }
+          if (!parsed || !parsed.scaleTargetRef || !parsed.metrics || !parsed.metrics.length) return bad("spec.scaleTargetRef 与至少一个 metrics 必填");
+          var payload = { namespace: f.elements.namespace.value.trim(), name: f.elements.name.value.trim(), spec: parsed, labels: labels };
+          if (edit) { payload.uid = item.uid; payload.resource_version = item.resource_version; }
+          var path = base + (edit ? "/" + encodeURIComponent(item.namespace) + "/" + encodeURIComponent(item.name) : "");
+          storageSubmit(edit ? apiPut(path + (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), payload) :
+            apiPost(path + (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), payload),
+            edit ? "已提交更新 HPA" : "已提交创建 HPA");
+        }, !edit ? aiDraftConfig("k8s.hpa.create", "在 prod 创建 web-hpa，目标 Deployment/web，最小 2 最大 6，按 CPU 70% 扩缩容。", {
+          namespace: aiField("string", "目标 Kubernetes 命名空间"), name: aiField("string", "HPA 名称"),
+          spec: aiField("object", "autoscaling/v2 HPA spec，必须包含 scaleTargetRef、minReplicas、maxReplicas、metrics", { ui: "json" }),
+          labels: aiField("string_map", "Kubernetes 标签", { ui: "json" })
+        }, true) : null);
+      };
+      bindActs(box, function (act, id) {
+        var item = find(id);
+        if (!item || !canWrite) return;
+        if (act === "hpa-edit") return hpaDialog(item);
+        if (act === "hpa-del") formDialog("删除 HPA   " + id, '<p>确认删除该 HPA？工作负载不会被删除。</p><label><input type="checkbox" name="confirm" required />我确认删除</label><label><span>变更原因</span><input class="x-input" name="reason" /></label>', "删除", function (f) {
+          if (!f.reportValidity()) return;
+          storageSubmit(apiDel(base + "/" + encodeURIComponent(item.namespace) + "/" + encodeURIComponent(item.name) + (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), { uid: item.uid, resource_version: item.resource_version }), "已提交删除 HPA");
+        });
+      });
+      var newBtn = box.querySelector("[data-hpa-new]"); if (newBtn) newBtn.onclick = function () { hpaDialog(null); };
+      filterTable(box);
+    }, function (err) { if (alive(seq, el) && box) box.innerHTML = errorPanel(err); });
+  }
+
+  function clCronPage(el, seq, cur, box) {
+    var base = "/clusters/" + cur.id + "/cronjobs";
+    Promise.all([wrap(apiGet(base)), wrap(apiGet("/clusters/" + cur.id + "/namespaces"))]).then(function (rs) {
+      if (!alive(seq, el) || !box) return;
+      var result = rs[0], items = result.ok ? itemsOf(result.data) : [];
+      if (result.err && isAuthErr(result.err)) return kickLogin();
+      var api = xs(), canWrite = !!(api && typeof api.can === "function" && api.can("workload:write"));
+      var rows = items.map(function (x) {
+        var spec = x.spec || {}, status = x.status || {}, suspended = spec.suspend ? "已暂停" : "运行中";
+        var cells = ['<span class="x-name">' + gEsc(x.namespace + "/" + x.name) + "</span>", mono(spec.schedule || "—"), gEsc(suspended),
+          gEsc((status.active || []).length + " 个运行中"), gEsc(status.lastScheduleTime ? fmtTime(status.lastScheduleTime) : "—"), gEsc(fmtTime(x.created_at))];
+        cells.push('<span class="x-kacts">' + actBtn("运行历史", "cron-history", x.namespace + "/" + x.name) +
+          (canWrite ? actBtn("编辑", "cron-edit", x.namespace + "/" + x.name, { disabled: !x.uid || !x.resource_version }) +
+            actBtn("立即运行", "cron-run", x.namespace + "/" + x.name, { disabled: !x.uid || !x.resource_version }) +
+            actBtn("删除", "cron-del", x.namespace + "/" + x.name, { disabled: !x.uid || !x.resource_version }) : "") + "</span>");
+        return cells;
+      });
+      box.innerHTML = '<p class="x-frac" style="margin:0 0 12px">' + gEsc(canWrite ? "CronJob 使用 batch/v1；暂停、立即运行与删除均经过集群审批网关。" : "当前账号没有 workload:write 权限，页面为只读。") + "</p>" +
+        panelHtml("CronJob", result.ok ? items.length + " 个" : "", result.ok ? (items.length ? tableHtml(["命名空间 / 名称", "调度", "状态", "运行中", "上次调度", "创建时间", "操作"], rows) : '<p class="x-frac" style="margin:0">集群没有 CronJob。</p>') : '<p class="x-aerr">' + gEsc(errText(result.err)) + "</p>", canWrite ? '<button class="x-btn x-btn--pri" type="button" data-cron-new>+ 新建 CronJob</button>' : "");
+      var find = function (key) { return items.find(function (x) { return x.namespace + "/" + x.name === key; }); };
+      var cronDialog = function (item) {
+        var edit = !!item, spec = item && item.spec || { schedule: "*/5 * * * *", suspend: false, jobTemplate: { spec: { template: { spec: { restartPolicy: "Never", containers: [] } } } } };
+        var body = '<div class="x-row2"><label><span class="x-req">命名空间</span><input class="x-input x-mono" name="namespace" required value="' + gEsc(edit ? item.namespace : "default") + '"' + (edit ? " readonly" : "") + ' /></label><label><span class="x-req">名称</span><input class="x-input x-mono" name="name" required value="' + gEsc(edit ? item.name : "") + '"' + (edit ? " readonly" : "") + ' /></label></div>' +
+          '<label><span class="x-req">spec JSON（batch/v1）</span><textarea class="x-input x-mono" name="spec" rows="14" required spellcheck="false">' + gEsc(JSON.stringify(spec, null, 2)) + "</textarea></label>" +
+          '<label><span>标签 JSON</span><textarea class="x-input x-mono" name="labels" rows="3">' + gEsc(JSON.stringify(item && item.labels || {}, null, 2)) + "</textarea></label>" +
+          '<label><span>变更原因</span><input class="x-input" name="reason" /></label><p class="x-frac">CronJob spec 使用标准 Kubernetes batch/v1 结构。containers 必须至少包含一个容器。</p>';
+        formDialog(edit ? "编辑 CronJob   " + item.namespace + "/" + item.name : "创建 CronJob", body, edit ? "保存" : "创建", function (f, bad) {
+          if (!f.reportValidity()) return;
+          var parsed, labels; try { parsed = JSON.parse(f.elements.spec.value); labels = JSON.parse(f.elements.labels.value || "{}"); } catch (e) { return bad("spec 与标签必须是有效 JSON"); }
+          var payload = { namespace: f.elements.namespace.value.trim(), name: f.elements.name.value.trim(), spec: parsed, labels: labels }; if (edit) { payload.uid = item.uid; payload.resource_version = item.resource_version; }
+          var path = base + (edit ? "/" + encodeURIComponent(item.namespace) + "/" + encodeURIComponent(item.name) : ""), q = f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : "";
+          storageSubmit(edit ? apiPut(path + q, payload) : apiPost(path + q, payload), edit ? "已提交更新 CronJob" : "已提交创建 CronJob");
+        }, !edit ? aiDraftConfig("k8s.cronjob.create", "在 prod 创建 nightly-job，每天凌晨 2 点运行 busybox echo backup，保留最近 3 次成功记录。", {
+          namespace: aiField("string", "目标 Kubernetes 命名空间"), name: aiField("string", "CronJob 名称"), spec: aiField("object", "batch/v1 CronJob spec，包含 schedule、suspend、jobTemplate", { ui: "json" }), labels: aiField("string_map", "Kubernetes 标签", { ui: "json" })
+        }, true) : null);
+      };
+      bindActs(box, function (act, id) {
+        var item = find(id); if (!item) return;
+        var path = base + "/" + encodeURIComponent(item.namespace) + "/" + encodeURIComponent(item.name);
+        if (act === "cron-history") {
+          apiGet(path + "/jobs").then(function (data) {
+            var jobs = itemsOf(data);
+            var historyRows = jobs.map(function (job) {
+              return [mono(job.name || "—"), tagHtml(job.status || "—", job.status === "Succeeded" ? "ok" : job.status === "Failed" ? "warn" : "muted"),
+                gEsc(job.active == null ? "—" : job.active), gEsc(job.succeeded == null ? "—" : job.succeeded),
+                gEsc(job.failed == null ? "—" : job.failed), gEsc(fmtTime(job.start_time || job.created_at)),
+                gEsc(fmtTime(job.completion_time))];
+            });
+            var historyBody = jobs.length
+              ? tableHtml(["Job", "状态", "运行中", "成功", "失败", "开始时间", "完成时间"], historyRows)
+              : '<p class="x-frac" style="margin:0">该 CronJob 暂无运行记录。</p>';
+            var historyFoot = '<button class="x-btn" type="button" data-close>关闭</button>';
+            if (typeof dlg === "function") dlg("CronJob 运行历史   " + gEsc(id), historyBody, historyFoot);
+            else openModal("CronJob 运行历史", historyBody, historyFoot);
+          }, function (err) { toastMsg(errText(err)); });
+          return;
+        }
+        if (!canWrite) return;
+        if (act === "cron-edit") return cronDialog(item);
+        if (act === "cron-run") return formDialog("立即运行 CronJob   " + id, '<p>平台会基于当前 batch/v1 CronJob 模板创建一个一次性 Job，不修改调度。</p><label><input type="checkbox" name="confirm" required />我确认立即运行</label><label><span>变更原因</span><input class="x-input" name="reason" /></label>', "运行", function (f) { if (!f.reportValidity()) return; storageSubmit(apiPost(path + "/run" + (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), { uid: item.uid, resource_version: item.resource_version }), "已提交 CronJob 立即运行"); });
+        if (act === "cron-del") return formDialog("删除 CronJob   " + id, '<p>确认删除 CronJob 及其控制的 Job？</p><label><input type="checkbox" name="confirm" required />我确认删除</label><label><span>变更原因</span><input class="x-input" name="reason" /></label>', "删除", function (f) { if (!f.reportValidity()) return; storageSubmit(apiDel(path + (f.elements.reason.value.trim() ? "?reason=" + encodeURIComponent(f.elements.reason.value.trim()) : ""), { uid: item.uid, resource_version: item.resource_version }), "已提交删除 CronJob"); });
+      });
+      var newBtn = box.querySelector("[data-cron-new]"); if (newBtn) newBtn.onclick = function () { cronDialog(null); };
+      filterTable(box);
+    }, function (err) { if (alive(seq, el) && box) box.innerHTML = errorPanel(err); });
+  }
+
+  function clBackupPage(el, seq, cur, box) {
+    var base = "/clusters/" + cur.id + "/storage/";
+    Promise.all([wrap(apiGet(base + "capabilities")), wrap(apiGet(base + "snapshots")), wrap(apiGet(base + "claims"))]).then(function (rs) {
+      if (!alive(seq, el) || !box) return;
+      var cap = rs[0].ok && rs[0].data ? rs[0].data.snapshots || {} : {}, snaps = rs[1].ok ? itemsOf(rs[1].data) : [], claims = rs[2].ok ? itemsOf(rs[2].data) : [];
+      if (rs[0].err && isAuthErr(rs[0].err)) return kickLogin();
+      var api = xs(), canWrite = !!(api && typeof api.can === "function" && api.can("storage:write"));
+      var note = cap.supported ? "当前页面提供 Kubernetes VolumeSnapshot 恢复点；就绪状态以 snapshot controller 为准。" : (cap.reason || "集群未确认 VolumeSnapshot 能力，创建和恢复已禁用。");
+      var rows = snaps.map(function (x) { var cells = ['<span class="x-name">' + gEsc(x.namespace + "/" + x.name) + "</span>", x.ready ? tagHtml("Ready", "ok") : tagHtml(x.error || "Pending", "warn"), gEsc(x.source_pvc || "—"), gEsc(x.restore_size || "—"), gEsc(fmtTime(x.created_at))]; if (canWrite && cap.supported && x.ready) cells.push('<span class="x-kacts">' + actBtn("从快照创建 PVC", "snapshot-restore", x.namespace + "/" + x.name) + "</span>"); return cells; });
+      box.innerHTML = '<p class="x-frac" style="margin:0 0 12px">' + gEsc(note) + "</p>" + panelHtml("VolumeSnapshot 恢复点", snaps.length + " 个", snaps.length ? tableHtml(["命名空间 / 名称", "状态", "源 PVC", "恢复容量", "创建时间"].concat(canWrite && cap.supported ? ["操作"] : []), rows) : '<p class="x-frac" style="margin:0">当前集群没有可用的 VolumeSnapshot。备份恢复页不提供虚构的 Velero 全量备份。</p>');
+      var find = function (key) { return snaps.find(function (x) { return x.namespace + "/" + x.name === key; }); };
+      bindActs(box, function (act, id) {
+        if (act !== "snapshot-restore") return;
+        var snap = find(id); if (!snap || !snap.ready || !canWrite) return;
+        var body = '<div class="x-row2"><label><span class="x-req">命名空间</span><input class="x-input x-mono" name="namespace" required value="' + gEsc(snap.namespace) + '" /></label><label><span class="x-req">新 PVC 名称</span><input class="x-input x-mono" name="name" required /></label></div><label><span class="x-req">容量</span><input class="x-input x-mono" name="size" required value="' + gEsc(snap.restore_size || "10Gi") + '" /></label><label><span>StorageClass</span><input class="x-input x-mono" name="storage_class" /></label><label><span>访问模式</span>' + selectHtml([{ v: "ReadWriteOnce", t: "ReadWriteOnce" }, { v: "ReadWriteMany", t: "ReadWriteMany" }], "ReadWriteOnce", 'name="access_mode"') + "</label><label><input type=\"checkbox\" name=\"confirm\" required />我确认这是基于 VolumeSnapshot 的新 PVC 恢复</label><p class=\"x-frac\">不会覆盖原 PVC，不会声称完成全量备份恢复；创建结果以 Kubernetes API 返回为准。</p>";
+        formDialog("从快照创建 PVC   " + id, body, "创建 PVC", function (f, bad) { if (!f.reportValidity()) return; var ns = f.elements.namespace.value.trim(), name = f.elements.name.value.trim(); if (!ns || !name) return bad("命名空间与 PVC 名称不能为空"); storageSubmit(apiPost(base + "claims", { namespace: ns, name: name, size: f.elements.size.value.trim(), storage_class: f.elements.storage_class.value.trim(), access_modes: [f.elements.access_mode.value], volume_mode: "Filesystem", volume_name: "", snapshot_name: snap.name, labels: { "xingshu.com/restore-source": snap.namespace + "/" + snap.name } }), "已提交从快照创建 PVC"); }, aiDraftConfig("k8s.snapshot.restore", "从 prod/data-before-upgrade 创建一个名为 data-restored 的 20Gi PVC，不覆盖原 PVC。", { namespace: aiField("string", "目标命名空间"), name: aiField("string", "新 PVC 名称"), size: aiField("string", "PVC 容量，例如 20Gi"), storage_class: aiField("string", "可选 StorageClass"), access_mode: aiField("enum", "访问模式", { values: ["ReadWriteOnce", "ReadWriteMany"] }) }, true));
+      });
+    }, function (err) { if (alive(seq, el) && box) box.innerHTML = errorPanel(err); });
+  }
+
   var CLUSTER_BODY = {
     nodes: clNodesPage,
+    nodepools: clNodeGroupsPage,
     namespaces: clNamespacesPage,
     workloads: clWorkloadsPage,
+    storage: clStoragePage,
+    hpa: clHpaPage,
+    cron: clCronPage,
+    backup: clBackupPage,
+    network: clNetworkPage,
+    expose: function (el, seq, cur, box) { clNetworkPage(el, seq, cur, box, "expose"); },
+    config: clConfigPage,
+    helm: function (el, seq, cur, box) {
+      if (typeof window !== "undefined" && typeof window.XSLiveHelmPage === "function") {
+        return window.XSLiveHelmPage(el, seq, cur, box);
+      }
+      if (alive(seq, el) && box) box.innerHTML = emptyPanel("Helm 应用视图未加载", "请刷新页面后重试，或联系平台管理员。");
+    },
     events: clEventsPage,
     logs: clLogsPage
   };
@@ -2366,7 +3838,7 @@
 
   function renderTeamLive(el) {
     var seq = bump();
-    mount(el, shell("团队协作", "成员、最近活动与研发负载（/users · /audit-logs · /devcenter/requirements）", "") +
+    mount(el, shell("团队协作", "成员、最近活动与研发负载", "") +
       loadingPanel("正在加载团队数据…"));
 
     Promise.all([
@@ -2380,7 +3852,7 @@
       if (aR.err && isAuthErr(aR.err)) return kickLogin();
       if (rR.err && isAuthErr(rR.err)) return kickLogin();
       if (!uR.ok) {
-        mount(el, shell("团队协作", "成员、最近活动与研发负载（/users · /audit-logs · /devcenter/requirements）", "") + errorPanel(uR.err));
+        mount(el, shell("团队协作", "成员、最近活动与研发负载", "") + errorPanel(uR.err));
         return;
       }
       var users = itemsOf(uR.data);
@@ -2403,12 +3875,12 @@
             statusTag(userStatus(r.status)),
             barHtml(pct, String(r.activity) + " 条", true),
             '<span class="x-frac">' + gEsc(r.last_activity ? fmtAgo(r.last_activity) : "—") + "</span>",
-            String(r.reqs) + ' 个需求' + (r.open_reqs ? ' · <span class="x-tag x-orange x-tag--s">' + r.open_reqs + " 未完成</span>" : ""),
+            String(r.reqs) + ' 个需求' + (r.open_reqs ? '   <span class="x-tag x-orange x-tag--s">' + r.open_reqs + " 未完成</span>" : ""),
             '<span class="x-frac">' + gEsc(fmtTime(r.last_login)) + "</span>" +
               (r.last_login_ip ? '<br /><span class="x-mono">' + gEsc(r.last_login_ip) + "</span>" : "")
           ];
         })
-      ) : emptyPanel("暂无成员", "/users 返回空列表");
+      ) : emptyPanel("暂无成员", "当前没有可展示的成员。");
 
       var feedBody = audits.length ? tableHtml(
         ["时间", "成员", "动作", "资源", "结果"],
@@ -2438,7 +3910,7 @@
         })
       ) : '<p class="x-frac" style="margin:0">' + gEsc(rR.ok ? "研发中心还没有需求。" : errText(rR.err) + "（需要 devcenter:read 权限）") + "</p>";
 
-      mount(el, shell("团队协作", "成员、最近活动与研发负载（/users · /audit-logs · /devcenter/requirements）", "") +
+      mount(el, shell("团队协作", "成员、最近活动与研发负载", "") +
         statCards([
           { label: "团队成员", value: String(users.length), sub: "来自 /users" },
           { label: "活跃成员", value: String(active), sub: "最近 100 条审计内" },
@@ -2460,7 +3932,7 @@
    * 11. 安装：仅 live 模式覆盖 routes.<key>.render；demo 不覆盖
    * ================================================================ */
 
-  var OWN_KEYS = { sre: 1, iam: 1, approvals: 1, cluster: 1, team: 1 };
+  var OWN_KEYS = { iam: 1, approvals: 1, cluster: 1, traffic: 1, team: 1 };
   var INSTALLED = false;
 
   function routesRef() {
@@ -2519,16 +3991,16 @@
     if (!R) return;
     INSTALLED = true;
     LIVE.routes = LIVE.routes || {};
-    patchRoute(R, "sre", renderSreLive, false);
     patchRoute(R, "iam", renderIamLive, false);
     patchRoute(R, "approvals", renderApprovalsLive, false);
-    patchRoute(R, "cluster", renderClusterLive, false);
+    patchRoute(R, "cluster", renderClusterLive, true);
+    patchRoute(R, "traffic", renderTrafficLiveRoute, false);
     if (!R.team) R.team = { label: "团队协作", icon: "users" };
     patchRoute(R, "team", renderTeamLive, true);
-    LIVE.routes.sre = renderSreLive;
     LIVE.routes.iam = renderIamLive;
     LIVE.routes.approvals = renderApprovalsLive;
     LIVE.routes.cluster = renderClusterLive;
+    LIVE.routes.traffic = renderTrafficLiveRoute;
     LIVE.routes.team = renderTeamLive;
     enableLiveLeaves();
     updateBadge("live");
@@ -2567,12 +4039,12 @@
       var el = ensureBadge();
       el.className = state === "live" ? "xs-live-ok" : state === "demo" ? "xs-live-demo" : "xs-live-boot";
       var span = el.querySelector("span");
-      if (span) span.textContent = state === "live" ? "实时数据" : state === "demo" ? "后端未连接" : "连接检测中…";
+      if (span) span.textContent = state === "live" ? "已连接" : state === "demo" ? "服务暂不可用" : "正在检查连接…";
       el.title = note || (state === "live"
-        ? "已连接 matrix-server：" + apiBase()
+        ? "管理服务已连接"
         : state === "demo"
-          ? "未检测到 matrix-server，页面无法读取实时数据"
-          : "正在探测 matrix-server…");
+          ? "暂时无法连接管理服务，请检查网络或稍后重试"
+          : "正在检查管理服务连接…");
       return el;
     } catch (e) {
       return null;
@@ -2587,7 +4059,7 @@
     updateBadge("boot");
     var x = xs();
     if (!x) {
-      updateBadge("demo", "xs-api.js 未加载，无法访问后端；实时数据不可用");
+      updateBadge("demo", "平台连接暂不可用，请检查网络或稍后重试");
       return;
     }
     function onMode(mode) {
@@ -2634,7 +4106,7 @@
   if (typeof LIVE.registerRoute !== "function") LIVE.registerRoute = registerRoute;
   LIVE.core = {
     version: VERSION,
-    routes: ["sre", "iam", "approvals", "cluster", "team"],
+    routes: ["sre", "iam", "approvals", "cluster", "traffic", "team"],
     install: installLive,
     isLive: isLive,
     repaint: repaint

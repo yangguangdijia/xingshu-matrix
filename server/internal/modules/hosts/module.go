@@ -7,10 +7,12 @@ package hosts
 import (
 	"context"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -31,9 +33,10 @@ const (
 	TypeExec     = "hosts.exec"
 	TypeFilePush = "hosts.file_push"
 
-	permRead  = "host:read"
-	permWrite = "host:write"
-	permExec  = "host:exec"
+	permRead     = "host:read"
+	permWrite    = "host:write"
+	permExec     = "host:exec"
+	permDiagnose = "host:diagnose"
 
 	defaultTimeout = 60
 	maxTimeout     = 3600
@@ -58,6 +61,7 @@ func (m *Module) Permissions() []rbac.Permission {
 		rbac.P("hosts", "host", rbac.ActionRead, "查看主机、事实信息与执行记录"),
 		rbac.P("hosts", "host", rbac.ActionWrite, "管理主机与 Agent 注册令牌"),
 		rbac.P("hosts", "host", rbac.ActionExec, "在主机上执行命令、推送文件"),
+		rbac.P("hosts", "host", "diagnose", "运行平台固定的只读主机诊断采集"),
 	}
 }
 
@@ -68,15 +72,21 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	}
 	m.st = &store{db: d.DB}
 	m.hub = newHub(m.st, m.log)
+	if d.HostDiagnostics == nil {
+		d.HostDiagnostics = m
+	}
+	if d.HostDiagnosticInspector == nil {
+		d.HostDiagnosticInspector = m
+	}
 	m.mount(r, d.Public)
 
 	d.Approval.MustRegister(approval.TypeSpec{
 		Type: TypeExec, Module: "hosts", Description: "在主机上执行命令", CreatePermission: permExec,
-		Timeout: maxTimeout*time.Second + time.Minute, Handler: approval.HandlerFunc(m.onExecApproved),
+		Timeout: maxTimeout*time.Second + time.Minute, SanitizePayload: sanitizeExecApprovalPayload, Handler: approval.HandlerFunc(m.onExecApproved),
 	})
 	d.Approval.MustRegister(approval.TypeSpec{
 		Type: TypeFilePush, Module: "hosts", Description: "向主机推送文件", CreatePermission: permExec,
-		Handler: approval.HandlerFunc(m.onFileApproved),
+		SanitizePayload: sanitizeFileApprovalPayload, Handler: approval.HandlerFunc(m.onFileApproved),
 	})
 	m.registerAITools(d.AITools)
 }
@@ -125,6 +135,84 @@ type fileRequest struct {
 	Path          string `json:"path"`
 	ContentBase64 string `json:"content_base64"`
 	Mode          uint32 `json:"mode"`
+}
+
+type execApprovalPayload struct {
+	Env              string  `json:"env"`
+	HostIDs          []int64 `json:"host_ids"`
+	EncryptedCommand string  `json:"encrypted_command,omitempty"`
+	CommandRedacted  bool    `json:"command_redacted,omitempty"`
+	TimeoutSec       int     `json:"timeout_sec"`
+}
+
+type fileApprovalPayload struct {
+	Env              string `json:"env"`
+	HostID           int64  `json:"host_id"`
+	Path             string `json:"path"`
+	EncryptedContent string `json:"encrypted_content,omitempty"`
+	ContentRedacted  bool   `json:"content_redacted,omitempty"`
+	Mode             uint32 `json:"mode"`
+}
+
+func execApprovalAAD(env string, hostIDs []int64) []byte {
+	ids, _ := json.Marshal(hostIDs)
+	return []byte(fmt.Sprintf("hosts:exec:%s:%s", env, ids))
+}
+
+func fileApprovalAAD(payload *fileApprovalPayload) []byte {
+	return []byte(fmt.Sprintf("hosts:file:%s:%d:%s", payload.Env, payload.HostID, payload.Path))
+}
+
+func (m *Module) encryptExecApproval(env string, req execRequest) (execApprovalPayload, error) {
+	payload := execApprovalPayload{Env: env, HostIDs: append([]int64(nil), req.HostIDs...), TimeoutSec: normTimeout(req.TimeoutSec)}
+	if m == nil || m.d == nil || m.d.Crypto == nil {
+		return payload, httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "主机命令审批加密服务不可用，执行已拒绝")
+	}
+	encrypted, err := m.d.Crypto.EncryptBytes([]byte(req.Command), execApprovalAAD(env, payload.HostIDs))
+	if err != nil {
+		return payload, httpx.Internal(err)
+	}
+	payload.EncryptedCommand = encrypted
+	return payload, nil
+}
+
+func (m *Module) decryptExecApproval(payload *execApprovalPayload) (string, error) {
+	if payload == nil || payload.EncryptedCommand == "" || m == nil || m.d == nil || m.d.Crypto == nil {
+		return "", httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "主机命令审批数据不可解密，执行已拒绝")
+	}
+	plain, err := m.d.Crypto.DecryptBytes(payload.EncryptedCommand, execApprovalAAD(payload.Env, payload.HostIDs))
+	if err != nil {
+		return "", httpx.Conflict("主机命令审批数据校验失败，执行已拒绝")
+	}
+	return string(plain), nil
+}
+
+func sanitizeExecApprovalPayload(raw json.RawMessage) json.RawMessage {
+	var payload execApprovalPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return json.RawMessage(`{}`)
+	}
+	payload.EncryptedCommand = ""
+	payload.CommandRedacted = true
+	safe, err := json.Marshal(payload)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return safe
+}
+
+func sanitizeFileApprovalPayload(raw json.RawMessage) json.RawMessage {
+	var payload fileApprovalPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return json.RawMessage(`{}`)
+	}
+	payload.EncryptedContent = ""
+	payload.ContentRedacted = true
+	safe, err := json.Marshal(payload)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return safe
 }
 
 func normTimeout(t int) int {
@@ -183,10 +271,31 @@ func (m *Module) waitAll(ctx context.Context, tasks []*Task) []*Task {
 }
 
 func (m *Module) onExecApproved(ctx context.Context, t *approval.Ticket) (any, error) {
-	var req execRequest
-	if err := t.DecodePayload(&req); err != nil {
+	var payload execApprovalPayload
+	if err := t.DecodePayload(&payload); err != nil {
 		return nil, err
 	}
+	if payload.Env != t.Env || len(payload.HostIDs) == 0 || len(payload.HostIDs) > maxBatchHosts {
+		return nil, httpx.Conflict("host approval target is invalid or has changed")
+	}
+	principal, err := m.approvedApplicant(ctx, t, permExec, t.Env)
+	if err != nil {
+		return nil, err
+	}
+	for _, hostID := range payload.HostIDs {
+		host, err := m.st.getHost(ctx, hostID)
+		if err != nil {
+			return nil, err
+		}
+		if host.Env != t.Env || !principal.CanEnv(host.Env) {
+			return nil, httpx.Forbidden("approval host environment changed")
+		}
+	}
+	command, err := m.decryptExecApproval(&payload)
+	if err != nil {
+		return nil, err
+	}
+	req := execRequest{HostIDs: payload.HostIDs, Command: command, TimeoutSec: normTimeout(payload.TimeoutSec)}
 	id := t.ID
 	tasks, err := m.startExec(ctx, req, t.ApplicantName, &id, fmt.Sprintf("ticket-%d", t.ID))
 	if err != nil {
@@ -196,16 +305,52 @@ func (m *Module) onExecApproved(ctx context.Context, t *approval.Ticket) (any, e
 }
 
 func (m *Module) onFileApproved(ctx context.Context, t *approval.Ticket) (any, error) {
-	var req fileRequest
-	if err := t.DecodePayload(&req); err != nil {
+	var payload fileApprovalPayload
+	if err := t.DecodePayload(&payload); err != nil {
 		return nil, err
 	}
+	if payload.Env != t.Env || payload.HostID < 1 || payload.Path == "" {
+		return nil, httpx.Conflict("file approval target is invalid or has changed")
+	}
+	if _, err := m.approvedApplicant(ctx, t, permExec, t.Env); err != nil {
+		return nil, err
+	}
+	host, err := m.st.getHost(ctx, payload.HostID)
+	if err != nil {
+		return nil, err
+	}
+	if host.Env != t.Env {
+		return nil, httpx.Forbidden("approval host environment changed")
+	}
+	if payload.EncryptedContent == "" || m.d == nil || m.d.Crypto == nil {
+		return nil, httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "文件审批数据不可解密，推送已拒绝")
+	}
+	content, err := m.d.Crypto.DecryptBytes(payload.EncryptedContent, fileApprovalAAD(&payload))
+	if err != nil {
+		return nil, httpx.Conflict("文件审批数据校验失败，推送已拒绝")
+	}
+	req := fileRequest{HostID: payload.HostID, Path: payload.Path, ContentBase64: base64.StdEncoding.EncodeToString(content), Mode: payload.Mode}
 	id := t.ID
 	task, err := m.startFilePush(ctx, req, t.ApplicantName, &id)
 	if err != nil {
 		return nil, err
 	}
 	return summarize(m.waitAll(ctx, []*Task{task}), 1024), nil
+}
+
+func (m *Module) approvedApplicant(ctx context.Context, ticket *approval.Ticket, permission, env string) (*rbac.Principal, error) {
+	if m == nil || m.d == nil || m.d.RBAC == nil || ticket == nil || ticket.ApplicantID < 1 {
+		return nil, httpx.Conflict("RBAC service unavailable")
+	}
+	_, permissions, envScope, err := m.d.RBAC.UserAccess(ctx, ticket.ApplicantID)
+	if err != nil {
+		return nil, err
+	}
+	principal := &rbac.Principal{UserID: ticket.ApplicantID, Username: ticket.ApplicantName, Permissions: permissions, EnvScope: envScope}
+	if !principal.Can(permission) || !principal.CanEnv(env) {
+		return nil, httpx.Forbidden("applicant permission or environment scope was revoked")
+	}
+	return principal, nil
 }
 
 type taskSummary struct {
@@ -232,6 +377,9 @@ func summarize(ts []*Task, maxOut int) []taskSummary {
 // gateGroups checks env scope and opens approval tickets per environment.
 // It returns the hosts allowed to run now and the pending tickets.
 func (m *Module) gateGroups(ctx context.Context, p *rbac.Principal, hosts []Host, req execRequest) (now []int64, pending []*approval.Ticket, err error) {
+	if m.d.Approval == nil {
+		return nil, nil, httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "审批服务不可用，批量执行已拒绝")
+	}
 	byEnv := map[string][]int64{}
 	var order []string
 	for _, h := range hosts {
@@ -242,10 +390,13 @@ func (m *Module) gateGroups(ctx context.Context, p *rbac.Principal, hosts []Host
 	}
 	for _, env := range order {
 		ids := byEnv[env]
-		r := execRequest{HostIDs: ids, Command: req.Command, TimeoutSec: normTimeout(req.TimeoutSec)}
+		payload, err := m.encryptExecApproval(env, execRequest{HostIDs: ids, Command: req.Command, TimeoutSec: req.TimeoutSec})
+		if err != nil {
+			return nil, nil, err
+		}
 		t, isPending, err := m.d.Approval.Gate(ctx, p, approval.CreateInput{
-			Type: TypeExec, Env: env, Payload: r,
-			Title: fmt.Sprintf("在 %d 台 %s 主机执行: %s", len(ids), env, trunc(req.Command, 80)),
+			Type: TypeExec, Env: env, Payload: payload,
+			Title: fmt.Sprintf("在 %d 台 %s 主机执行命令", len(ids), env),
 		})
 		if err != nil {
 			return nil, nil, err

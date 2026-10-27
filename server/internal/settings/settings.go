@@ -44,6 +44,10 @@ const aadPrefix = "settings:"
 // ValidKey reports whether k is a valid setting key.
 func ValidKey(k string) bool { return len(k) <= 128 && keyRe.MatchString(k) }
 
+func moduleManagedKey(k string) bool {
+	return k == "platform.domain" || k == "aiops.policy" || k == "provision.registry_mirror" || k == "notify" || strings.HasPrefix(k, "notify.")
+}
+
 func scan(row pgx.Row) (*Setting, error) {
 	var s Setting
 	var v []byte
@@ -184,6 +188,11 @@ func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 		httpx.OK(c, st)
 	})
 	r.PUT("/settings/:key", rbac.RequirePerm("setting:manage"), func(c *gin.Context) {
+		key := c.Param("key")
+		if moduleManagedKey(key) {
+			httpx.Fail(c, httpx.Validation("setting key is managed by its dedicated platform module"))
+			return
+		}
 		var in struct {
 			Value       json.RawMessage `json:"value" binding:"required"`
 			Secret      bool            `json:"secret"`
@@ -192,11 +201,11 @@ func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 		if !httpx.Bind(c, &in) {
 			return
 		}
-		audit.SetResource(c, "settings", c.Param("key"))
+		audit.SetResource(c, "settings", key)
 		if !in.Secret {
 			audit.SetDetail(c, gin.H{"value": in.Value})
 		}
-		st, err := s.Put(c.Request.Context(), c.Param("key"), in.Value, in.Secret, in.Description, rbac.PrincipalFrom(c).UserID)
+		st, err := s.Put(c.Request.Context(), key, in.Value, in.Secret, in.Description, rbac.PrincipalFrom(c).UserID)
 		if err != nil {
 			httpx.Fail(c, err)
 			return
@@ -204,11 +213,16 @@ func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 		httpx.OK(c, st)
 	})
 	r.DELETE("/settings/:key", rbac.RequirePerm("setting:manage"), func(c *gin.Context) {
-		audit.SetResource(c, "settings", c.Param("key"))
-		if err := s.Delete(c.Request.Context(), c.Param("key")); err != nil {
+		key := c.Param("key")
+		if moduleManagedKey(key) {
+			httpx.Fail(c, httpx.Validation("setting key is managed by its dedicated platform module"))
+			return
+		}
+		audit.SetResource(c, "settings", key)
+		if err := s.Delete(c.Request.Context(), key); err != nil {
 			httpx.Fail(c, err)
 			return
 		}
-		httpx.OK(c, gin.H{"key": c.Param("key")})
+		httpx.OK(c, gin.H{"key": key})
 	})
 }

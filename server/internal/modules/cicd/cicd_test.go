@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,6 +42,96 @@ func TestVerifyWebhook(t *testing.T) {
 	}
 	if _, err := verifyWebhook(http.Header{}, body, "s3cret"); err == nil {
 		t.Fatal("unsigned accepted")
+	}
+}
+
+func TestDeploymentTargetFingerprintAndHelmSecretPolicy(t *testing.T) {
+	env := &EnvTarget{
+		Name: "prod", TargetID: 9, Namespace: "apps", Deployment: "api", Container: "api",
+	}
+	fingerprint := envTargetFingerprint(env)
+	if fingerprint == "" || fingerprint != envTargetFingerprint(env) {
+		t.Fatal("deployment target fingerprint should be stable")
+	}
+	changed := *env
+	changed.Namespace = "other"
+	if fingerprint == envTargetFingerprint(&changed) {
+		t.Fatal("destination changes must invalidate the approval fingerprint")
+	}
+	if !targetEnvMatches(" prod ", "prod") || targetEnvMatches("", "prod") || targetEnvMatches("prod", "dev") {
+		t.Fatal("deployment target must have an exact non-empty environment binding")
+	}
+
+	cases := []struct {
+		name string
+		set  []string
+		want bool
+	}{
+		{name: "ordinary value", set: []string{"replicaCount=3"}, want: true},
+		{name: "malformed value", set: []string{"replicaCount"}, want: false},
+		{name: "password", set: []string{"database.password=plain"}, want: false},
+		{name: "token", set: []string{"imagePullToken=plain"}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateHelmSet([]EnvTarget{{Name: "prod", Helm: &HelmSpec{Set: tc.set}}})
+			if (err == nil) != tc.want {
+				t.Fatalf("validateHelmSet(%v) err=%v, want success=%v", tc.set, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestPipelineRejectsInlineSecretsAndAcceptsSecretReferences(t *testing.T) {
+	for _, stage := range []Stage{
+		{Env: map[string]string{"API_TOKEN": "literal-token"}},
+		{Env: map[string]string{"DB_PASSWORD": "literal-password"}},
+		{Params: map[string]string{"ACCESS_TOKEN": "literal-token"}},
+		{Commands: []string{"curl --token literal-token"}},
+		{ExtraArgs: []string{"--build-arg=API_KEY=literal-key"}},
+	} {
+		if err := validateStageSecrets(stage); err == nil {
+			t.Fatalf("inline secret stage unexpectedly passed validation: %+v", stage)
+		}
+	}
+	if err := validateStageSecrets(Stage{Env: map[string]string{"DB_PASSWORD": "secret://runtime/db-password"}}); err != nil {
+		t.Fatalf("Kubernetes Secret reference rejected: %v", err)
+	}
+	if err := validateStageSecrets(Stage{Env: map[string]string{"APP_MODE": "production"}}); err != nil {
+		t.Fatalf("ordinary environment value rejected: %v", err)
+	}
+}
+
+func TestPipelinePublicRedactsLegacyValuesWithoutMutatingStoredConfig(t *testing.T) {
+	pipeline := &Pipeline{Stages: []Stage{{
+		Env:      map[string]string{"TOKEN": "legacy-token", "APP_MODE": "password=legacy-password"},
+		Params:   map[string]string{"PASSWORD": "legacy-jenkins-password"},
+		Commands: []string{"curl -H 'Authorization: Bearer legacy-bearer'"},
+	}}}
+	public, err := json.Marshal(pipeline.public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"legacy-token", "legacy-password", "legacy-jenkins-password", "legacy-bearer"} {
+		if strings.Contains(string(public), secret) {
+			t.Fatalf("pipeline read exposed %q: %s", secret, public)
+		}
+	}
+	if pipeline.Stages[0].Env["TOKEN"] != "legacy-token" || pipeline.Stages[0].Params["PASSWORD"] != "legacy-jenkins-password" {
+		t.Fatal("public redaction mutated the stored pipeline value")
+	}
+}
+
+func TestRedactCICDText(t *testing.T) {
+	input := `password="s3cr et" token=abc123 Authorization: Bearer abc.def https://user:pass@example.test/path`
+	got := redactCICDText(input)
+	for _, secret := range []string{"s3cr et", "abc123", "abc.def", "user:pass"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("redacted log still contains %q: %s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("expected redaction marker in %q", got)
 	}
 }
 
@@ -100,6 +191,41 @@ func TestJenkinsTriggerAndFollow(t *testing.T) {
 	res, err := j.follow(ctx, b, func(f string, a ...any) { lines = append(lines, a[0].(string)) })
 	if err != nil || res != "SUCCESS" || strings.Join(lines, ",") != "hello,world" {
 		t.Fatalf("res=%q err=%v lines=%v", res, err, lines)
+	}
+}
+
+func TestJenkinsParameterDiscoveryUsesDefaultsAndRedactsSensitiveValues(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if u, p, _ := r.BasicAuth(); u != "bot" || p != "tok" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path != "/job/team/job/app/api/json" || !strings.Contains(r.URL.Query().Get("tree"), "parameterDefinitions") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"property":[{"parameterDefinitions":[
+			{"name":"BRANCH","description":"Source ref","type":"hudson.model.StringParameterDefinition","defaultParameterValue":{"value":"main"}},
+			{"name":"DEPLOY_ENV","description":"Target","type":"hudson.model.ChoiceParameterDefinition","choices":"test\nprod"},
+			{"name":"TOKEN","type":"hudson.model.PasswordParameterDefinition","defaultParameterValue":{"value":"do-not-return"}}
+		]}]}`))
+	}))
+	defer srv.Close()
+	parameters, err := newJenkins(srv.URL, "bot", "tok").parameters(context.Background(), "team/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parameters) != 3 || parameters[0].Name != "BRANCH" || parameters[0].Default != "main" {
+		t.Fatalf("unexpected parameter definitions: %+v", parameters)
+	}
+	if parameters[1].Name != "DEPLOY_ENV" || strings.Join(parameters[1].Choices, ",") != "test,prod" {
+		t.Fatalf("choice parameter was not decoded: %+v", parameters[1])
+	}
+	if !parameters[2].Sensitive || parameters[2].Default != "" || parameters[2].Choices != nil {
+		t.Fatalf("sensitive parameter details were exposed: %+v", parameters[2])
+	}
+	if validJenkinsJob("../admin") || validJenkinsJob("folder/../admin") || validJenkinsJob("team/#config") {
+		t.Fatal("unsafe Jenkins job path accepted")
 	}
 }
 

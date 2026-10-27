@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -145,6 +146,105 @@ func jobPath(name string) string {
 	return "/" + strings.Join(parts, "/")
 }
 
+func validJenkinsJob(name string) bool {
+	if name == "" || len(name) > 512 || strings.TrimSpace(name) != name || strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") {
+		return false
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, `\?#`) {
+			return false
+		}
+		for _, r := range part {
+			if r < 0x20 || r == 0x7f {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+type jenkinsParameter struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Type        string   `json:"type,omitempty"`
+	Default     string   `json:"default_value,omitempty"`
+	Choices     []string `json:"choices,omitempty"`
+	Sensitive   bool     `json:"sensitive,omitempty"`
+}
+
+var jenkinsParameterName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,127}$`)
+
+func (j *jenkins) parameters(ctx context.Context, job string) ([]jenkinsParameter, error) {
+	if !validJenkinsJob(job) {
+		return nil, errors.New("invalid Jenkins job path")
+	}
+	tree := url.Values{}
+	tree.Set("tree", "property[parameterDefinitions[name,description,type,defaultParameterValue[value],choices]]")
+	var response struct {
+		Property []struct {
+			Parameters []struct {
+				Name        string          `json:"name"`
+				Description string          `json:"description"`
+				Type        string          `json:"type"`
+				Default     json.RawMessage `json:"defaultParameterValue"`
+				Choices     json.RawMessage `json:"choices"`
+			} `json:"parameterDefinitions"`
+		} `json:"property"`
+	}
+	if err := j.getJSON(ctx, jobPath(job)+"/api/json?"+tree.Encode(), &response); err != nil {
+		return nil, err
+	}
+	out := make([]jenkinsParameter, 0, 16)
+	seen := map[string]bool{}
+	for _, property := range response.Property {
+		for _, definition := range property.Parameters {
+			if !jenkinsParameterName.MatchString(definition.Name) || seen[definition.Name] {
+				continue
+			}
+			seen[definition.Name] = true
+			item := jenkinsParameter{Name: definition.Name, Description: definition.Description, Type: definition.Type}
+			lower := strings.ToLower(definition.Name + " " + definition.Type)
+			item.Sensitive = strings.Contains(lower, "password") || strings.Contains(lower, "secret") ||
+				strings.Contains(lower, "token") || strings.Contains(lower, "credential")
+			if !item.Sensitive && len(definition.Default) > 0 && string(definition.Default) != "null" {
+				var defaultValue any
+				var wrapped struct {
+					Value any `json:"value"`
+				}
+				if json.Unmarshal(definition.Default, &wrapped) == nil && wrapped.Value != nil {
+					defaultValue = wrapped.Value
+				}
+				if defaultValue != nil {
+					item.Default = fmt.Sprint(defaultValue)
+				}
+			}
+			if !item.Sensitive && len(definition.Choices) > 0 && string(definition.Choices) != "null" {
+				var choices []string
+				if json.Unmarshal(definition.Choices, &choices) == nil {
+					if len(choices) > 100 {
+						choices = choices[:100]
+					}
+					item.Choices = choices
+				} else {
+					var block string
+					if json.Unmarshal(definition.Choices, &block) == nil {
+						choices = strings.Split(block, "\n")
+						if len(choices) > 100 {
+							choices = choices[:100]
+						}
+						item.Choices = choices
+					}
+				}
+			}
+			out = append(out, item)
+			if len(out) >= 200 {
+				return out, nil
+			}
+		}
+	}
+	return out, nil
+}
+
 func (j *jenkins) do(ctx context.Context, method, u string, body io.Reader, hdr map[string]string) (*http.Response, error) {
 	if !strings.HasPrefix(u, "http") {
 		u = j.base + u
@@ -176,6 +276,9 @@ func (j *jenkins) getJSON(ctx context.Context, u string, v any) error {
 
 // trigger queues a build and returns the queue item URL.
 func (j *jenkins) trigger(ctx context.Context, job string, params map[string]string) (string, error) {
+	if !validJenkinsJob(job) {
+		return "", errors.New("invalid Jenkins job path")
+	}
 	hdr := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
 	var crumb struct {
 		Crumb             string `json:"crumb"`

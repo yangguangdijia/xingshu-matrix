@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,22 @@ import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/rbac"
 )
+
+var (
+	cicdSecretAssignment = regexp.MustCompile(`(?i)((?:"|')?(?:password|passwd|token|secret|credential|api[_-]?key|private[_-]?key|authorization|access[_-]?key|client[_-]?secret)(?:"|')?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^,\s}\]]+)`)
+	cicdSecretFlag       = regexp.MustCompile(`(?i)((?:--?)[^\s=]*(?:password|passwd|token|secret|credential|api[_-]?key|private[_-]?key|authorization|access[_-]?key|client[_-]?secret)(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s]+)`)
+	cicdBasicAuth        = regexp.MustCompile(`(?i)((?:authorization\s*[:=]\s*|--header(?:=|\s+)["']?authorization\s*:\s*)(?:basic|bearer)\s+)[A-Za-z0-9._~+/=-]+`)
+	cicdBearerToken      = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
+	cicdURLPassword      = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://[^:/\s]+:)[^@/\s]+(@)`)
+)
+
+func redactCICDText(value string) string {
+	value = cicdSecretFlag.ReplaceAllString(value, "${1}[REDACTED]")
+	value = cicdBasicAuth.ReplaceAllString(value, "${1}[REDACTED]")
+	value = cicdBearerToken.ReplaceAllString(value, "${1}[REDACTED]")
+	value = cicdSecretAssignment.ReplaceAllString(value, "${1}[REDACTED]")
+	return cicdURLPassword.ReplaceAllString(value, "${1}[REDACTED]${2}")
+}
 
 // Run is one execution of a pipeline.
 type Run struct {
@@ -87,6 +104,12 @@ func (m *Module) startRun(ctx context.Context, p *rbac.Principal, pipelineID int
 		for _, s := range pl.Stages { // deploy stages: caller must be scoped to the env
 			if s.Type == "deploy" && !p.CanEnv(s.DeployEnv) {
 				return nil, httpx.Forbidden("environment not in your scope: " + s.DeployEnv)
+			}
+		}
+	} else if strings.HasPrefix(trigger, "webhook:") {
+		for _, s := range pl.Stages {
+			if s.Type == "deploy" {
+				return nil, httpx.Forbidden("webhook runs cannot execute deploy stages; start a scoped manual run")
 			}
 		}
 	}
@@ -383,7 +406,7 @@ type logWriter struct {
 }
 
 func (w *logWriter) add(stage int, line string) {
-	line = strings.TrimRight(line, "\r\n")
+	line = redactCICDText(strings.TrimRight(line, "\r\n"))
 	if len(line) > 8000 {
 		line = line[:8000] + "…"
 	}
@@ -483,6 +506,7 @@ func (m *Module) execute(parent context.Context, runID int64) {
 	lw.flush()
 	_, _ = m.db.Exec(context.Background(), `UPDATE cicd_run_stages SET status=$2 WHERE run_id=$1 AND status IN ('pending','awaiting_approval','approved')`,
 		runID, map[bool]string{true: "cancelled", false: "skipped"}[status == "cancelled"])
+	msg = redactCICDText(msg)
 	_, _ = m.db.Exec(context.Background(), `UPDATE cicd_runs SET status=$2, error=$3, finished_at=now() WHERE id=$1`, runID, status, msg)
 	m.log.Info("run finished", "run", runID, "status", status, "err", msg)
 }
@@ -527,6 +551,11 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 			return err
 		}
 		logf := lw.stage(i)
+		withholdOutput := stageUsesSecretReference(s) ||
+			(a.gitTokenEnc != "" && (s.Type == "build" || s.Type == "test" || s.Type == "script"))
+		if withholdOutput {
+			logf = func(string, ...any) {}
+		}
 		logf("==> stage %s (%s)", s.Name, s.Type)
 		m.setStage(runID, i, "running", "", "")
 		var job string
@@ -553,12 +582,25 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 			if errors.Is(serr, errRejected) {
 				st = "rejected"
 			}
-			m.setStage(runID, i, st, job, serr.Error())
+			if withholdOutput {
+				m.setStage(runID, i, st, job, "execution details withheld because the stage uses credentials")
+				return fmt.Errorf("stage %s failed; execution details withheld because the stage uses credentials", s.Name)
+			}
+			m.setStage(runID, i, st, job, redactCICDText(serr.Error()))
 			return fmt.Errorf("stage %s: %w", s.Name, serr)
 		}
 		m.setStage(runID, i, "succeeded", job, "")
 	}
 	return nil
+}
+
+func stageUsesSecretReference(stage Stage) bool {
+	for key, value := range stage.Env {
+		if sensitiveStageKey.MatchString(key) && validSecretReference(value) {
+			return true
+		}
+	}
+	return false
 }
 
 // cloneURL embeds the app's Git credentials (decrypted) into an https URL.

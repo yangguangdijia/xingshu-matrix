@@ -316,6 +316,19 @@ func contains(list []string, v string) bool {
 func (m *Module) notifyAlerts(ctx context.Context, alerts []Alert) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	policy := m.aiopsPolicy(ctx)
+	supplements := map[int64]string{}
+	for i := range alerts {
+		a := &alerts[i]
+		if policy.AutoDiagnose && a.Status == "firing" && a.FireCount > 0 {
+			_, _ = m.queueDiagnosis(ctx, a, false)
+		}
+		if d, err := m.diagnosis(ctx, a); err == nil {
+			supplements[a.ID] = diagnosisNotification(d, policy)
+		} else if policy.PublicURL != "" {
+			supplements[a.ID] = "\n查看告警及处置：" + policy.PublicURL + "/#/observe/alerts/" + strconv.FormatInt(a.ID, 10)
+		}
+	}
 	rows, err := m.d.DB.Query(ctx, `SELECT `+chCols+` FROM obs_channels WHERE enabled`)
 	if err != nil {
 		m.logWarn("load channels", err)
@@ -337,6 +350,7 @@ func (m *Module) notifyAlerts(ctx context.Context, alerts []Alert) {
 				continue
 			}
 			title, body := formatAlert(a)
+			body += supplements[a.ID]
 			if err := sendChannel(ctx, ch, title, body); err != nil {
 				m.logWarn("send notification", fmt.Errorf("channel %s alert %d: %w", ch.Name, a.ID, err))
 			}

@@ -5,8 +5,82 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/app"
+	matrixcrypto "github.com/yangguangdijia/xingshu-matrix/server/internal/crypto"
 )
+
+func TestConsoleApprovalPayloadsEncryptAndRedactSecrets(t *testing.T) {
+	cipher, err := matrixcrypto.New([]byte(strings.Repeat("k", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &Module{d: &app.Deps{Crypto: cipher}}
+
+	const sqlText = "UPDATE accounts SET password='sql-secret' WHERE id=7"
+	sql := sqlPayload{InstanceID: 11, Instance: "prod-db", Database: "app"}
+	if err := m.encryptSQLPayload(&sql, sqlText); err != nil {
+		t.Fatal(err)
+	}
+	rawSQL, err := json.Marshal(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rawSQL), sqlText) || strings.Contains(string(rawSQL), "sql-secret") {
+		t.Fatal("SQL approval storage contains plaintext")
+	}
+	publicSQL := sanitizeSQLApprovalPayload(rawSQL)
+	if strings.Contains(string(publicSQL), sql.EncryptedSQL) || strings.Contains(string(publicSQL), "sql-secret") ||
+		!strings.Contains(string(publicSQL), `"sql_redacted":true`) {
+		t.Fatalf("unsafe SQL approval view: %s", publicSQL)
+	}
+	openedSQL, err := m.decryptSQLPayload(&sql)
+	if err != nil || openedSQL != sqlText {
+		t.Fatalf("SQL payload did not round-trip: %v", err)
+	}
+	sql.InstanceID++
+	if _, err := m.decryptSQLPayload(&sql); err == nil {
+		t.Fatal("SQL ciphertext should be bound to its instance")
+	}
+
+	const redisValue = "redis-secret"
+	redis := redisPayload{InstanceID: 15, Instance: "prod-cache", DB: 2, Command: "SET"}
+	if err := m.encryptRedisPayload(&redis, []string{"SET", "app:token", redisValue}); err != nil {
+		t.Fatal(err)
+	}
+	rawRedis, err := json.Marshal(redis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rawRedis), redisValue) {
+		t.Fatal("Redis approval storage contains plaintext")
+	}
+	publicRedis := sanitizeRedisApprovalPayload(rawRedis)
+	if strings.Contains(string(publicRedis), redis.EncryptedArgs) || strings.Contains(string(publicRedis), redisValue) ||
+		!strings.Contains(string(publicRedis), `"args_redacted":true`) {
+		t.Fatalf("unsafe Redis approval view: %s", publicRedis)
+	}
+	openedArgs, err := m.decryptRedisPayload(&redis)
+	if err != nil || len(openedArgs) != 3 || openedArgs[2] != redisValue {
+		t.Fatalf("Redis payload did not round-trip: %v %q", err, openedArgs)
+	}
+	redis.DB++
+	if _, err := m.decryptRedisPayload(&redis); err == nil {
+		t.Fatal("Redis ciphertext should be bound to its target")
+	}
+
+	changeRaw := json.RawMessage(`{"op":"rabbitmq.create_queue","instance_id":1,"arguments":{"x-secret":"queue-secret"},"configs":{"password":"config-secret"}}`)
+	publicChange := sanitizeChangeApprovalPayload(changeRaw)
+	if strings.Contains(string(publicChange), "queue-secret") || strings.Contains(string(publicChange), "config-secret") {
+		t.Fatalf("unsafe middleware change approval view: %s", publicChange)
+	}
+	if auditSQLStatement(SQLRisk{Keyword: "UPDATE"}) != "UPDATE [statement redacted]" ||
+		auditRedisStatement([]string{"SET", "key", "redis-secret"}) != "SET [arguments redacted]" {
+		t.Fatal("console audit statement should omit input values")
+	}
+}
 
 func TestAnalyzeSQL(t *testing.T) {
 	cases := []struct {

@@ -3,8 +3,10 @@ package middleware
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -35,8 +37,7 @@ const (
 
 // isProdEnv reports whether an env tag denotes production.
 func isProdEnv(env string) bool {
-	e := strings.ToLower(strings.TrimSpace(env))
-	return e == "prod" || e == "prd" || e == "production" || strings.HasPrefix(e, "prod-") || strings.HasSuffix(e, "-prod")
+	return approval.IsProductionEnv(env)
 }
 
 // ---------------------------------------------------------------- SQL risk analysis
@@ -302,12 +303,14 @@ type sqlInput struct {
 
 // sqlPayload is the approval payload of type middleware.sql.
 type sqlPayload struct {
-	InstanceID int64   `json:"instance_id"`
-	Instance   string  `json:"instance"`
-	Database   string  `json:"database"`
-	SQL        string  `json:"sql"`
-	TimeoutSec int     `json:"timeout_sec"`
-	Risk       SQLRisk `json:"risk"`
+	InstanceID   int64   `json:"instance_id"`
+	Instance     string  `json:"instance"`
+	Database     string  `json:"database"`
+	SQL          string  `json:"sql,omitempty"`
+	EncryptedSQL string  `json:"encrypted_sql,omitempty"`
+	SQLRedacted  bool    `json:"sql_redacted,omitempty"`
+	TimeoutSec   int     `json:"timeout_sec"`
+	Risk         SQLRisk `json:"risk"`
 }
 
 func (m *Module) sqlConsole(c *gin.Context) {
@@ -321,7 +324,7 @@ func (m *Module) sqlConsole(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	p := rbac.PrincipalFrom(c)
-	rec := auditRec{inst: inst, database: in.Database, stmt: in.SQL, p: p}
+	rec := auditRec{inst: inst, database: in.Database, stmt: "SQL [statement redacted]", p: p}
 	risk, err := AnalyzeSQL(in.SQL, inst.Type)
 	if err != nil {
 		rec.status, rec.err = "blocked", err.Error()
@@ -330,36 +333,35 @@ func (m *Module) sqlConsole(c *gin.Context) {
 		return
 	}
 	rec.risk = risk.Level
+	rec.stmt = auditSQLStatement(risk)
 	audit.SetDetail(c, gin.H{"risk": risk, "database": in.Database})
-	if risk.Level == RiskDangerous {
-		needApproval := false
-		if m.d.RBAC != nil {
-			if needApproval, err = m.d.RBAC.RequiresApproval(ctx, inst.Env); err != nil {
-				httpx.Fail(c, err)
-				return
-			}
-		}
-		switch {
-		case needApproval:
-			t, pending, err := m.d.Approval.Gate(ctx, p, approval.CreateInput{Type: approvalSQL,
-				Title: fmt.Sprintf("[%s] 高危 SQL: %s", inst.Name, risk.Reason), Env: inst.Env, Reason: in.Reason,
-				Payload: sqlPayload{InstanceID: inst.ID, Instance: inst.Name, Database: in.Database, SQL: in.SQL, TimeoutSec: in.TimeoutSec, Risk: risk}})
-			if err != nil {
-				httpx.Fail(c, err)
-				return
-			}
-			if pending {
-				rec.status, rec.approvalID = "pending", &t.ID
-				m.saveAudit(ctx, rec)
-				approval.RespondPending(c, t)
-				return
-			}
-		case isProdEnv(inst.Env):
-			rec.status, rec.err = "blocked", "production env has no approval policy: "+risk.Reason
+	if risk.Level != RiskRead {
+		payload := sqlPayload{InstanceID: inst.ID, Instance: inst.Name, Database: in.Database, TimeoutSec: in.TimeoutSec, Risk: risk}
+		if err := m.encryptSQLPayload(&payload, in.SQL); err != nil {
+			rec.stmt = auditSQLStatement(risk)
+			rec.status, rec.err = "blocked", "SQL approval payload encryption unavailable"
 			m.saveAudit(ctx, rec)
-			httpx.Fail(c, httpx.Forbidden("生产环境禁止直接执行高危 SQL（"+risk.Reason+"），请为该环境开启审批策略后提交审批").WithDetails(risk))
+			httpx.Fail(c, err)
 			return
-		case !in.Confirm:
+		}
+		t, pending, gateErr := m.d.Approval.Gate(ctx, p, approval.CreateInput{Type: approvalSQL,
+			Title: fmt.Sprintf("[%s] SQL %s", inst.Name, risk.Level), Env: inst.Env, Reason: in.Reason,
+			Payload: payload})
+		if gateErr != nil {
+			rec.stmt = auditSQLStatement(risk)
+			rec.status, rec.err = "blocked", "approval gate rejected the write"
+			m.saveAudit(ctx, rec)
+			httpx.Fail(c, gateErr)
+			return
+		}
+		if pending {
+			rec.stmt = auditSQLStatement(risk)
+			rec.status, rec.approvalID = "pending", &t.ID
+			m.saveAudit(ctx, rec)
+			approval.RespondPending(c, t)
+			return
+		}
+		if risk.Level == RiskDangerous && !in.Confirm {
 			rec.status, rec.err = "blocked", "confirmation required: "+risk.Reason
 			m.saveAudit(ctx, rec)
 			httpx.Fail(c, httpx.Validation("高危 SQL（"+risk.Reason+"），请确认后以 confirm=true 重新提交").WithDetails(risk))
@@ -367,10 +369,17 @@ func (m *Module) sqlConsole(c *gin.Context) {
 		}
 	}
 	res, err := runSQL(ctx, inst, in.Database, in.SQL, risk, in.TimeoutSec)
+	if risk.Level != RiskRead {
+		rec.stmt = auditSQLStatement(risk)
+	}
 	rec.fill(res, err)
 	id := m.saveAudit(ctx, rec)
 	if err != nil {
-		httpx.Fail(c, httpx.BadRequest("SQL 执行失败: "+err.Error()).WithDetails(gin.H{"audit_id": id, "risk": risk}))
+		message := err.Error()
+		if risk.Level != RiskRead {
+			message = "database operation failed"
+		}
+		httpx.Fail(c, httpx.BadRequest("SQL 执行失败: "+message).WithDetails(gin.H{"audit_id": id, "risk": risk}))
 		return
 	}
 	res.AuditID = id
@@ -386,23 +395,113 @@ func (m *Module) onSQLApproved(ctx context.Context, t *approval.Ticket) (any, er
 	if err != nil {
 		return nil, err
 	}
-	risk, err := AnalyzeSQL(pl.SQL, inst.Type)
+	if inst.Env != t.Env {
+		return nil, httpx.Forbidden("approval target environment changed")
+	}
+	p, err := m.approvedPrincipal(ctx, t, permConsole, inst.Env)
 	if err != nil {
 		return nil, err
 	}
-	p := rbac.FromContext(ctx)
-	if p == nil {
-		p = &rbac.Principal{UserID: t.ApplicantID, Username: t.ApplicantName}
+	sqlText, err := m.decryptSQLPayload(&pl)
+	if err != nil {
+		return nil, err
 	}
-	res, err := runSQL(ctx, inst, pl.Database, pl.SQL, risk, pl.TimeoutSec)
-	rec := auditRec{inst: inst, database: pl.Database, stmt: pl.SQL, p: p, risk: risk.Level, approvalID: &t.ID}
+	risk, err := AnalyzeSQL(sqlText, inst.Type)
+	if err != nil {
+		return nil, err
+	}
+	res, err := runSQL(ctx, inst, pl.Database, sqlText, risk, pl.TimeoutSec)
+	rec := auditRec{inst: inst, database: pl.Database, stmt: auditSQLStatement(risk), p: p, risk: risk.Level, approvalID: &t.ID}
 	rec.fill(res, err)
+	if err != nil {
+		rec.err = "database operation failed"
+	}
 	id := m.saveAudit(ctx, rec)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("database operation failed")
 	}
 	res.AuditID = id
 	return res, nil
+}
+
+func sqlPayloadAAD(payload *sqlPayload) []byte {
+	return []byte(fmt.Sprintf("middleware:sql:%d:%s", payload.InstanceID, payload.Database))
+}
+
+func (m *Module) encryptSQLPayload(payload *sqlPayload, sqlText string) error {
+	if m == nil || m.d == nil || m.d.Crypto == nil {
+		return httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "SQL 审批加密服务不可用，变更已拒绝")
+	}
+	encrypted, err := m.d.Crypto.EncryptBytes([]byte(sqlText), sqlPayloadAAD(payload))
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	payload.SQL = ""
+	payload.EncryptedSQL = encrypted
+	return nil
+}
+
+func (m *Module) decryptSQLPayload(payload *sqlPayload) (string, error) {
+	if payload.EncryptedSQL == "" || m == nil || m.d == nil || m.d.Crypto == nil {
+		return "", httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "SQL 审批数据不可解密，变更已拒绝")
+	}
+	plain, err := m.d.Crypto.DecryptBytes(payload.EncryptedSQL, sqlPayloadAAD(payload))
+	if err != nil {
+		return "", httpx.Conflict("SQL 审批数据校验失败，变更已拒绝")
+	}
+	return string(plain), nil
+}
+
+func sanitizeSQLApprovalPayload(raw json.RawMessage) json.RawMessage {
+	var payload sqlPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return json.RawMessage(`{}`)
+	}
+	payload.SQL = ""
+	payload.EncryptedSQL = ""
+	payload.SQLRedacted = true
+	safe, err := json.Marshal(payload)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return safe
+}
+
+func sanitizeChangeApprovalPayload(raw json.RawMessage) json.RawMessage {
+	var payload change
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return json.RawMessage(`{}`)
+	}
+	payload.Configs = nil
+	payload.Arguments = nil
+	safe, err := json.Marshal(payload)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return safe
+}
+
+func auditSQLStatement(risk SQLRisk) string {
+	keyword := strings.ToUpper(strings.TrimSpace(risk.Keyword))
+	if keyword == "" {
+		keyword = "SQL"
+	}
+	return keyword + " [statement redacted]"
+}
+
+func (m *Module) approvedPrincipal(ctx context.Context, ticket *approval.Ticket, permission, env string) (*rbac.Principal, error) {
+	if m == nil || m.d == nil || m.d.RBAC == nil || ticket == nil || ticket.ApplicantID < 1 {
+		return nil, httpx.Conflict("RBAC service unavailable")
+	}
+	_, permissions, envScope, err := m.d.RBAC.UserAccess(ctx, ticket.ApplicantID)
+	if err != nil {
+		return nil, err
+	}
+	principal := &rbac.Principal{UserID: ticket.ApplicantID, Username: ticket.ApplicantName, Permissions: permissions, EnvScope: envScope}
+	if !principal.Can(permission) || !principal.CanEnv(env) {
+		return nil, httpx.Forbidden("applicant permission or environment scope was revoked")
+	}
+	return principal, nil
 }
 
 // ---------------------------------------------------------------- Redis console
@@ -539,6 +638,15 @@ type redisInput struct {
 	DB      *int     `json:"db"`
 }
 
+type redisPayload struct {
+	InstanceID    int64  `json:"instance_id"`
+	Instance      string `json:"instance"`
+	DB            int    `json:"db"`
+	Command       string `json:"command"`
+	EncryptedArgs string `json:"encrypted_args,omitempty"`
+	ArgsRedacted  bool   `json:"args_redacted,omitempty"`
+}
+
 func (m *Module) redisConsole(c *gin.Context) {
 	inst, ok := m.instanceFor(c, TypeRedis)
 	if !ok {
@@ -567,12 +675,117 @@ func (m *Module) redisConsole(c *gin.Context) {
 	}
 	risk, err := CheckRedisCommand(args)
 	rec.risk = risk
+	rec.stmt = auditRedisStatement(args)
 	if err != nil {
 		rec.status, rec.err = "blocked", err.Error()
 		m.saveAudit(ctx, rec)
 		httpx.Fail(c, httpx.Forbidden(err.Error()))
 		return
 	}
+	if risk != RiskRead {
+		payload := redisPayload{InstanceID: inst.ID, Instance: inst.Name, DB: db, Command: strings.ToUpper(args[0])}
+		if err := m.encryptRedisPayload(&payload, args); err != nil {
+			rec.status, rec.err = "blocked", "Redis approval payload encryption unavailable"
+			m.saveAudit(ctx, rec)
+			httpx.Fail(c, err)
+			return
+		}
+		ticket, pending, gateErr := m.d.Approval.Gate(ctx, rec.p, approval.CreateInput{
+			Type: approvalRedis, Title: fmt.Sprintf("[%s] Redis %s", inst.Name, payload.Command), Env: inst.Env, Payload: payload,
+		})
+		if gateErr != nil {
+			rec.status, rec.err = "blocked", "approval gate rejected the write"
+			m.saveAudit(ctx, rec)
+			httpx.Fail(c, gateErr)
+			return
+		}
+		if pending {
+			rec.status, rec.approvalID = "pending", &ticket.ID
+			m.saveAudit(ctx, rec)
+			approval.RespondPending(c, ticket)
+			return
+		}
+	}
+	result, duration, err := m.runRedisCommand(ctx, inst, args, db)
+	rec.durationMS = duration
+	if err != nil {
+		rec.status, rec.err = "error", err.Error()
+		if risk != RiskRead {
+			rec.err = "Redis operation failed"
+		}
+		m.saveAudit(ctx, rec)
+		message := err.Error()
+		if risk != RiskRead {
+			message = "Redis operation failed"
+		}
+		httpx.Fail(c, httpx.BadRequest("Redis 执行失败: "+message))
+		return
+	}
+	rec.status = "ok"
+	id := m.saveAudit(ctx, rec)
+	if risk != RiskRead {
+		result = "write command completed"
+	}
+	httpx.OK(c, gin.H{"result": result, "risk": risk, "duration_ms": duration, "audit_id": id})
+}
+
+func redisPayloadAAD(payload *redisPayload) []byte {
+	return []byte(fmt.Sprintf("middleware:redis:%d:%d:%s", payload.InstanceID, payload.DB, payload.Command))
+}
+
+func (m *Module) encryptRedisPayload(payload *redisPayload, args []string) error {
+	if m == nil || m.d == nil || m.d.Crypto == nil {
+		return httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "Redis 审批加密服务不可用，变更已拒绝")
+	}
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	encrypted, err := m.d.Crypto.EncryptBytes(raw, redisPayloadAAD(payload))
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	payload.EncryptedArgs = encrypted
+	return nil
+}
+
+func (m *Module) decryptRedisPayload(payload *redisPayload) ([]string, error) {
+	if payload.EncryptedArgs == "" || m == nil || m.d == nil || m.d.Crypto == nil {
+		return nil, httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "Redis 审批数据不可解密，变更已拒绝")
+	}
+	raw, err := m.d.Crypto.DecryptBytes(payload.EncryptedArgs, redisPayloadAAD(payload))
+	if err != nil {
+		return nil, httpx.Conflict("Redis 审批数据校验失败，变更已拒绝")
+	}
+	var args []string
+	if err := json.Unmarshal(raw, &args); err != nil || len(args) == 0 {
+		return nil, httpx.Conflict("Redis 审批数据无效，变更已拒绝")
+	}
+	return args, nil
+}
+
+func sanitizeRedisApprovalPayload(raw json.RawMessage) json.RawMessage {
+	var payload redisPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return json.RawMessage(`{}`)
+	}
+	payload.EncryptedArgs = ""
+	payload.ArgsRedacted = true
+	safe, err := json.Marshal(payload)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return safe
+}
+
+func auditRedisStatement(args []string) string {
+	if len(args) == 0 {
+		return "REDIS [arguments redacted]"
+	}
+	return strings.ToUpper(args[0]) + " [arguments redacted]"
+}
+
+func (m *Module) runRedisCommand(ctx context.Context, inst *Instance, args []string, db int) (any, int64, error) {
 	cl := redisClient(inst, db)
 	defer cl.Close()
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -587,17 +800,47 @@ func (m *Module) redisConsole(c *gin.Context) {
 	if errors.Is(err, redis.Nil) {
 		v, err = nil, nil
 	}
-	rec.durationMS = dur
 	if err != nil {
-		rec.status, rec.err = "error", err.Error()
+		return nil, dur, err
+	}
+	budget := maxRows
+	return redisValue(v, &budget), dur, nil
+}
+
+func (m *Module) onRedisApproved(ctx context.Context, ticket *approval.Ticket) (any, error) {
+	var payload redisPayload
+	if err := ticket.DecodePayload(&payload); err != nil {
+		return nil, err
+	}
+	inst, err := m.loadInstance(ctx, payload.InstanceID)
+	if err != nil {
+		return nil, err
+	}
+	if inst.Env != ticket.Env || inst.Name != payload.Instance {
+		return nil, httpx.Forbidden("approval target environment changed")
+	}
+	if _, err := m.approvedPrincipal(ctx, ticket, permConsole, inst.Env); err != nil {
+		return nil, err
+	}
+	args, err := m.decryptRedisPayload(&payload)
+	if err != nil {
+		return nil, err
+	}
+	risk, err := CheckRedisCommand(args)
+	if err != nil || risk == RiskRead {
+		return nil, httpx.Forbidden("approved Redis command is no longer a valid write")
+	}
+	_, duration, err := m.runRedisCommand(ctx, inst, args, payload.DB)
+	rec := auditRec{inst: inst, database: strconv.Itoa(payload.DB), stmt: auditRedisStatement(args), risk: risk,
+		p: &rbac.Principal{UserID: ticket.ApplicantID, Username: ticket.ApplicantName}, approvalID: &ticket.ID, durationMS: duration}
+	if err != nil {
+		rec.status, rec.err = "error", "Redis operation failed"
 		m.saveAudit(ctx, rec)
-		httpx.Fail(c, httpx.BadRequest("Redis 执行失败: "+err.Error()))
-		return
+		return nil, errors.New("Redis operation failed")
 	}
 	rec.status = "ok"
 	id := m.saveAudit(ctx, rec)
-	budget := maxRows
-	httpx.OK(c, gin.H{"result": redisValue(v, &budget), "risk": risk, "duration_ms": dur, "audit_id": id})
+	return gin.H{"result": "write command completed", "risk": risk, "duration_ms": duration, "audit_id": id}, nil
 }
 
 // ---------------------------------------------------------------- console audit

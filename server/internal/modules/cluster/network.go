@@ -7,41 +7,71 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
 )
 
 // NetworkServiceRow is the service discovery data used by the topology view.
 type NetworkServiceRow struct {
-	Namespace   string               `json:"namespace"`
-	Name        string               `json:"name"`
-	Type        corev1.ServiceType   `json:"type"`
-	ClusterIP   string               `json:"cluster_ip"`
-	ExternalIPs []string             `json:"external_ips"`
-	Ports       []corev1.ServicePort `json:"ports"`
-	Selector    map[string]string    `json:"selector"`
-	Labels      map[string]string    `json:"labels"`
-	CreatedAt   metav1.Time          `json:"created_at"`
+	Namespace           string                         `json:"namespace"`
+	Name                string                         `json:"name"`
+	UID                 types.UID                      `json:"uid"`
+	ResourceVersion     string                         `json:"resource_version"`
+	Type                corev1.ServiceType             `json:"type"`
+	ClusterIP           string                         `json:"cluster_ip"`
+	ClusterIPs          []string                       `json:"cluster_ips"`
+	ExternalIPs         []string                       `json:"external_ips"`
+	ExternalName        string                         `json:"external_name,omitempty"`
+	LoadBalancer        []corev1.LoadBalancerIngress  `json:"load_balancer"`
+	LoadBalancerIP      string                         `json:"load_balancer_ip,omitempty"`
+	AddressStatus       string                         `json:"address_status"`
+	LoadBalancerClass   string                         `json:"load_balancer_class,omitempty"`
+	ExternalTrafficPol  corev1.ServiceExternalTrafficPolicy `json:"external_traffic_policy,omitempty"`
+	SessionAffinity     corev1.ServiceAffinity         `json:"session_affinity,omitempty"`
+	Ports               []corev1.ServicePort           `json:"ports"`
+	Selector            map[string]string              `json:"selector"`
+	Labels              map[string]string              `json:"labels"`
+	Annotations         map[string]string              `json:"annotations"`
+	CreatedAt           metav1.Time                    `json:"created_at"`
 }
 
 func networkServiceRow(s corev1.Service) NetworkServiceRow {
+	addressStatus := "not_applicable"
+	if s.Spec.Type == corev1.ServiceTypeLoadBalancer {
+		addressStatus = "pending"
+		if len(s.Status.LoadBalancer.Ingress) > 0 {
+			addressStatus = "ready"
+		}
+	}
+	class := ""
+	if s.Spec.LoadBalancerClass != nil {
+		class = *s.Spec.LoadBalancerClass
+	}
 	return NetworkServiceRow{
-		Namespace: s.Namespace, Name: s.Name, Type: s.Spec.Type, ClusterIP: s.Spec.ClusterIP,
-		ExternalIPs: s.Spec.ExternalIPs, Ports: s.Spec.Ports, Selector: s.Spec.Selector,
-		Labels: s.Labels, CreatedAt: s.CreationTimestamp,
+		Namespace: s.Namespace, Name: s.Name, UID: s.UID, ResourceVersion: s.ResourceVersion,
+		Type: s.Spec.Type, ClusterIP: s.Spec.ClusterIP,
+		ClusterIPs: s.Spec.ClusterIPs, ExternalIPs: s.Spec.ExternalIPs, ExternalName: s.Spec.ExternalName,
+		LoadBalancer: s.Status.LoadBalancer.Ingress, LoadBalancerIP: s.Spec.LoadBalancerIP,
+		AddressStatus: addressStatus, LoadBalancerClass: class,
+		ExternalTrafficPol: s.Spec.ExternalTrafficPolicy, SessionAffinity: s.Spec.SessionAffinity,
+		Ports: s.Spec.Ports, Selector: s.Spec.Selector, Labels: s.Labels, Annotations: s.Annotations,
+		CreatedAt: s.CreationTimestamp,
 	}
 }
 
 // NetworkPolicyRow keeps the Kubernetes policy spec while omitting managedFields.
 type NetworkPolicyRow struct {
-	Namespace   string                                  `json:"namespace"`
-	Name        string                                  `json:"name"`
-	Labels      map[string]string                       `json:"labels"`
-	PodSelector metav1.LabelSelector                    `json:"pod_selector"`
-	PolicyTypes []networkingv1.PolicyType               `json:"policy_types"`
-	Ingress     []networkingv1.NetworkPolicyIngressRule `json:"ingress"`
-	Egress      []networkingv1.NetworkPolicyEgressRule  `json:"egress"`
-	CreatedAt   metav1.Time                             `json:"created_at"`
+	Namespace       string                                  `json:"namespace"`
+	Name            string                                  `json:"name"`
+	UID             types.UID                               `json:"uid"`
+	ResourceVersion string                                  `json:"resource_version"`
+	Labels          map[string]string                       `json:"labels"`
+	PodSelector     metav1.LabelSelector                    `json:"pod_selector"`
+	PolicyTypes     []networkingv1.PolicyType               `json:"policy_types"`
+	Ingress         []networkingv1.NetworkPolicyIngressRule `json:"ingress"`
+	Egress          []networkingv1.NetworkPolicyEgressRule  `json:"egress"`
+	CreatedAt       metav1.Time                             `json:"created_at"`
 }
 
 func networkPolicyRow(p networkingv1.NetworkPolicy) NetworkPolicyRow {
@@ -53,7 +83,8 @@ func networkPolicyRow(p networkingv1.NetworkPolicy) NetworkPolicyRow {
 		}
 	}
 	return NetworkPolicyRow{
-		Namespace: p.Namespace, Name: p.Name, Labels: p.Labels, PodSelector: p.Spec.PodSelector,
+		Namespace: p.Namespace, Name: p.Name, UID: p.UID, ResourceVersion: p.ResourceVersion,
+		Labels: p.Labels, PodSelector: p.Spec.PodSelector,
 		PolicyTypes: types, Ingress: p.Spec.Ingress, Egress: p.Spec.Egress, CreatedAt: p.CreationTimestamp,
 	}
 }

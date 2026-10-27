@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -73,9 +74,13 @@ type taskRun struct {
 	subs       map[chan Event]struct{}
 	done       chan struct{}
 	timer      *time.Timer
+	transient  bool
+	status     string
+	errMsg     string
 }
 
 func (t *taskRun) append(stream, data string) {
+	data = redactTaskText(data)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if room := proto.MaxOutput - len(t.out); room > 0 {
@@ -105,6 +110,8 @@ type Hub struct {
 	conns    map[int64]*agentConn
 	tasks    map[int64]*taskRun
 }
+
+var diagnosticTaskID atomic.Int64
 
 func newHub(st agentStore, log *slog.Logger) *Hub {
 	return &Hub{
@@ -327,6 +334,52 @@ func (h *Hub) Dispatch(hostID, taskID int64, frameType string, payload any, time
 	return nil
 }
 
+// RunDiagnostic executes a fixed internal inspection without persisting raw output
+// to the operator-visible host task history.
+func (h *Hub) runDiagnostic(ctx context.Context, hostID int64, timeout time.Duration) (string, error) {
+	if hostID < 1 {
+		return "", errors.New("invalid host diagnostic request")
+	}
+	if timeout <= 0 || timeout > 30*time.Second {
+		timeout = 30 * time.Second
+	}
+	id := -diagnosticTaskID.Add(1)
+	t := &taskRun{id: id, hostID: hostID, subs: map[chan Event]struct{}{}, done: make(chan struct{}), transient: true}
+	h.mu.Lock()
+	conn := h.conns[hostID]
+	if conn == nil {
+		h.mu.Unlock()
+		return "", errOffline
+	}
+	h.tasks[id] = t
+	h.mu.Unlock()
+	t.mu.Lock()
+	t.timer = time.AfterFunc(timeout+resultGrace, func() {
+		h.finish(id, StatusFailed, nil, "host diagnostic timed out")
+	})
+	t.mu.Unlock()
+	b, err := proto.Encode(proto.TypeExec, proto.Exec{TaskID: id, Command: hostDiagnosticCommand, TimeoutSec: int(timeout.Seconds())})
+	if err == nil {
+		err = conn.enqueue(b)
+	}
+	if err != nil {
+		h.finish(id, StatusFailed, nil, "host diagnostic could not be dispatched")
+		return "", err
+	}
+	select {
+	case <-t.done:
+	case <-ctx.Done():
+		h.finish(id, StatusFailed, nil, "host diagnostic cancelled")
+		return "", ctx.Err()
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.status != StatusSuccess {
+		return "", errors.New("host diagnostic did not complete")
+	}
+	return string(t.out), nil
+}
+
 // finish persists the final state and releases waiters/subscribers. Idempotent.
 func (h *Hub) finish(taskID int64, status string, exit *int, errMsg string) {
 	h.mu.Lock()
@@ -345,10 +398,13 @@ func (h *Hub) finish(taskID int64, status string, exit *int, errMsg string) {
 		out += "\n[output truncated]"
 	}
 	t.mu.Unlock()
-	if err := h.st.finishTask(context.Background(), taskID, status, exit, out, errMsg); err != nil {
-		h.log.Error("persist task result failed", "task_id", taskID, "err", err)
+	if !t.transient {
+		if err := h.st.finishTask(context.Background(), taskID, status, exit, out, errMsg); err != nil {
+			h.log.Error("persist task result failed", "task_id", taskID, "err", err)
+		}
 	}
 	t.mu.Lock()
+	t.status, t.errMsg = status, errMsg
 	for ch := range t.subs {
 		close(ch)
 	}

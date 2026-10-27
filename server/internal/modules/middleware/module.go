@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,7 @@ const (
 
 	approvalSQL    = "middleware.sql"
 	approvalChange = "middleware.change"
+	approvalRedis  = "middleware.redis"
 )
 
 var validTypes = map[string]bool{TypeKafka: true, TypeRabbitMQ: true, TypeRocketMQ: true, TypeMySQL: true, TypePostgres: true, TypeRedis: true}
@@ -537,7 +539,11 @@ type change struct {
 
 // runChange gates ch on the instance env and executes it immediately when no approval is required.
 func (m *Module) runChange(c *gin.Context, inst *Instance, ch change, title string) {
-	audit.SetDetail(c, ch)
+	audit.SetDetail(c, gin.H{"op": ch.Op, "instance_id": ch.InstanceID, "topic": ch.Topic, "queue": ch.Queue, "vhost": ch.VHost})
+	if m.d.Approval == nil {
+		httpx.Fail(c, httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "审批服务不可用，中间件变更已拒绝"))
+		return
+	}
 	t, pending, err := m.d.Approval.Gate(c.Request.Context(), rbac.PrincipalFrom(c), approval.CreateInput{
 		Type: approvalChange, Title: fmt.Sprintf("[%s] %s", inst.Name, title), Env: inst.Env, Payload: ch})
 	if err != nil {
@@ -582,9 +588,9 @@ func (m *Module) registerApprovals(d *app.Deps) {
 	}
 	specs := []approval.TypeSpec{
 		{Type: approvalSQL, Module: "middleware", Description: "生产库高危 SQL（DROP/TRUNCATE/ALTER/无 WHERE 的 DELETE/UPDATE 等）执行审批",
-			CreatePermission: permConsole, Timeout: 5 * time.Minute, Handler: approval.HandlerFunc(m.onSQLApproved)},
+			CreatePermission: permConsole, Timeout: 5 * time.Minute, SanitizePayload: sanitizeSQLApprovalPayload, Handler: approval.HandlerFunc(m.onSQLApproved)},
 		{Type: approvalChange, Module: "middleware", Description: "中间件变更（Kafka Topic / RabbitMQ 队列创建删除）审批",
-			CreatePermission: permManage, Timeout: 2 * time.Minute, Handler: approval.HandlerFunc(func(ctx context.Context, t *approval.Ticket) (any, error) {
+			CreatePermission: permManage, Timeout: 2 * time.Minute, SanitizePayload: sanitizeChangeApprovalPayload, Handler: approval.HandlerFunc(func(ctx context.Context, t *approval.Ticket) (any, error) {
 				var ch change
 				if err := t.DecodePayload(&ch); err != nil {
 					return nil, err
@@ -593,8 +599,16 @@ func (m *Module) registerApprovals(d *app.Deps) {
 				if err != nil {
 					return nil, err
 				}
+				if inst.Env != t.Env {
+					return nil, httpx.Forbidden("approval target environment changed")
+				}
+				if _, err := m.approvedPrincipal(ctx, t, permManage, inst.Env); err != nil {
+					return nil, err
+				}
 				return m.execChange(ctx, inst, ch)
 			})},
+		{Type: approvalRedis, Module: "middleware", Description: "Redis 写命令执行审批",
+			CreatePermission: permConsole, Timeout: 5 * time.Minute, SanitizePayload: sanitizeRedisApprovalPayload, Handler: approval.HandlerFunc(m.onRedisApproved)},
 	}
 	for _, s := range specs {
 		if err := d.Approval.Register(s); err != nil && d.Logger != nil {

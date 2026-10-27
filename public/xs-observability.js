@@ -76,13 +76,13 @@
     const status = data.status || data.status_code || data.code;
     const latency = data.latency_ms ?? data.duration_ms ?? data.elapsed_ms;
     if (method && requestPath) {
-      inner = `HTTP ${method} ${requestPath}${status != null ? " → " + status : ""}${latency != null ? "，耗时 " + latency + " 毫秒" : ""}${data.error ? " · " + data.error : ""}`;
+      inner = `HTTP ${method} ${requestPath}${status != null ? " → " + status : ""}${latency != null ? "，耗时 " + latency + " 毫秒" : ""}${data.error ? "   " + data.error : ""}`;
       if (Number(status) >= 500) lv = "ERROR"; else if (Number(status) >= 400) lv = "WARN";
     }
     const access = inner.match(/"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\S+)\s+HTTP\/[\d.]+"\s+(\d{3})\s+(\d+|-)/);
     if (access) { data.method = access[1]; data.path = access[2]; data.status = +access[3]; data.response_bytes = access[4]; inner = `HTTP ${access[1]} ${access[2]} → ${access[3]}（${+access[3] >= 500 ? "服务端错误" : +access[3] >= 400 ? "请求未成功" : +access[3] >= 300 ? "重定向" : "成功"}），响应 ${access[4]} 字节`; if (+access[3] >= 500) lv = "ERROR"; else if (+access[3] >= 400) lv = "WARN"; }
     const reason = /connection refused/i.test(inner) ? "连接被拒绝" : /context deadline exceeded|i\/o timeout|timed out/i.test(inner) ? "请求或连接超时" : /no such host/i.test(inner) ? "域名解析失败" : /permission denied|forbidden/i.test(inner) ? "访问权限不足" : /CrashLoopBackOff/.test(inner) ? "容器反复崩溃，正在等待重启" : /device .+ is unhealthy on this node/i.test(inner) ? "该节点的设备健康检查未通过" : /Device Registered/i.test(inner) ? "设备资源已注册" : /failed to (?:watch|list)/i.test(inner) ? "读取或监听 Kubernetes 资源失败" : "";
-    if (reason) inner = reason + " · " + inner;
+    if (reason) inner = reason + "   " + inner;
     const app = labels.container || kub.container_name || row.service || data.service || "—";
     return { ts: new Date(row.ts), lv, app, cluster: cluster.name, msg: inner || "（空日志）", json: { ...labels, ...data, cluster: cluster.name, cluster_id: cluster.id, level: lv, app, namespace: labels.namespace || kub.namespace_name || "", pod: labels.pod || kub.pod_name || "", msg: inner, raw } };
   }
@@ -135,6 +135,46 @@
     }
     return { cluster, candidates, basis, namespace, type, name, pod, node, podName, nodeName: node && node.name || pod && pod.node || nodeName, instance, nodeAlert, inventoryError: match.error || "", note: !cluster ? "无法唯一确认集群，请为数据源配置 cluster_id 或为告警增加 cluster 标签。" : type === "Namespace" ? "此事件仅定位到命名空间，原始告警未提供 Pod 或其他具体资源；不能据此认定某个 Pod 故障。" : podName && !pod ? "原始标签中的 Pod 当前未在清单中找到，可能已删除或重建；保留事件触发时的资源名称。" : "" };
   }
+  const alertWorkloadLabels = [
+    ["deployment", "deployments", "Deployment"],
+    ["k8s.deployment.name", "deployments", "Deployment"],
+    ["statefulset", "statefulsets", "StatefulSet"],
+    ["k8s.statefulset.name", "statefulsets", "StatefulSet"],
+    ["daemonset", "daemonsets", "DaemonSet"],
+    ["k8s.daemonset.name", "daemonsets", "DaemonSet"]
+  ];
+  function alertWorkloadCandidates(alert) {
+    const labels = alert && alert.labels || {}, found = new Map();
+    alertWorkloadLabels.forEach(([key, kind, kindLabel]) => {
+      const name = String(labels[key] || "").trim();
+      if (name) found.set(kind + "/" + name, { kind, kindLabel, name });
+    });
+    return [...found.values()];
+  }
+  function alertRemediationTarget(alert, cluster, workloads) {
+    if (!alert || alert.status !== "firing" || !cluster || cluster.id == null) return null;
+    const candidates = alertWorkloadCandidates(alert), labels = alert.labels || {};
+    const namespace = labels.namespace || labels.exported_namespace || labels["k8s.namespace.name"] || "";
+    if (candidates.length !== 1 || !namespace) return null;
+    const candidate = candidates[0];
+    const matches = items(workloads && workloads[candidate.kind]).filter((row) =>
+      row && row.name === candidate.name && row.namespace === namespace
+    );
+    if (matches.length !== 1) return null;
+    const row = matches[0];
+    return {
+      clusterId: cluster.id, clusterName: cluster.name, env: cluster.env,
+      namespace, kind: candidate.kind, kindLabel: candidate.kindLabel, name: candidate.name,
+      ready: row.ready || "", replicas: row.replicas == null ? null : row.replicas, status: row.status || ""
+    };
+  }
+  function redactDiagnosticText(value) {
+    return String(value == null ? "" : value)
+      .replace(/\b(authorization)\b(\s*[:=]\s*)(bearer\s+)?[^\s,;]+/gi, (_, key, sep, scheme) => key + sep + (scheme || "") + "[REDACTED]")
+      .replace(/\b(bearer)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED]")
+      .replace(/\b(password|passwd|token|secret|api[_-]?key)\b(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1$2[REDACTED]")
+      .slice(0, 1200);
+  }
   function alertBelongsToScope(alert, scope) {
     const labels = alert.labels || {}, targetId = String(scope.targetId || ""), target = scope.targetCluster || null;
     const source = (scope.datasources || []).find((d) => String(d.id) === String(alert.datasource_id));
@@ -152,6 +192,6 @@
     const resources = [labels.pod, labels.pod_name, labels.service, labels.deployment, labels.statefulset, labels.daemonset, labels.job, labels.job_name].filter(Boolean).map(String);
     return resources.some((value) => (scope.pods || []).indexOf(value) >= 0 || (scope.services || []).indexOf(value) >= 0 || (scope.workloads || []).indexOf(value) >= 0);
   }
-  root.XSObserve = { items, env, datasource, metricQueries, matrix, logQuery, normalizeLog, traceRecord, alertLocation, alertBelongsToScope, quote, regex };
+  root.XSObserve = { items, env, datasource, metricQueries, matrix, logQuery, normalizeLog, traceRecord, alertLocation, alertWorkloadCandidates, alertRemediationTarget, redactDiagnosticText, alertBelongsToScope, quote, regex };
   if (typeof module !== "undefined") module.exports = root.XSObserve;
 })(typeof window === "undefined" ? globalThis : window);

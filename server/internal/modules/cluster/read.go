@@ -319,6 +319,7 @@ type WorkloadRow struct {
 type PodRow struct {
 	Namespace  string            `json:"namespace"`
 	Name       string            `json:"name"`
+	UID        string            `json:"uid"`
 	Phase      string            `json:"phase"`
 	Status     string            `json:"status"`
 	Ready      string            `json:"ready"`
@@ -341,7 +342,7 @@ func images(spec corev1.PodSpec) []string {
 }
 
 func podRow(p corev1.Pod) PodRow {
-	r := PodRow{Namespace: p.Namespace, Name: p.Name, Phase: string(p.Status.Phase), Status: string(p.Status.Phase),
+	r := PodRow{Namespace: p.Namespace, Name: p.Name, UID: string(p.UID), Phase: string(p.Status.Phase), Status: string(p.Status.Phase),
 		Node: p.Spec.NodeName, PodIP: p.Status.PodIP, Images: images(p.Spec), Labels: p.Labels, CreatedAt: p.CreationTimestamp.Time}
 	if p.Status.Reason != "" {
 		r.Status = p.Status.Reason

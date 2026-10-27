@@ -1,9 +1,45 @@
 # 更新日志
 
-本文件记录面向使用者与运维者的版本变更。更细的逐页状态见 [docs/PROGRESS.md](docs/PROGRESS.md)。
+本文件记录面向使用者与运维者的版本变更。平台架构与开发说明见 [docs/PLATFORM.md](docs/PLATFORM.md)。
 
-版本规则：应用版本取 `vMAJOR.MINOR`（如 `v1.16`），通过 `git tag` 与 `--build-arg VERSION` 写入二进制；
-集群内镜像 tag 使用构建序号（当前 `v1.63`，commit `f9cd41e`），两者不通用。
+版本规则：应用版本使用 `vMAJOR.MINOR` 格式，并可通过 Git tag 与 `--build-arg VERSION` 写入二进制；
+部署镜像 tag 可按发布流程单独编号。
+
+---
+
+## v1.19 — 2026-10-27
+
+主题：**围绕 Kubernetes 日常运维补齐资源管理、环境审批与交付能力，简化常用操作**。
+
+### 新增
+
+- **存储管理**：管理 StorageClass、PersistentVolume、PersistentVolumeClaim，并在集群具备快照 API 与驱动时管理卷快照。
+- **弹性伸缩与定时任务**：管理 autoscaling/v2 HPA 和 batch/v1 CronJob，支持查看 Job 运行历史与手动触发任务。
+- **快照恢复**：在快照能力可用时查看 VolumeSnapshot 状态，并从已就绪快照创建新 PVC。
+- **网络资源**：提供 Service、Ingress 与 NetworkPolicy 的表单管理；Service 支持 ClusterIP、NodePort、LoadBalancer 与 ExternalName。
+- **对外服务与拓扑**：对外服务聚焦 Ingress 和已安装的 APISIX 路由；拓扑按层级展示调用关系，并区分实际 trace 与 NetworkPolicy 声明。
+- **配置管理**：提供 ConfigMap 与 Secret 管理。Secret 仅展示元数据和键名，不在页面回显密钥值。
+- **节点维护**：按节点标签进行分组，支持批量维护标签和污点。
+- **集群接入与分发**：支持 kubeconfig 导入、集群信息对比及跨集群逐项分发资源清单。
+- **集群安装**：支持面向 Linux 主机的 K3s 安装任务；高可用场景要求预先准备 API 负载均衡地址。
+- **应用交付**：增加 Helm 仓库目录、Argo CD 应用读取与固定版本同步，以及 Jenkins 参数发现。
+- **交付工作台**：恢复应用工作区布局，流水线列表可进入运行阶段、日志和操作详情。
+- **自动化与诊断**：增加平台容器内的 Ansible 执行能力、集群健康巡检、告警诊断建议和经审批的工作负载修复入口。
+- **自然语言草稿**：在 Service、Ingress、存储与配置创建表单中生成待确认草稿，由用户检查后再提交。
+
+### 修复与优化
+
+- 生产环境未配置审批策略时拒绝写操作，避免生产变更绕过审批。
+- Service 与存储入口归入“工作负载”导航；系统设置不再展示重复的 AI 功能原始键值和公告配置行，AI 场景默认启用。
+- 清理缺少后端持久化的证书管理入口，避免将页面本地状态误认为集群证书变更。
+- 更新面向用户的产品说明和平台技术文档。
+
+### 使用说明
+
+- Service 拓扑仅根据已检索到的链路数据展示观测到的调用关系；NetworkPolicy 图展示策略声明，不等同于 CNI 执行结果。
+- 集群间资源分发逐集群执行，失败时可能出现部分成功；需人工核对各集群结果。
+- 外部 Jenkins、Argo CD、Helm 仓库及 AI 服务需在平台中配置可用端点与凭据后使用。
+- K3s 高可用安装依赖预先可用的负载均衡地址；平台不会自动创建云负载均衡或 VIP。
 
 ---
 

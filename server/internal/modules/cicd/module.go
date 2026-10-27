@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -97,23 +98,41 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	if d.Logger != nil {
 		m.log = d.Logger
 	}
-	if err := d.Approval.Register(approval.TypeSpec{
-		Type: "cicd.deploy", Module: "cicd", Description: "应用部署 / 回滚到受控环境",
-		CreatePermission: "cicd:deploy", Timeout: 30 * time.Minute, Handler: &deployHandler{m},
-	}); err != nil {
-		m.log.Error("register approval type", "err", err)
+	if d.Approval != nil {
+		if err := d.Approval.Register(approval.TypeSpec{
+			Type: "cicd.deploy", Module: "cicd", Description: "应用部署 / 回滚到受控环境",
+			CreatePermission: "cicd:deploy", Timeout: 30 * time.Minute, Handler: &deployHandler{m},
+		}); err != nil {
+			m.log.Error("register approval type", "err", err)
+		}
+		if err := d.Approval.Register(approval.TypeSpec{
+			Type: cicdConfigApprovalType, Module: "cicd", Description: "修改 CICD 配置",
+			CreatePermission: "cicd:manage", Timeout: 30 * time.Minute, Handler: &cicdConfigHandler{m},
+		}); err != nil {
+			m.log.Error("register CICD config approval type", "err", err)
+		}
+	} else if m.log != nil {
+		m.log.Warn("cicd: approval service is not configured; configuration writes will be unavailable")
 	}
 	m.registerTools(d.AITools)
 
 	g := r.Group("/cicd")
+	m.registerArgoRoutes(g)
 	read, manage := rbac.RequirePerm("cicd:read"), rbac.RequirePerm("cicd:manage")
 	run, deploy := rbac.RequirePerm("cicd:run"), rbac.RequirePerm("cicd:deploy")
 
 	g.GET("/targets", read, m.listTargets)
 	g.POST("/targets", manage, m.createTarget)
 	g.DELETE("/targets/:id", manage, m.deleteRow("cicd_targets", "target"))
+	g.GET("/helm/repos", read, m.listHelmRepos)
+	g.POST("/helm/repos", manage, m.createHelmRepo)
+	g.PUT("/helm/repos/:id", manage, m.updateHelmRepo)
+	g.DELETE("/helm/repos/:id", manage, m.deleteHelmRepo)
+	g.POST("/helm/repos/:id/sync", manage, m.syncHelmRepoHTTP)
+	g.GET("/helm/charts", read, m.listHelmCharts)
 
 	g.GET("/jenkins", read, m.listJenkins)
+	g.GET("/jenkins/:id/job-parameters", read, m.jenkinsJobParameters)
 	g.POST("/jenkins", manage, m.createJenkins)
 	g.DELETE("/jenkins/:id", manage, m.deleteRow("cicd_jenkins", "jenkins"))
 
@@ -238,6 +257,60 @@ type Stage struct {
 	TimeoutSec     int               `json:"timeout_sec,omitempty"`
 }
 
+var sensitiveStageKey = regexp.MustCompile(`(?i)(password|passwd|token|secret|credential|api[_-]?key|private[_-]?key|authorization|access[_-]?key|client[_-]?secret)`)
+var stageConfigKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,127}$`)
+
+func validSecretReference(value string) bool {
+	_, _, ok := secretReferenceParts(value)
+	return ok
+}
+
+func secretReferenceParts(value string) (string, string, bool) {
+	const prefix = "secret://"
+	if !strings.HasPrefix(value, prefix) {
+		return "", "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(value, prefix), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	if !nameRe.MatchString(parts[0]) || !nameRe.MatchString(parts[1]) {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func validateStageSecrets(stage Stage) error {
+	for key, value := range stage.Env {
+		if !stageConfigKey.MatchString(key) || inlineSecretText(key) {
+			return httpx.Validation("pipeline environment keys must be valid names")
+		}
+		if sensitiveStageKey.MatchString(key) && !validSecretReference(value) {
+			return httpx.Validation("inline sensitive pipeline environment values are not supported; use a secret:// reference")
+		}
+		if inlineSecretText(value) {
+			return httpx.Validation("inline sensitive pipeline values are not supported")
+		}
+	}
+	for key, value := range stage.Params {
+		if !stageConfigKey.MatchString(key) || inlineSecretText(key) {
+			return httpx.Validation("Jenkins parameter keys must be valid names")
+		}
+		if sensitiveStageKey.MatchString(key) {
+			return httpx.Validation("inline sensitive Jenkins parameters are not supported")
+		}
+		if inlineSecretText(value) {
+			return httpx.Validation("inline sensitive pipeline values are not supported")
+		}
+	}
+	for _, value := range append(append([]string(nil), stage.Commands...), stage.ExtraArgs...) {
+		if inlineSecretText(value) {
+			return httpx.Validation("inline sensitive pipeline values are not supported")
+		}
+	}
+	return nil
+}
+
 // Pipeline is an ordered list of stages for an application.
 type Pipeline struct {
 	ID             int64     `json:"id"`
@@ -259,6 +332,14 @@ func validateStages(st []Stage, a *Application) error {
 	for i, s := range st {
 		if s.Name == "" || len(s.Name) > 40 || !nameRe.MatchString(s.Name) {
 			return httpx.Validation(fmt.Sprintf("stage %d: name must be a DNS label (<=40)", i))
+		}
+		if err := validateStageSecrets(s); err != nil {
+			return err
+		}
+		for _, value := range []string{s.Type, s.Image, s.RegistrySecret, s.DeployEnv, s.JenkinsJob} {
+			if inlineSecretText(value) {
+				return httpx.Validation("inline sensitive pipeline values are not supported")
+			}
 		}
 		switch s.Type {
 		case "build":
@@ -297,6 +378,96 @@ func validateEnvs(envs []EnvTarget) error {
 		if e.Helm != nil && (e.Helm.Release == "" || e.Helm.Chart == "") {
 			return httpx.Validation("env " + e.Name + ": helm.release and helm.chart required")
 		}
+		for _, value := range []string{e.Name, e.Namespace, e.Deployment, e.Container} {
+			if inlineSecretText(value) {
+				return httpx.Validation("inline sensitive deployment values are not supported")
+			}
+		}
+		if e.Helm != nil {
+			for _, value := range []string{e.Helm.Release, e.Helm.Chart, e.Helm.Version, e.Helm.ImageRepoKey, e.Helm.ImageTagKey} {
+				if inlineSecretText(value) {
+					return httpx.Validation("inline sensitive deployment values are not supported")
+				}
+			}
+			if err := validateCredentialFreeURL(e.Helm.Repo); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+var sensitiveHelmKey = regexp.MustCompile(`(?i)(password|passwd|token|secret|credential|api[_-]?key|private[_-]?key)`)
+
+func validateHelmSet(envs []EnvTarget) error {
+	for _, env := range envs {
+		if env.Helm == nil {
+			continue
+		}
+		for _, assignment := range env.Helm.Set {
+			key, _, ok := strings.Cut(assignment, "=")
+			if !ok || strings.TrimSpace(key) == "" {
+				return httpx.Validation("Helm set entries must use key=value")
+			}
+			if sensitiveHelmKey.MatchString(key) {
+				return httpx.Validation("inline sensitive Helm values are not supported; use a Kubernetes Secret reference")
+			}
+			_, value, _ := strings.Cut(assignment, "=")
+			if inlineSecretText(value) {
+				return httpx.Validation("inline sensitive Helm values are not supported; use a Kubernetes Secret reference")
+			}
+		}
+	}
+	return nil
+}
+
+func (m *Module) validateApplicationTargets(ctx context.Context, envs []EnvTarget) error {
+	for _, env := range envs {
+		if err := m.validateDeploymentTarget(ctx, &env); err != nil {
+			return err
+		}
+	}
+	return validateHelmSet(envs)
+}
+
+func validateApplicationRepoURL(value string) error {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.User != nil || inlineSecretText(parsed.RawQuery) || inlineSecretText(parsed.Fragment) {
+		return httpx.Validation("repository URL must not contain credentials")
+	}
+	return nil
+}
+
+func validateApplicationImageRepo(value string) error {
+	if inlineSecretText(value) {
+		return httpx.Validation("image repository must not contain credentials")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err == nil && parsed.User != nil {
+		return httpx.Validation("image repository must not contain credentials")
+	}
+	return nil
+}
+
+func validateApplicationText(in *Application) error {
+	if in == nil {
+		return httpx.Validation("invalid application configuration")
+	}
+	for _, value := range []string{in.Name, in.Branch, in.Dockerfile, in.ContextDir, in.GitUsername} {
+		if inlineSecretText(value) {
+			return httpx.Validation("application configuration must not contain inline secrets")
+		}
+	}
+	return nil
+}
+
+func validateCredentialFreeURL(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if inlineSecretText(value) || (err == nil && (parsed.User != nil || inlineSecretText(parsed.RawQuery) || inlineSecretText(parsed.Fragment))) {
+		return httpx.Validation("URL configuration must not contain credentials")
 	}
 	return nil
 }
@@ -320,10 +491,11 @@ type targetIn struct {
 	Name       string `json:"name" binding:"required,max=64"`
 	Kubeconfig string `json:"kubeconfig" binding:"required"`
 	Namespace  string `json:"namespace"`
+	Env        string `json:"env" binding:"max=64"`
 }
 
 func (m *Module) listTargets(c *gin.Context) {
-	rows, err := m.db.Query(c, `SELECT id,name,namespace,kubeconfig_enc,created_at FROM cicd_targets ORDER BY id`)
+	rows, err := m.db.Query(c, `SELECT id,name,namespace,env,kubeconfig_enc,created_at FROM cicd_targets ORDER BY id`)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -332,13 +504,13 @@ func (m *Module) listTargets(c *gin.Context) {
 	out := []gin.H{}
 	for rows.Next() {
 		var id int64
-		var name, ns, enc string
+		var name, ns, env, enc string
 		var at time.Time
-		if err := rows.Scan(&id, &name, &ns, &enc, &at); err != nil {
+		if err := rows.Scan(&id, &name, &ns, &env, &enc, &at); err != nil {
 			httpx.Fail(c, err)
 			return
 		}
-		out = append(out, gin.H{"id": id, "name": name, "namespace": ns, "kubeconfig": "********", "created_at": at})
+		out = append(out, gin.H{"id": id, "name": name, "namespace": ns, "env": env, "kubeconfig": "********", "created_at": at})
 	}
 	httpx.OK(c, out)
 }
@@ -348,26 +520,37 @@ func (m *Module) createTarget(c *gin.Context) {
 	if !httpx.Bind(c, &in) {
 		return
 	}
+	if inlineSecretText(in.Name) || inlineSecretText(in.Namespace) {
+		httpx.Fail(c, httpx.Validation("target configuration must not contain inline secrets"))
+		return
+	}
 	if in.Namespace == "" {
 		in.Namespace = "matrix-cicd"
 	}
+	in.Env = strings.TrimSpace(in.Env)
+	if in.Env != "" && !validArgoEnv(in.Env) {
+		httpx.Fail(c, httpx.Validation("env must use up to 64 letters, digits, dots, hyphens or underscores"))
+		return
+	}
+	if in.Env != "" && !rbac.PrincipalFrom(c).CanEnv(in.Env) {
+		httpx.Fail(c, httpx.Forbidden("environment not in your scope: "+in.Env))
+		return
+	}
 	if _, err := clientcmd.RESTConfigFromKubeConfig([]byte(in.Kubeconfig)); err != nil {
-		httpx.Fail(c, httpx.Validation("invalid kubeconfig: "+err.Error()))
+		httpx.Fail(c, httpx.Validation("invalid kubeconfig"))
 		return
 	}
-	enc, err := m.d.Crypto.Encrypt(in.Kubeconfig)
+	change := cicdConfigMutation{Kind: "target.create", Target: &in, Envs: []string{in.Env}}
+	if m.gateConfigMutation(c, change, nil) {
+		return
+	}
+	id, err := m.applyCICDConfigMutation(c, change)
 	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	var id int64
-	if err := m.db.QueryRow(c, `INSERT INTO cicd_targets(name,kubeconfig_enc,namespace) VALUES($1,$2,$3) RETURNING id`,
-		in.Name, enc, in.Namespace).Scan(&id); err != nil {
-		httpx.Fail(c, httpx.Conflict("target name exists").Wrap(err))
+		httpx.Fail(c, httpx.Conflict("target name exists").Wrap(errors.New("configuration write failed")))
 		return
 	}
 	audit.SetResource(c, "cicd_target", fmt.Sprint(id))
-	httpx.Created(c, gin.H{"id": id, "name": in.Name, "namespace": in.Namespace})
+	httpx.Created(c, gin.H{"id": id, "name": in.Name, "namespace": in.Namespace, "env": in.Env})
 }
 
 // targetClient returns a clientset and runner namespace for target id.
@@ -384,19 +567,31 @@ func (m *Module) targetClient(ctx context.Context, id int64) (kubernetes.Interfa
 	return cs, ns, []byte(kc), err
 }
 
+func (m *Module) targetConfigEnv(ctx context.Context, id int64) (string, error) {
+	var env string
+	if err := m.db.QueryRow(ctx, `SELECT env FROM cicd_targets WHERE id=$1`, id).Scan(&env); err != nil {
+		return "", notFound(err)
+	}
+	return strings.TrimSpace(env), nil
+}
+
 func (m *Module) deleteRow(table, res string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, ok := httpx.ParamID(c, "id")
 		if !ok {
 			return
 		}
-		tag, err := m.db.Exec(c, "DELETE FROM "+table+" WHERE id=$1", id)
+		change, err := m.deleteConfigEnvs(c, table, id)
 		if err != nil {
-			httpx.Fail(c, httpx.Conflict(res+" is in use").Wrap(err))
+			httpx.Fail(c, err)
 			return
 		}
-		if tag.RowsAffected() == 0 {
-			httpx.Fail(c, httpx.ErrNotFound)
+		change.Resource = res
+		if m.gateConfigMutation(c, change, nil) {
+			return
+		}
+		if _, err := m.applyCICDConfigMutation(c, change); err != nil {
+			httpx.Fail(c, httpx.Conflict(res+" is in use").Wrap(errors.New("configuration delete failed")))
 			return
 		}
 		audit.SetResource(c, "cicd_"+res, fmt.Sprint(id))
@@ -434,23 +629,53 @@ func (m *Module) listJenkins(c *gin.Context) {
 	httpx.OK(c, out)
 }
 
+func (m *Module) jenkinsJobParameters(c *gin.Context) {
+	id, ok := httpx.ParamID(c, "id")
+	if !ok {
+		return
+	}
+	job := c.Query("job")
+	if !validJenkinsJob(job) {
+		httpx.Fail(c, httpx.Validation("invalid Jenkins job path"))
+		return
+	}
+	client, err := m.jenkinsClient(c, id)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	parameters, err := client.parameters(ctx, job)
+	if err != nil {
+		httpx.Fail(c, httpx.Conflict("cannot read Jenkins job parameters").Wrap(err))
+		return
+	}
+	audit.SetResource(c, "cicd_jenkins", fmt.Sprint(id))
+	audit.SetDetail(c, gin.H{"job": job, "parameter_count": len(parameters)})
+	httpx.OK(c, gin.H{"job": job, "parameters": parameters})
+}
+
 func (m *Module) createJenkins(c *gin.Context) {
 	var in jenkinsIn
 	if !httpx.Bind(c, &in) {
 		return
 	}
-	enc := ""
-	if in.Token != "" {
-		var err error
-		if enc, err = m.d.Crypto.Encrypt(in.Token); err != nil {
-			httpx.Fail(c, err)
-			return
-		}
+	if inlineSecretText(in.Name) || inlineSecretText(in.Username) {
+		httpx.Fail(c, httpx.Validation("Jenkins configuration must not contain inline secrets"))
+		return
 	}
-	var id int64
-	if err := m.db.QueryRow(c, `INSERT INTO cicd_jenkins(name,url,username,token_enc) VALUES($1,$2,$3,$4) RETURNING id`,
-		in.Name, strings.TrimRight(in.URL, "/"), in.Username, enc).Scan(&id); err != nil {
-		httpx.Fail(c, httpx.Conflict("jenkins name exists").Wrap(err))
+	if err := validateCredentialFreeURL(in.URL); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	change := cicdConfigMutation{Kind: "jenkins.create", Jenkins: &in}
+	if m.gateConfigMutation(c, change, nil) {
+		return
+	}
+	id, err := m.applyCICDConfigMutation(c, change)
+	if err != nil {
+		httpx.Fail(c, httpx.Conflict("jenkins name exists").Wrap(errors.New("configuration write failed")))
 		return
 	}
 	audit.SetResource(c, "cicd_jenkins", fmt.Sprint(id))
@@ -495,12 +720,39 @@ func (m *Module) loadApp(ctx context.Context, id int64) (*Application, error) {
 
 func (a *Application) public() *Application {
 	cp := *a
+	cp.Envs = append([]EnvTarget(nil), a.Envs...)
+	cp.Name = redactCICDText(cp.Name)
+	cp.RepoURL = redactCICDText(cp.RepoURL)
+	cp.Branch = redactCICDText(cp.Branch)
+	cp.Dockerfile = redactCICDText(cp.Dockerfile)
+	cp.ContextDir = redactCICDText(cp.ContextDir)
+	cp.ImageRepo = redactCICDText(cp.ImageRepo)
+	cp.GitUsername = redactCICDText(cp.GitUsername)
 	cp.GitToken, cp.WebhookSecret = "", ""
 	if a.gitTokenEnc != "" {
 		cp.GitToken = "********"
 	}
 	if cp.Envs == nil {
 		cp.Envs = []EnvTarget{}
+	}
+	for i := range cp.Envs {
+		cp.Envs[i].Name = redactCICDText(cp.Envs[i].Name)
+		cp.Envs[i].Namespace = redactCICDText(cp.Envs[i].Namespace)
+		cp.Envs[i].Deployment = redactCICDText(cp.Envs[i].Deployment)
+		cp.Envs[i].Container = redactCICDText(cp.Envs[i].Container)
+		if cp.Envs[i].Helm == nil {
+			continue
+		}
+		cp.Envs[i].Helm = cloneHelmSpec(cp.Envs[i].Helm)
+		cp.Envs[i].Helm.Release = redactCICDText(cp.Envs[i].Helm.Release)
+		cp.Envs[i].Helm.Chart = redactCICDText(cp.Envs[i].Helm.Chart)
+		cp.Envs[i].Helm.Repo = redactCICDText(cp.Envs[i].Helm.Repo)
+		cp.Envs[i].Helm.Version = redactCICDText(cp.Envs[i].Helm.Version)
+		cp.Envs[i].Helm.ImageRepoKey = redactCICDText(cp.Envs[i].Helm.ImageRepoKey)
+		cp.Envs[i].Helm.ImageTagKey = redactCICDText(cp.Envs[i].Helm.ImageTagKey)
+		for j := range cp.Envs[i].Helm.Set {
+			cp.Envs[i].Helm.Set[j] = redactCICDText(cp.Envs[i].Helm.Set[j])
+		}
 	}
 	return &cp
 }
@@ -564,32 +816,53 @@ func (m *Module) createApp(c *gin.Context) {
 		return
 	}
 	in.defaults()
+	in.WebhookSecret = ""
+	if err := validateApplicationText(&in); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if err := validateApplicationRepoURL(in.RepoURL); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if err := validateApplicationImageRepo(in.ImageRepo); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	if err := validateEnvs(in.Envs); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
+	p := rbac.PrincipalFrom(c)
+	for _, env := range in.Envs {
+		if !p.CanEnv(env.Name) {
+			httpx.Fail(c, httpx.Forbidden("environment not in your scope: "+env.Name))
+			return
+		}
+	}
+	if err := m.validateApplicationTargets(c, in.Envs); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	secret := randSecret()
-	wenc, err := m.d.Crypto.Encrypt(secret)
+	change := cicdConfigMutation{Kind: "application.create", Application: &in, WebhookSecret: secret}
+	for _, env := range in.Envs {
+		change.Envs = append(change.Envs, env.Name)
+	}
+	if m.gateConfigMutation(c, change, gin.H{"webhook_secret": secret}) {
+		return
+	}
+	id, err := m.applyCICDConfigMutation(c, change)
+	if err != nil {
+		httpx.Fail(c, httpx.Conflict("application name exists").Wrap(errors.New("configuration write failed")))
+		return
+	}
+	a, err := m.loadApp(c, id)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	tenc := ""
-	if in.GitToken != "" {
-		if tenc, err = m.d.Crypto.Encrypt(in.GitToken); err != nil {
-			httpx.Fail(c, err)
-			return
-		}
-	}
-	envs, _ := json.Marshal(in.Envs)
-	a, err := scanApp(m.db.QueryRow(c, `INSERT INTO cicd_applications(name,repo_url,branch,dockerfile,context_dir,image_repo,git_username,git_token_enc,webhook_secret_enc,envs)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING `+appCols,
-		in.Name, in.RepoURL, in.Branch, in.Dockerfile, in.ContextDir, in.ImageRepo, in.GitUsername, tenc, wenc, envs))
-	if err != nil {
-		httpx.Fail(c, httpx.Conflict("application name exists").Wrap(err))
-		return
-	}
-	audit.SetResource(c, "cicd_application", fmt.Sprint(a.ID))
+	audit.SetResource(c, "cicd_application", fmt.Sprint(id))
 	out := a.public()
 	out.WebhookSecret = secret // shown once
 	httpx.Created(c, out)
@@ -610,21 +883,50 @@ func (m *Module) updateApp(c *gin.Context) {
 		return
 	}
 	in.defaults()
+	in.WebhookSecret = ""
+	if err := validateApplicationText(&in); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if err := validateApplicationRepoURL(in.RepoURL); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if err := validateApplicationImageRepo(in.ImageRepo); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	if err := validateEnvs(in.Envs); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	tenc := cur.gitTokenEnc
-	if in.GitToken != "" && in.GitToken != "********" {
-		if tenc, err = m.d.Crypto.Encrypt(in.GitToken); err != nil {
-			httpx.Fail(c, err)
+	p := rbac.PrincipalFrom(c)
+	for _, env := range in.Envs {
+		if !p.CanEnv(env.Name) {
+			httpx.Fail(c, httpx.Forbidden("environment not in your scope: "+env.Name))
 			return
 		}
 	}
-	envs, _ := json.Marshal(in.Envs)
-	a, err := scanApp(m.db.QueryRow(c, `UPDATE cicd_applications SET name=$2,repo_url=$3,branch=$4,dockerfile=$5,context_dir=$6,image_repo=$7,
-		git_username=$8,git_token_enc=$9,envs=$10,updated_at=now() WHERE id=$1 RETURNING `+appCols,
-		id, in.Name, in.RepoURL, in.Branch, in.Dockerfile, in.ContextDir, in.ImageRepo, in.GitUsername, tenc, envs))
+	if err := m.validateApplicationTargets(c, in.Envs); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	change := cicdConfigMutation{Kind: "application.update", ID: id, Application: &in,
+		ExistingSecretEnc: cur.gitTokenEnc, ExpectedUpdatedAt: &cur.UpdatedAt}
+	for _, env := range cur.Envs {
+		change.Envs = append(change.Envs, env.Name)
+	}
+	for _, env := range in.Envs {
+		change.Envs = append(change.Envs, env.Name)
+	}
+	if m.gateConfigMutation(c, change, nil) {
+		return
+	}
+	if _, err := m.applyCICDConfigMutation(c, change); err != nil {
+		httpx.Fail(c, httpx.Conflict("application changed or name exists").Wrap(errors.New("configuration write failed")))
+		return
+	}
+	a, err := m.loadApp(c, id)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -638,15 +940,22 @@ func (m *Module) rotateWebhookSecret(c *gin.Context) {
 	if !ok {
 		return
 	}
-	secret := randSecret()
-	enc, err := m.d.Crypto.Encrypt(secret)
+	cur, err := m.loadApp(c, id)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	tag, err := m.db.Exec(c, `UPDATE cicd_applications SET webhook_secret_enc=$2, updated_at=now() WHERE id=$1`, id, enc)
-	if err != nil || tag.RowsAffected() == 0 {
-		httpx.Fail(c, httpx.ErrNotFound)
+	secret := randSecret()
+	change := cicdConfigMutation{Kind: "application.rotate_webhook", ID: id,
+		ExpectedUpdatedAt: &cur.UpdatedAt, WebhookSecret: secret}
+	for _, env := range cur.Envs {
+		change.Envs = append(change.Envs, env.Name)
+	}
+	if m.gateConfigMutation(c, change, gin.H{"webhook_secret": secret}) {
+		return
+	}
+	if _, err := m.applyCICDConfigMutation(c, change); err != nil {
+		httpx.Fail(c, httpx.Conflict("application changed while approval was pending"))
 		return
 	}
 	audit.SetResource(c, "cicd_application", fmt.Sprint(id))
@@ -690,7 +999,7 @@ func (m *Module) listPipelines(c *gin.Context) {
 			httpx.Fail(c, err)
 			return
 		}
-		out = append(out, p)
+		out = append(out, p.public())
 	}
 	httpx.OK(c, out)
 }
@@ -705,13 +1014,22 @@ func (m *Module) getPipeline(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, p)
+	httpx.OK(c, p.public())
 }
 
 func (m *Module) savePipeline(c *gin.Context, id int64) {
 	var in Pipeline
 	if !httpx.Bind(c, &in) {
 		return
+	}
+	var current *Pipeline
+	if id != 0 {
+		var err error
+		current, err = m.loadPipe(c, id)
+		if err != nil {
+			httpx.Fail(c, err)
+			return
+		}
 	}
 	a, err := m.loadApp(c, in.AppID)
 	if err != nil {
@@ -722,28 +1040,135 @@ func (m *Module) savePipeline(c *gin.Context, id int64) {
 		httpx.Fail(c, err)
 		return
 	}
-	st, _ := json.Marshal(in.Stages)
-	var p *Pipeline
-	if id == 0 {
-		p, err = scanPipe(m.db.QueryRow(c, `INSERT INTO cicd_pipelines(app_id,name,runner_target_id,stages,on_push) VALUES($1,$2,$3,$4,$5) RETURNING `+pipeCols,
-			in.AppID, in.Name, in.RunnerTargetID, st, in.OnPush))
-	} else {
-		p, err = scanPipe(m.db.QueryRow(c, `UPDATE cicd_pipelines SET app_id=$2,name=$3,runner_target_id=$4,stages=$5,on_push=$6,updated_at=now() WHERE id=$1 RETURNING `+pipeCols,
-			id, in.AppID, in.Name, in.RunnerTargetID, st, in.OnPush))
-	}
-	if err != nil {
-		if !errors.Is(err, httpx.ErrNotFound) {
-			err = httpx.Conflict("pipeline name exists or runner_target_id invalid").Wrap(err)
+	caller := rbac.PrincipalFrom(c)
+	for _, stage := range in.Stages {
+		if stage.Type != "deploy" {
+			continue
 		}
+		if !caller.CanEnv(stage.DeployEnv) {
+			httpx.Fail(c, httpx.Forbidden("environment not in your scope: "+stage.DeployEnv))
+			return
+		}
+	}
+	change := cicdConfigMutation{Kind: "pipeline.save", ID: id, Pipeline: &in}
+	runnerEnv, err := m.targetConfigEnv(c, in.RunnerTargetID)
+	if err != nil {
+		httpx.Fail(c, httpx.Validation("unknown runner target"))
+		return
+	}
+	change.Envs = append(change.Envs, runnerEnv)
+	if current != nil {
+		change.ExpectedUpdatedAt = &current.UpdatedAt
+		currentRunnerEnv, err := m.targetConfigEnv(c, current.RunnerTargetID)
+		if err != nil {
+			httpx.Fail(c, httpx.Conflict("pipeline runner target is unavailable"))
+			return
+		}
+		change.Envs = append(change.Envs, currentRunnerEnv)
+		for _, stage := range current.Stages {
+			if stage.Type == "deploy" {
+				change.Envs = append(change.Envs, stage.DeployEnv)
+			}
+		}
+	}
+	for _, stage := range in.Stages {
+		if stage.Type == "deploy" {
+			change.Envs = append(change.Envs, stage.DeployEnv)
+		}
+	}
+	if m.gateConfigMutation(c, change, nil) {
+		return
+	}
+	id, err = m.applyCICDConfigMutation(c, change)
+	if err != nil {
+		httpx.Fail(c, httpx.Conflict("pipeline name exists or runner_target_id invalid").Wrap(errors.New("configuration write failed")))
+		return
+	}
+	p, err := m.loadPipe(c, id)
+	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	audit.SetResource(c, "cicd_pipeline", fmt.Sprint(p.ID))
-	if id == 0 {
-		httpx.Created(c, p)
+	audit.SetResource(c, "cicd_pipeline", fmt.Sprint(id))
+	if current == nil {
+		httpx.Created(c, p.public())
 	} else {
-		httpx.OK(c, p)
+		httpx.OK(c, p.public())
 	}
+}
+
+func (p *Pipeline) public() *Pipeline {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	cp.Stages = append([]Stage(nil), p.Stages...)
+	cp.Name = redactCICDText(cp.Name)
+	for i := range cp.Stages {
+		stage := &cp.Stages[i]
+		stage.Commands = append([]string(nil), stage.Commands...)
+		stage.ExtraArgs = append([]string(nil), stage.ExtraArgs...)
+		stage.Name = redactCICDText(stage.Name)
+		stage.Image = redactCICDText(stage.Image)
+		stage.RegistrySecret = redactCICDText(stage.RegistrySecret)
+		stage.DeployEnv = redactCICDText(stage.DeployEnv)
+		stage.JenkinsJob = redactCICDText(stage.JenkinsJob)
+		stage.Env = cloneStringMap(stage.Env)
+		stage.Params = cloneStringMap(stage.Params)
+		for key, value := range stage.Env {
+			if sensitiveStageKey.MatchString(key) && !validSecretReference(value) {
+				stage.Env[key] = "[REDACTED]"
+			} else {
+				stage.Env[key] = redactCICDText(value)
+			}
+		}
+		for key, value := range stage.Params {
+			if sensitiveStageKey.MatchString(key) && !validSecretReference(value) {
+				stage.Params[key] = "[REDACTED]"
+			} else {
+				stage.Params[key] = redactCICDText(value)
+			}
+		}
+		for j := range stage.Commands {
+			stage.Commands[j] = redactCICDText(stage.Commands[j])
+		}
+		for j := range stage.ExtraArgs {
+			stage.ExtraArgs[j] = redactCICDText(stage.ExtraArgs[j])
+		}
+	}
+	return &cp
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneHelmSpec(in *HelmSpec) *HelmSpec {
+	if in == nil {
+		return nil
+	}
+	cp := *in
+	cp.Set = append([]string(nil), in.Set...)
+	return &cp
+}
+
+func inlineSecretText(value string) bool {
+	if validSecretReference(value) {
+		return false
+	}
+	if cicdSecretFlag.MatchString(value) || cicdSecretAssignment.MatchString(value) ||
+		cicdBearerToken.MatchString(value) || cicdURLPassword.MatchString(value) {
+		redacted := redactCICDText(value)
+		return strings.Contains(redacted, "[REDACTED]")
+	}
+	return false
 }
 
 func (m *Module) createPipeline(c *gin.Context) { m.savePipeline(c, 0) }

@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"regexp"
-	"sort"
 	"encoding/json"
 	"errors"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -276,6 +276,7 @@ func (m *Module) alertWebhook(c *gin.Context) {
 		lb, _ := json.Marshal(a.Labels)
 		an, _ := json.Marshal(a.Annotations)
 		var id int64
+		var occurrence int
 		var notify bool
 		// Upsert by fingerprint. A firing alert that was resolved (or never seen)
 		// reopens handling and is notified; repeats of a firing alert are not.
@@ -292,10 +293,10 @@ func (m *Module) alertWebhook(c *gin.Context) {
 			  handle_status = CASE WHEN obs_alerts.status='resolved' AND EXCLUDED.status='firing' THEN 'open' ELSE obs_alerts.handle_status END,
 			  acked_by = CASE WHEN obs_alerts.status='resolved' AND EXCLUDED.status='firing' THEN '' ELSE obs_alerts.acked_by END,
 			  status=EXCLUDED.status, last_received_at=now()
-			RETURNING id)
-			SELECT up.id, COALESCE((SELECT status FROM prev),'') FROM up`,
+			RETURNING id,fire_count)
+			SELECT up.id,up.fire_count, COALESCE((SELECT status FROM prev),'') FROM up`,
 			dsID, a.Fingerprint, a.Labels["alertname"], a.Labels["severity"], a.Status, lb, an, a.GeneratorURL,
-			nilTime(a.StartsAt), nilTime(a.EndsAt)).Scan(&id, &prev)
+			nilTime(a.StartsAt), nilTime(a.EndsAt)).Scan(&id, &occurrence, &prev)
 		// Notify on first sight of a firing alert or a resolved->firing transition.
 		notify = a.Status == "firing" && prev != "firing"
 		if err != nil {
@@ -305,7 +306,7 @@ func (m *Module) alertWebhook(c *gin.Context) {
 		if notify {
 			newlyFiring = append(newlyFiring, Alert{ID: id, DatasourceID: dsID, Datasource: dsName, Env: env, Fingerprint: a.Fingerprint,
 				Alertname: a.Labels["alertname"], Severity: a.Labels["severity"], Status: "firing", Labels: a.Labels,
-				Annotations: a.Annotations, GeneratorURL: a.GeneratorURL, StartsAt: nilTime(a.StartsAt)})
+				Annotations: a.Annotations, GeneratorURL: a.GeneratorURL, StartsAt: nilTime(a.StartsAt), FireCount: occurrence, HandleStatus: "open"})
 		}
 	}
 	if len(newlyFiring) > 0 {
@@ -504,7 +505,7 @@ func (m *Module) registerAITools() {
 			"required":["datasource","query"]}`),
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
 			var a struct {
-				Datasource            int64
+				Datasource              int64
 				Query, Start, End, Step string
 			}
 			if err := json.Unmarshal(raw, &a); err != nil {

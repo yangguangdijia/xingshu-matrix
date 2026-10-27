@@ -1,8 +1,6 @@
 # 星枢 Matrix 平台技术说明
 
-> 本文回答：用什么语言开发、整体架构、项目背景、业务逻辑与接口如何实现、接口文档在哪、哪些已经实现、哪些还没实现以及怎么实现。
-> 状态以仓库当前提交为准。**当前版本 v1.18（内测版）**：新增真实链路追踪、集群网络只读视图、应用运行清单与环境范围修正；本次代码尚未部署，真实外部依赖仍未完成生产级联调，**请勿直接用于生产**。
-> 逐页接线矩阵与缺口清单见 [docs/PROGRESS.md](PROGRESS.md)；版本变更见 [CHANGELOG.md](../CHANGELOG.md)。
+> 本文介绍平台架构、组件边界、资源接口与开发入口。当前文档对应 v1.19，逐版本变化见 [CHANGELOG.md](../CHANGELOG.md)，接口索引见 [docs/api/](api/)。
 
 ---
 
@@ -26,15 +24,15 @@
 |---|---|---|
 | 后端 API | **Go 1.23**，Gin | `server/cmd/matrix-server`，单二进制；实测 Go 1.25 亦可构建 |
 | 主机 Agent | **Go 1.23**，gorilla/websocket，gopsutil | `server/cmd/matrix-agent`，Linux 常驻进程 |
-| 数据库 | PostgreSQL 14+（pgx/v5） | 元数据、权限、审批、审计、任务、日志片段；34 张表、13 个迁移 |
+| 数据库 | PostgreSQL 14+（pgx/v5） | 元数据、权限、审批、审计与任务记录；迁移位于各模块目录 |
 | 缓存 | Redis 7（go-redis v9，可选） | 健康检查已接入；多副本会话/锁待扩展 |
 | 对象存储 | MinIO / S3（规划） | 堡垒机录像、制品；当前录像存本地目录 |
 | K8s | client-go v0.31 | 集群管理、CI 任务（Job）、部署、`PrometheusRule` 读写 |
-| 前端 | 原生 HTML/CSS/JavaScript 单页应用 | `public/index.html`（13 394 行），hash 路由，无构建依赖 |
+| 前端 | 原生 HTML/CSS/JavaScript 单页应用 | `public/index.html`，hash 路由，无构建依赖 |
 | 前端适配层 | `public/xs-api.js` + `xs-live-core.js` + `xs-live-ops.js` | API 客户端与实时渲染接管，后端不可用时回退演示渲染 |
 | 部署 | Docker 多阶段镜像、docker-compose、K8s 清单、Istio 网关、物理机脚本 | 见 `Dockerfile`、`docker-compose.yml`、`deploy/` |
 
-规模基线（v1.18）：后端路由与权限沿用 v1.17 基线，并新增网络查询与应用 inventory 路由；前端 28 个路由键。精确历史统计见 v1.17 记录。
+Kubernetes 资源 API 覆盖集群、节点、工作负载、autoscaling/v2 HPA、batch/v1 CronJob、Service、Ingress、NetworkPolicy、存储卷、VolumeSnapshot、ConfigMap 与 Secret；写操作由环境权限、审批策略和审计链路统一约束。平台还包含 kubeconfig 接入、K3s 主机安装任务、多集群资源分发、Helm/Argo CD/Jenkins 集成与受限的 Ansible 自动化。能力与边界以各接口文档和 [v1.19 更新记录](../CHANGELOG.md#v119--2026-10-27) 为准。
 
 ## 3. 总体架构
 
@@ -55,7 +53,7 @@ matrix-server (Go)
    │    cicd           ──► K8s Job（git-clone + Kaniko / 测试 / Helm），Jenkins REST
    │                   ◄── GitLab / GitHub Webhook
    │    middleware     ──► Kafka Admin（franz-go）/ RabbitMQ Management API / RocketMQ Dashboard / MySQL / PostgreSQL / Redis
-   │    automation     ──► 流程定义/版本/触发/运行记录（执行器待补）
+   │    automation     ──► 流程定义/版本/运行记录与受控 Ansible worker
    │    devcenter      ──► 需求 / 迭代 / 缺陷 / 测试（基础 CRUD）
    └─ PostgreSQL（每个模块独立迁移，表名带模块前缀）
 ```
@@ -127,7 +125,7 @@ matrix-server (Go)
 | 审计 | 审计中间件自动记录全部写操作 | 查询、AI 检索 | audit |
 | 平台设置 | PostgreSQL（API Key AES-GCM 加密） | 访问域名保存时自动创建/更新 Ingress；公告、运行环境信息 | settings / platform |
 | AI 模型与提示词 | PostgreSQL | OpenAI 兼容接口代理 + 工具调用 | ai |
-| 自动化编排 | PostgreSQL | 流程/版本/触发写库；`trigger` 只写 `queued`，**执行器待补** | automation |
+| 自动化编排 | PostgreSQL、平台内嵌 Ansible | 流程版本、运行记录和受控主机任务；生产任务按环境策略审批后执行 | automation |
 | 研发中心 | PostgreSQL | 需求/迭代/缺陷/测试的列表、创建、更新；无状态机与关联 | devcenter |
 
 ## 5. 接口文档
@@ -155,60 +153,38 @@ matrix-server (Go)
 | [docs/api/automation-devcenter.md](api/automation-devcenter.md) | 自动化编排、研发中心 |
 | [docs/dev-guide.md](dev-guide.md) | 新增模块、迁移、权限、审批、AI 工具的开发规范 |
 | [docs/backend-architecture.md](backend-architecture.md) | 后端接入方案（初版设计说明） |
-| [docs/PROGRESS.md](PROGRESS.md) | 进度报告：逐页接线矩阵、已完成/部分完成/未开始 |
-| [docs/OUTSTANDING.md](OUTSTANDING.md) | 未完成 / 未落实清单：v1.18 发布状态、浏览器实测、缓存与功能缺口 |
+| [docs/PROGRESS.md](PROGRESS.md) | v1.18 历史页面接线快照 |
+| [docs/OUTSTANDING.md](OUTSTANDING.md) | v1.18 历史问题与发布记录 |
 | [docs/fix-stale-image-uncommitted-code.md](fix-stale-image-uncommitted-code.md) | 集群镜像混入未提交代码的排查与重建（v1.61 → v1.62） |
 | [docs/bastion-product-patterns.md](bastion-product-patterns.md) | 堡垒机产品模式与实现边界（资产来源、协议字段、SSH 契约、未验证清单） |
 | [docs/bastion-round-fix-notes.md](bastion-round-fix-notes.md) | 堡垒机与登录页 5 个问题的四段式复盘 |
 | [docs/deploy-v1.63-bastion-workbench.md](deploy-v1.63-bastion-workbench.md) | v1.63 镜像构建、三节点分发、滚动与回滚记录 |
 | [docs/deploy-192.168.6.3.md](deploy-192.168.6.3.md) | 真实集群部署与验收记录（7 个真实故障与解法） |
 
-## 6. 已实现（截至 v1.18）
+## 6. Kubernetes 运维能力
 
-**后端（真实代码，可编译、单测通过）**
+平台以集群、环境和命名空间组织 Kubernetes 日常操作，当前覆盖：
 
-- 服务入口与路由装配、配置（YAML + 15 个 `MATRIX_*` 环境变量）、按模块版本化迁移、优雅退出、`/healthz`、`/api/v1/health`、`/metrics`、`/api/v1/version`。
-- **237 条路由**，分布：cluster 27、hosts 16、bastion 25、observability 31、cicd 26、middleware 26、automation 8、devcenter 12、AI 19、auth 7、rbac 8、users 17（含部门 4、用户组 4）、settings 5、platform 6、audit 2、approval 7、server 4。
-- 核心：认证（JWT + 刷新轮换 + 失败锁定 + 限流）、RBAC（50 个权限点 + 角色 + 环境策略）、用户 / 部门 / 用户组、系统设置、平台层（访问域名 + 运行环境 + 公告）、审计、审批（7 类，通过后异步执行）、AI（模型 / 提示词 / 工具 / 对话 / 场景化生成）。
-- 8 个业务模块：cluster、hosts（含 matrix-agent）、bastion、observability、cicd、middleware、automation、devcenter。
-- 数据库：**34 张表、13 个迁移文件**（core 5 个 + 8 个模块各 1 个）。
+- 集群接入、集群与节点查看、节点标签分组及批量标签和污点维护。
+- Deployment、StatefulSet、DaemonSet、Job、CronJob、Pod 等工作负载；HPA 状态与配置。
+- Service、Ingress、NetworkPolicy、ConfigMap、Secret、PersistentVolume、PersistentVolumeClaim 和 StorageClass。
+- 集群支持卷快照 API 与快照驱动时，可查看 VolumeSnapshot 并从就绪快照创建新 PVC。
+- 面向多个集群逐项分发资源清单，并分别返回各集群结果。
+- Helm、Argo CD 与 Jenkins 应用交付接入；Linux 主机上的 K3s 安装任务。
+- 告警、日志、指标和链路视图，以及自然语言配置草稿和告警诊断建议。
 
-**前端**
+所有集群写操作都经过资源权限、环境策略、审批和审计流程。Secret 页面只展示元数据与键名，不回显值。
 
-- 登录页、真实 JWT 登录/刷新/改密/退出，独立 API 客户端 `public/xs-api.js`（base 探测、401 单飞刷新、SSE/WS）。
-- v1.17 的 19/1/8 页面统计仍作为历史基线；v1.18 新增 trace 真实接线、网络 Service/NetworkPolicy 只读视图和 CICD 应用 inventory，traffic/netpol/bastion 仍是部分接线，oncall 后端仍缺失。
-- 演示模式：`XS.mode === "live"` 才接管渲染器；后端不可用时保留原演示渲染器并显示「演示模式」徽标。
+## 7. 使用边界
 
-**已完成真实联调**
-
-- 真实 PostgreSQL 16 启动：全部迁移执行成功；登录 → 强制改密 → 用户/角色/审计/审批/AI 接口返回正常。
-- matrix-agent 真实注册上线，平台下发 `uname -a && uptime` 成功返回输出并入库。
-- 真实 K8s 集群 `192.168.6.3`（三节点）部署：`xingshu-matrix 2/2 Running`，`https://xingshu-matrix.com` 入口，
-  登录 / `/auth/me` / `/users` / `/roles` / `/clusters` / `/hosts` / `/approvals` / `/audit-logs` 全部 200。
-
-## 7. 未实现 / 未验证，以及实现方法
-
-| 项目 | 现状 | 实现方法 |
-|---|---|---|
-| oncall 值班 / 故障 / SLO 后端 | **前端已写完并调用 `/oncall/*`，后端无该模块（404）** | 新增 `internal/modules/oncall`：排班（分层轮值、代班）、故障单（声明/认领/升级/解决）、复盘、SLO 与错误预算；`approval` 注册 `oncall.change` |
-| 堡垒机控制台前端接线 | 后端 25 条路由完整，前端仍部分接线 | 继续接入账号、授权、过滤、审计和协议代理 |
-| 链路追踪前端接线 | v1.18 已接服务、检索、详情和资源标签 | 继续补共享数据源标签校验与多集群端到端验证 |
-| 流量治理 / 网络策略 / 多集群 | traffic/netpol 仅部分真实只读；多集群无聚合接口 | 补 Istio/Cilium 写接口和多集群扇出 |
-| 研发中心完整流程 | 基础 CRUD；`requirements`/`workbench`/`testing` 仍读前端本地数据 | 按资源定义状态机（需求：提出→受理→评审→开发→测试→验收→上线），补 `comments`、`links`（Git/流水线）、测试计划与用例表 |
-| 自动化编排执行器 | `trigger` 只写 `queued`，无 worker | 新增 `automation_runner`：受控步骤（HTTP / 等待 / 主机命令 / K8s 操作 / 审批），失败重试与超时；或接 Tekton / Argo Workflows |
-| 真实外部依赖联调 | 仅 httptest 假服务与 client-go fake | 备一套测试环境（kind/k3s + kube-prometheus-stack + Loki + Alertmanager + Jenkins + Kafka），按 `scripts/smoke-test.sh` 扩展端到端用例 |
-| 集群内 Agent 隧道 / Web Shell / 端口转发 | 仅 kubeconfig 直连 | 增加 `matrix-cluster-agent`（集群内 Deployment，反向 WebSocket 隧道）；exec 用 `remotecommand.NewSPDYExecutor` 桥接 WebSocket；端口转发用 `portforward` |
-| Service / Ingress / ConfigMap / Secret / PVC / HPA 专用接口 | 只能通过 YAML apply | 在 cluster 模块按资源类型补 list/get/patch，复用 dynamic client |
-| 堡垒机 RDP / VNC / 数据库协议 | 仅资产登记与 guacd 健康检查 | 服务端实现 Guacamole 协议 WebSocket 隧道 → guacd；前端接 guacamole-common-js |
-| 录像存 S3/MinIO、多副本会话 | 录像存本地，在线会话存内存 | 会话结束后上传 MinIO；会话踢出/列表用 Redis Pub/Sub 广播 |
-| Agent 多副本路由 | Agent 连接只在单实例内存 | Redis 记录 host→实例映射，跨实例转发（或 NATS） |
-| 告警认领/关闭回写 Alertmanager、通知重试与聚合 | 只在平台内记录，通知只发一次 | 认领时创建对应静默；通知加重试队列与按标签聚合 |
-| CI/CD 断点续跑、阶段共享工作区、并行阶段 | 重启后运行标记失败；每阶段重新克隆 | PVC 共享工作区；阶段 DAG 调度；或接 Tekton / Argo Workflows |
-| 单点登录（LDAP / OIDC） | 前端有「企业 SSO」入口，后端无实现 | auth 增加 OIDC（coreos/go-oidc）与 LDAP 绑定，首次登录自动建用户并按组映射角色 |
-| 多副本权限缓存 | 每副本 15 秒缓存 | 角色变更时经 Redis Pub/Sub 广播失效 |
-| Helm Chart / 高可用 | 只有 `helm-values.example.yaml` 示例；Ingress 单节点 hostNetwork；PostgreSQL 单副本 + `local-path` | 补 chart；Ingress 多副本 + PDB；PostgreSQL 主从或接托管数据库 |
-| 压测、安全审计、备份恢复演练 | 未做 | k6 压测、govulncheck、PostgreSQL 定时备份与恢复演练 |
-| core 包单测 | auth/rbac/users/settings/approval/ai/audit 无 `_test.go` | 按模块补 httptest 用例，覆盖 401/403/202/409 分支 |
+- VolumeSnapshot 能力取决于目标集群是否安装对应 CRD 与可用的 CSI 快照驱动；不具备条件时平台会说明原因，不生成模拟快照。
+- NetworkPolicy 页面描述 Kubernetes 策略声明；具体流量是否被允许还取决于集群 CNI 的策略执行能力。
+- 拓扑中的调用连线来自已检索到的 trace 数据，不代表未观测到的流量不存在。
+- APISIX 路由视图只在集群已安装并接入相应 API 时提供；外部入口还取决于 Ingress Controller 或网关配置。
+- Jenkins、Argo CD、Helm 仓库、Prometheus、Loki、Alertmanager 和 AI 模型需要配置可访问的服务地址及凭据。
+- K3s 高可用安装要求预先准备 API 负载均衡地址；平台不代替云服务创建负载均衡器或 VIP。
+- 多集群资源分发按集群逐项执行；发生失败时，已成功的集群不会自动回滚，需核对结果后处理。
+- AI 输出用于配置草稿或处置建议。对资源的实际变更仍由工程师确认，并遵循相应环境审批策略。
 
 ## 8. 本地运行与部署
 
@@ -243,21 +219,15 @@ matrix-agent -server https://matrix.example.com -token mxe_xxx
 ### 8.1 版本与发布
 
 ```bash
-# 1) 打标签（应用版本；发布时执行）
-git tag -a v1.18 -m "v1.18"
-git push origin v1.18
+# 按当前发布版本构建镜像
+docker build --build-arg VERSION=v1.19 --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  -t xingshu/matrix-server:v1.19 .
 
-# 2) 构建镜像（版本号写入二进制，GET /api/v1/version 可见）
-docker build --build-arg VERSION=v1.18 --build-arg COMMIT=$(git rev-parse --short HEAD) \
-  -t xingshu/matrix-server:v1.18 .
-
-# 3) 离线环境：导出 OCI tar
-ctr -n k8s.io images export matrix-server-v1.18.tar.gz docker.io/xingshu/matrix-server:v1.18
+# 离线环境：导出 OCI tar
+ctr -n k8s.io images export matrix-server-v1.19.tar.gz docker.io/xingshu/matrix-server:v1.19
 ```
 
-镜像 tag 有多套历史口径（当前集群 `v1.63` / 脚本默认 `v1.3` / 离线包 `v40`），
-v1.16 起约定以**应用版本**为镜像 tag，但现网仍用构建序号，差异与治理建议见 [PROGRESS.md §9.1](PROGRESS.md)。
-历史对应关系：应用版本 `v1.17` ↔ 镜像 `v1.63` ↔ commit `f9cd41e`；v1.18 尚未构建或部署。
+应用版本与部署镜像 tag 可由发布流程分别管理。构建时传入 `VERSION` 后，`GET /api/v1/version` 会返回二进制记录的应用版本。
 
 ## 9. 质量门禁
 
@@ -276,6 +246,7 @@ push `main` / 打 `v*` / 手工触发；通过后推送 `ghcr.io/<owner>/xingshu
 
 | 版本 | 时间 | 主题 |
 | --- | --- | --- |
+| v1.19 | 2026-10-27 | Kubernetes 存储、网络、配置、节点、伸缩和定时任务；多集群、应用交付与诊断体验完善 |
 | v1.18 | 2026-10-24 | 真实 trace 与环境范围、网络只读接口、应用运行清单；beta / 标签 / Release 已发布，未部署 |
 | v1.17 | 2026-10-21 | 堡垒机访问工作台与真实 SSH 会话；资产协议参数持久化；登录可访问性；镜像 v1.63（历史部署） |
 | v1.16 | 2026-10-20 | 文档与版本对齐；修复 CI 引用不存在脚本；新增 PROGRESS / CHANGELOG |

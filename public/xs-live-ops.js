@@ -16,7 +16,7 @@
   var SHARED = (typeof window !== "undefined" && window.XS_LIVE && typeof window.XS_LIVE === "object") ? window.XS_LIVE : null;
   var MODE = "unknown";
   var ST = { installed: false, seq: 0, originals: {}, badge: null, formSeq: 0, runStream: null, refresh: null };
-  var ROUTE_KEYS = ["observe", "logs", "cicd", "delivery", "release", "middleware", "oncall", "settings", "ai", "appstatus", "audit"];
+  var ROUTE_KEYS = ["cicd", "delivery", "release", "middleware", "oncall", "settings", "appstatus", "audit", "testing"];
   var APPR_CODE = 40304;
 
   /* ---------------------------------------------------------------- bas 基础 */
@@ -107,6 +107,55 @@
     }
     return def;
   }
+  function parseJenkinsParameters(text) {
+    var out = {};
+    String(text || "").split(/\r?\n/).forEach(function (line, index) {
+      line = line.trim();
+      if (!line) return;
+      var splitAt = line.indexOf("=");
+      if (splitAt < 1) throw new Error("第 " + (index + 1) + " 行应为 参数名=参数值");
+      var key = line.slice(0, splitAt).trim(), value = line.slice(splitAt + 1).trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/.test(key)) throw new Error("第 " + (index + 1) + " 行参数名无效：" + key);
+      if (Object.prototype.hasOwnProperty.call(out, key)) throw new Error("Jenkins 参数重复：" + key);
+      if (value !== "") out[key] = value;
+    });
+    return out;
+  }
+  function buildPipelineStages(rows, envNames, jenkinsIds) {
+    if (!Array.isArray(rows) || !rows.length) throw new Error("至少配置一个流水线阶段");
+    if (rows.length > 12) throw new Error("最多配置 12 个阶段");
+    var names = {};
+    return rows.map(function (row, index) {
+      var name = String(row.name || "").trim(), type = String(row.type || "").trim();
+      if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name) || name.length > 40) throw new Error("第 " + (index + 1) + " 个阶段名称须为不超过 40 位的小写 DNS 标签");
+      if (names[name]) throw new Error("阶段名称重复：" + name);
+      names[name] = true;
+      var stage = { name: name, type: type }, timeout = Number(row.timeout_sec || 0);
+      if (["build", "test", "script"].indexOf(type) >= 0 && timeout) {
+        if (!Number.isInteger(timeout) || timeout < 1 || timeout > 86400) throw new Error(name + " 的超时须为 1 到 86400 秒");
+        stage.timeout_sec = timeout;
+      }
+      if (type === "build") {
+        if (row.image) stage.image = String(row.image).trim();
+        if (row.registry_secret) stage.registry_secret = String(row.registry_secret).trim();
+      } else if (type === "test" || type === "script") {
+        stage.image = String(row.image || "").trim();
+        stage.commands = String(row.commands || "").split(/\r?\n/).map(function (command) { return command.trim(); }).filter(Boolean);
+        if (!stage.image || !stage.commands.length) throw new Error(name + " 需要容器镜像和至少一条执行命令");
+      } else if (type === "deploy") {
+        stage.deploy_env = String(row.deploy_env || "").trim();
+        if (!stage.deploy_env || envNames.indexOf(stage.deploy_env) < 0) throw new Error(name + " 必须选择当前应用已配置的部署环境");
+      } else if (type === "jenkins") {
+        stage.jenkins_id = Number(row.jenkins_id || 0);
+        stage.jenkins_job = String(row.jenkins_job || "").trim();
+        if (!stage.jenkins_id || jenkinsIds.indexOf(stage.jenkins_id) < 0 || !stage.jenkins_job) throw new Error(name + " 需要已接入的 Jenkins 和 Job 名称");
+        stage.params = parseJenkinsParameters(row.params_text || "");
+      } else {
+        throw new Error(name + " 的阶段类型不受支持");
+      }
+      return stage;
+    });
+  }
   function assign(target) {
     for (var i = 1; i < arguments.length; i++) {
       var s = arguments[i] || {};
@@ -190,7 +239,8 @@
     if (q("ops-live-css")) return;
     var s = document.createElement("style");
     s.id = "ops-live-css";
-    s.textContent = ".ops-json{max-height:55vh;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-word}.ops-sub{color:var(--x-sub);font-size:12px;margin:8px 0 0}.ops-nowrap{white-space:nowrap}.ops-ro{max-height:60vh;overflow:auto;margin:0}";
+    s.textContent = ".ops-json{max-height:55vh;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-word}.ops-sub{color:var(--x-sub);font-size:12px;margin:8px 0 0}.ops-nowrap{white-space:nowrap}.ops-ro{max-height:60vh;overflow:auto;margin:0}" +
+      ".ops-stage{min-width:0;margin:0;padding:12px;border:1px solid var(--x-line);border-radius:6px}.ops-stage+.ops-stage{margin-top:10px}.ops-stage-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}.ops-stage-head strong{font-size:13px}.ops-stage-head .x-btn{margin-left:auto}.ops-stage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px 12px}.ops-stage-grid>label{display:grid;min-width:0;gap:5px;font-size:12px;color:var(--x-sub)}.ops-stage-grid .ops-stage-wide{grid-column:1/-1}.ops-stage-grid textarea{min-height:72px;resize:vertical}.ops-stage-actions{display:flex;justify-content:flex-start;margin-top:10px}.ops-jenkins-job{display:flex;gap:6px;min-width:0}.ops-jenkins-job .x-input{flex:1;min-width:0}.ops-jenkins-schema{grid-column:1/-1;margin:0;color:var(--x-sub);font-size:12px}.ops-jenkins-schema summary{cursor:pointer}";
     (document.head || document.documentElement).appendChild(s);
   }
   // 徽标：xs-live-core.js 已提供共享的 #xs-live-badge（幂等），这里优先复用；
@@ -218,7 +268,7 @@
     var onOps = ROUTE_KEYS.indexOf(opsHash()) >= 0 || opsHash() === "automation";
     if (MODE === "demo" && onOps) {
       b.style.display = "inline-flex";
-      b.innerHTML = "<b>后端未连接</b> · 当前页面未读取实时数据";
+      b.innerHTML = "<b>后端未连接</b>   当前页面未读取实时数据";
     } else {
       b.style.display = "none";
       b.textContent = "";
@@ -247,11 +297,9 @@
   function banner(msg, cls) {
     return '<div class="x-warn" role="note" style="margin-bottom:12px">' + E(msg) + "</div>";
   }
-  function liveTag() { return ' <span class="x-tag x-dot x-green x-tag--s">实时</span>'; }
-
   function livePage(el, title, desc, tools, tabs) {
     var p = { el: el, box: null, token: 0, seq: ++ST.seq, retry: null };
-    el.innerHTML = phead(E(title), desc + liveTag(), tools || "") + (tabs || "");
+    el.innerHTML = phead(E(title), desc || "", tools || "") + (tabs || "");
     var box = document.createElement("div");
     box.setAttribute("data-ops-body", "");
     box.innerHTML = loadingHTML();
@@ -404,7 +452,7 @@
     }
     function promPanel(proms) {
       if (!proms.length) return panelHTML("PromQL 查询", emptyHTML("未接入 Prometheus 数据源，无法执行查询。"));
-      var opts = proms.map(function (d) { return { v: d.id, t: (d.name || ("#" + d.id)) + (d.env ? " · " + d.env : "") }; });
+      var opts = proms.map(function (d) { return { v: d.id, t: (d.name || ("#" + d.id)) + (d.env ? "   " + d.env : "") }; });
       var ranges = [{ v: "15m", t: "近 15 分钟" }, { v: "1h", t: "近 1 小时" }, { v: "6h", t: "近 6 小时" }, { v: "24h", t: "近 24 小时" }, { v: "7d", t: "近 7 天" }];
       return panelHTML("PromQL 查询", barHTML([
         '<select class="x-select" data-promds aria-label="Prometheus 数据源" style="width:auto">' + opts.map(function (o) { return '<option value="' + E(o.v) + '"' + (String(o.v) === String(OB.promId) ? " selected" : "") + ">" + E(o.t) + "</option>"; }).join("") + "</select>",
@@ -419,7 +467,7 @@
           b.disabled = true;
           POST("/observability/datasources/" + encodeURIComponent(b.getAttribute("data-testds")) + "/test").then(function (r) {
             b.disabled = false;
-            if (r && r.ok) toast("连接成功" + (r.latency_ms != null ? "（" + r.latency_ms + " ms）" : "") + (r.info && r.info.version ? " · " + r.info.version : ""));
+            if (r && r.ok) toast("连接成功" + (r.latency_ms != null ? "（" + r.latency_ms + " ms）" : "") + (r.info && r.info.version ? "   " + r.info.version : ""));
             else toast("连接失败：" + ((r && r.error) || "上游不可用"));
           }).catch(function (err) { b.disabled = false; toast(errMsg(err)); });
         };
@@ -529,21 +577,65 @@
   }
 
   function obsRules(el) {
-    var p = livePage(el, "告警规则", "Prometheus 告警 / 记录规则与状态", '<button class="x-btn" type="button" data-refresh>刷新</button>', tabsHTML(OBS_TABS, "#/observe/rules"));
-    var PROMS = [];
+    var p = livePage(el, "告警规则", "Prometheus 告警 / 记录规则与状态", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-rulenew disabled>+ 新建规则</button>', tabsHTML(OBS_TABS, "#/observe/rules"));
+    var PROMS = [], CLUSTERS = [];
     function load() {
       var t = p.newToken();
-      dsList({ type: "prometheus" }).then(function (data) {
+      Promise.all([settle(dsList({ type: "prometheus" }), []), settle(GET("/observability/aiops/config"), null), settle(GET("/clusters?page_size=500"), [])]).then(function (result) {
+        var data = result[0].value, config = result[1].value;
+        CLUSTERS = result[2].ok ? asArray(result[2].value, ["items", "clusters"]) : [];
+        var policyPanel = panelHTML("Kubernetes 健康巡检与 AI 诊断", config ? '<p class="ops-sub">自动巡检：' + (config.enabled ? "已启用" : "未启用") +
+          '   自动 AI 分析：' + (config.auto_diagnose ? "已启用" : "未启用") + '   巡检间隔：' + E(config.interval_sec || 60) +
+          ' 秒</p><p class="ops-sub">检测节点就绪 / 资源压力、Pod 启动异常、控制器不可用和 PVC 未绑定；处置由运维选择，生产变更走环境审批。</p>' :
+          banner("AIOps 配置读取失败：" + errMsg(result[1].error)),
+          config ? '<button class="x-btn" type="button" data-aiops-policy style="margin-left:auto">配置</button>' : "");
+        function bindPolicy() {
+          var button = p.box.querySelector("[data-aiops-policy]");
+          if (button) button.onclick = function () { aiopsPolicyModal(config, load); };
+        }
+        var create = el.querySelector("[data-rulenew]");
+        if (create) {
+          create.disabled = !CLUSTERS.length;
+          create.title = CLUSTERS.length ? "" : "请先接入 Kubernetes 集群";
+          create.onclick = function () { newAlertRule(); };
+        }
         PROMS = Array.isArray(data) ? data : asArray(data, ["items"]);
-        if (!PROMS.length) { p.paint(t, panelHTML("告警规则", emptyHTML("未接入 Prometheus 数据源，无法读取告警规则。"))); return; }
-        var sel = '<div class="x-tbar"><select class="x-select" data-ruleds style="width:auto">' + PROMS.map(function (d) { return '<option value="' + E(d.id) + '">' + E(d.name || ("#" + d.id)) + " · " + E(d.env || "*") + "</option>"; }).join("") + '</select><span class="x-frac" data-rulemeta></span></div>';
-        if (!p.paint(t, panelHTML("告警规则", sel + '<div data-ruleres>' + loadingHTML("读取规则中…") + "</div>"))) return;
+        if (!PROMS.length) { if (p.paint(t, panelHTML("告警规则", emptyHTML("未接入 Prometheus 数据源，无法读取告警规则。")) + policyPanel)) bindPolicy(); return; }
+        var sel = '<div class="x-tbar"><select class="x-select" data-ruleds style="width:auto">' + PROMS.map(function (d) { return '<option value="' + E(d.id) + '">' + E(d.name || ("#" + d.id)) + "   " + E(d.env || "*") + "</option>"; }).join("") + '</select><span class="x-frac" data-rulemeta></span></div>';
+        if (!p.paint(t, panelHTML("告警规则", sel + '<div data-ruleres>' + loadingHTML("读取规则中…") + "</div>") + policyPanel)) return;
+        bindPolicy();
         var s = p.box.querySelector("[data-ruleds]");
         s.onchange = function () { loadRules(s.value); };
         loadRules(PROMS[0].id);
       }).catch(function (err) { p.error(t, err); });
     }
     p.retry = load;
+    function newAlertRule() {
+      if (!CLUSTERS.length) { toast("请先接入 Kubernetes 集群"); return; }
+      formModal("新建告警规则", [
+        { k: "cluster_id", label: "目标集群", kind: "select", required: true, value: String(CLUSTERS[0].id), options: CLUSTERS.map(function (c) { return { v: String(c.id), t: (c.name || ("#" + c.id)) + "   " + (c.env || "未标记") }; }) },
+        { k: "namespace", label: "PrometheusRule 命名空间", required: true, value: "monitoring", placeholder: "monitoring" },
+        { k: "rule_group", label: "规则组", required: true, value: "matrix-ui", placeholder: "matrix-ui" },
+        { k: "name", label: "告警名称", required: true, placeholder: "NodeHighCPU" },
+        { k: "expr", label: "PromQL 表达式", kind: "textarea", rows: 4, required: true, placeholder: 'sum(rate(node_cpu_seconds_total{mode!="idle"}[5m])) by (instance) > 0.85' },
+        { k: "for", label: "持续时间", value: "5m", placeholder: "5m" },
+        { k: "severity", label: "级别", kind: "select", value: "warning", options: [{ v: "critical", t: "严重" }, { v: "warning", t: "警告" }, { v: "info", t: "提示" }] },
+        { k: "summary", label: "告警摘要", placeholder: "节点 CPU 使用率持续偏高" }
+      ], "创建规则", function (v, form, err) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v.name)) {
+          err.textContent = "告警名称仅支持字母、数字和下划线，且不能以数字开头";
+          err.hidden = false;
+          form.elements.name.focus();
+          return;
+        }
+        var body = { namespace: v.namespace, rule_group: v.rule_group, name: v.name, expr: v.expr, for: v.for, severity: v.severity, summary: v.summary };
+        write(POST("/clusters/" + encodeURIComponent(v.cluster_id) + "/alert-rules", body), "告警规则已写入目标集群").then(function (result) {
+          if (!result) return;
+          closeAll();
+          load();
+        });
+      }, "规则将写入所选集群的 monitoring.coreos.com/v1 PrometheusRule；需具备集群管理权限，并由 Prometheus Operator 加载。");
+    }
     function loadRules(id) {
       var box = p.box.querySelector("[data-ruleres]");
       if (!box) return;
@@ -570,6 +662,25 @@
       });
     }
     load();
+  }
+
+  function aiopsPolicyModal(config, done) {
+    var url = location.origin + location.pathname.replace(/\/[^/]*$/, "");
+    formModal("Kubernetes 健康巡检与 AI 诊断", [
+      { k: "enabled", label: "自动巡检已接入集群", kind: "checkbox", value: config.enabled, hint: "启用" },
+      { k: "auto_diagnose", label: "自动向已配置模型发送脱敏告警证据", kind: "checkbox", value: config.auto_diagnose, hint: "启用自动 AI 分析" },
+      { k: "host_diagnostics", label: "允许 Matrix Agent 采集只读主机诊断", kind: "checkbox", value: config.host_diagnostics, hint: "固定检查系统压力、服务状态、进程名称和近期内核告警；限长脱敏后纳入 AI 证据" },
+      { k: "interval_sec", label: "巡检间隔（60–3600 秒）", kind: "number", required: true, value: config.interval_sec || 60 },
+      { k: "model_id", label: "模型 ID（0 使用平台默认模型）", kind: "number", value: config.model_id || 0 },
+      { k: "public_url", label: "通知回流地址（自动识别当前平台地址）", required: true, value: config.public_url || url }
+    ], "保存", function (v) {
+      var interval = Number(v.interval_sec), model = Number(v.model_id || 0);
+      if (!Number.isInteger(interval) || interval < 60 || interval > 3600 || !Number.isInteger(model) || model < 0) {
+        toast("请填写有效的巡检间隔和模型 ID"); return;
+      }
+      write(PUT("/observability/aiops/config", { enabled: v.enabled, auto_diagnose: v.auto_diagnose, host_diagnostics: v.host_diagnostics, interval_sec: interval, model_id: model, public_url: v.public_url }),
+        "AIOps 配置已保存").then(function (r) { if (r) { closeAll(); done(); } });
+    }, "主机采集仅运行平台固定的只读命令，结果会限长、脱敏并随诊断证据发送给已配置模型。自动分析只生成建议，不直接执行变更；人工选择 AI 处理后仍需通过权限、资源身份校验和环境审批。");
   }
 
   // 告警路径 key：优先数字 id（同一 fingerprint 可能存在于多个 Alertmanager 数据源，
@@ -871,7 +982,7 @@
     function formHTML() {
       var ds = curDs(), isES = ds && ds.type === "elasticsearch";
       return panelHTML("查询条件", barHTML([
-        '<select class="x-select" data-lgds style="width:auto">' + DSTS.map(function (d) { return '<option value="' + E(d.id) + '"' + (String(d.id) === String(LG.dsId) ? " selected" : "") + ">" + E(d.name) + " · " + E(d.type) + "</option>"; }).join("") + "</select>",
+        '<select class="x-select" data-lgds style="width:auto">' + DSTS.map(function (d) { return '<option value="' + E(d.id) + '"' + (String(d.id) === String(LG.dsId) ? " selected" : "") + ">" + E(d.name) + "   " + E(d.type) + "</option>"; }).join("") + "</select>",
         '<select class="x-select" data-lgwin style="width:auto">' + [{ v: 15, t: "近 15 分钟" }, { v: 60, t: "近 1 小时" }, { v: 360, t: "近 6 小时" }, { v: 1440, t: "近 24 小时" }].map(function (w) { return '<option value="' + w.v + '"' + (+LG.win === w.v ? " selected" : "") + ">" + w.t + "</option>"; }).join("") + "</select>",
         '<input class="x-input x-search" data-lgq value="' + E(LG.q) + '" placeholder="' + (isES ? "Lucene/KQL，如 level:error and service:api" : "LogQL，如 {app=\"api\"} |= \"error\"") + '" aria-label="日志查询语句" />',
         isES ? '<input class="x-input" data-lgindex style="width:130px" value="' + E(LG.index) + '" placeholder="索引，如 logs-*" aria-label="索引" />' : "",
@@ -933,7 +1044,7 @@
           '</td><td style="max-width:620px;word-break:break-word">' + E(r.message || "") + "</td></tr>" +
           '<tr hidden data-lgdet="' + i + '"><td colspan="5"><pre class="x-log ops-json">' + E(JSON.stringify(labels, null, 2)) + "</pre></td></tr>";
       }).join("");
-      box.innerHTML = '<div class="x-tbar">' + chips + '<span class="x-frac" style="margin-left:auto">数据源 ' + E(data.datasource || "—") + " · 引擎 " + E(data.engine || "—") + " · 命中 " + num(data.total || rows.length) + "</span></div>" +
+      box.innerHTML = '<div class="x-tbar"><span class="ops-sub" style="margin:0">按级别筛选当前查询结果</span>' + chips + '<span class="x-frac" style="margin-left:auto">数据源 ' + E(data.datasource || "—") + "   引擎 " + E(data.engine || "—") + "   命中 " + num(data.total || rows.length) + "</span></div>" +
         (rows.length ? '<div style="overflow-x:auto"><table class="x-table x-table--plain"><thead><tr><th>时间</th><th>级别</th><th>服务</th><th>主机</th><th>消息</th></tr></thead><tbody>' + trs + "</tbody></table></div>" : emptyHTML("没有匹配的日志，试试放宽时间范围或修改查询语句"));
       var pre = data.query ? '<p class="ops-sub">实际查询：' + code(data.query, 200) + "</p>" : "";
       if (pre) box.insertAdjacentHTML("beforeend", pre);
@@ -970,9 +1081,6 @@
     for (var i = 0; i < CICD_PL.length; i++) if (String(CICD_PL[i].id) === String(id)) return CICD_PL[i].name;
     return "#" + id;
   }
-  function cicdTabs(cur) {
-    return tabsHTML([{ t: "构建", h: "#/cicd/build" }, { t: "制品", h: "#/cicd/artifact" }, { t: "流水线", h: "#/cicd/pipeline" }], cur);
-  }
   function renderCicdLive(el) {
     var seg = (location.hash || "").split("/")[2] || "build";
     if (seg === "pipeline") return cicdPipelines(el);
@@ -984,7 +1092,7 @@
   }
 
   function cicdBuilds(el) {
-    var p = livePage(el, "构建", "流水线运行记录与实时日志（SSE）", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-runpl>+ 运行流水线</button>', cicdTabs("#/cicd/build"));
+    var p = livePage(el, "构建", "流水线运行记录与实时日志（SSE）", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-runpl>+ 运行流水线</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { cicdBuilds(el); };
     el.querySelector("[data-runpl]").onclick = function () { runPipelineModal(function () { cicdBuilds(el); }); };
     function load() {
@@ -1040,12 +1148,64 @@
     var PL = pipelines || CICD_PL;
     if (!PL || !PL.length) { toast("暂无流水线，请先在「流水线」页创建"); return; }
     formModal("运行流水线", [
-      { k: "pipeline", label: "流水线", kind: "select", options: PL.map(function (pl) { return { v: pl.id, t: (pl.name || ("#" + pl.id)) + " · 应用 " + appName(pl.app_id) }; }) },
+      { k: "pipeline", label: "流水线", kind: "select", options: PL.map(function (pl) { return { v: pl.id, t: (pl.name || ("#" + pl.id)) + "   应用 " + appName(pl.app_id) }; }) },
       { k: "branch", label: "分支（留空使用应用默认分支）", placeholder: "main" },
       { k: "commit", label: "提交 SHA（可选）" }
     ], "运行", function (v) {
       write(POST("/cicd/pipelines/" + encodeURIComponent(v.pipeline) + "/run", { branch: v.branch, commit: v.commit }), "已提交运行").then(function (r) { if (r) { closeAll(); if (done) done(); } });
     });
+  }
+
+  function renderTestingLive(el) {
+    var p = livePage(el, "测试管理", "基于流水线 test 阶段查看真实配置与运行结果",
+      '<button class="x-btn" type="button" data-refresh>刷新</button><a class="x-btn x-btn--pri" href="#/cicd/pipeline">管理流水线</a>', "");
+    el.querySelector("[data-refresh]").onclick = function () { load(); };
+    function load() {
+      var token = p.newToken();
+      Promise.all([
+        appsLoad(),
+        GET("/cicd/pipelines"),
+        GET("/cicd/runs", { page: 1, page_size: 100 })
+      ]).then(function (data) {
+        CICD_APPS = data[0] || [];
+        CICD_PL = asArray(data[1], ["items", "pipelines"]);
+        var allRuns = asArray(data[2], ["items", "runs"]);
+        var testPipelines = CICD_PL.filter(function (pipeline) {
+          return (pipeline.stages || []).some(function (stage) { return stage.type === "test"; });
+        });
+        var ids = {};
+        testPipelines.forEach(function (pipeline) { ids[String(pipeline.id)] = true; });
+        var runs = allRuns.filter(function (run) { return !!ids[String(run.pipeline_id)]; });
+        var pipelineRows = testPipelines.map(function (pipeline) {
+          var tests = (pipeline.stages || []).filter(function (stage) { return stage.type === "test"; });
+          return [mono("#" + pipeline.id), E(appName(pipeline.app_id)), E(pipeline.name),
+            E(tests.map(function (stage) { return stage.name; }).join(", ")), E("#" + pipeline.runner_target_id),
+            pipeline.on_push ? tag("代码推送", "x-blue") : tag("手动", "x-grey"),
+            '<a class="x-btn" href="#/cicd/pipeline">配置</a>'];
+        });
+        var runRows = runs.map(function (run) {
+          return [mono("#" + run.id), E(appName(run.app_id)), E(pipelineName(run.pipeline_id)), stTag(run.status),
+            code(run.branch || "—", 20), E(run.triggered_by || "—"), fmtMin(run.started_at || run.created_at),
+            '<span class="ops-nowrap"><button class="x-btn" type="button" data-test-run="' + E(run.id) + '">详情</button>' +
+            '<button class="x-btn" type="button" data-test-log="' + E(run.id) + '">日志</button></span>'];
+        });
+        var html = panelHTML("测试流水线", testPipelines.length
+          ? tbl(["ID", "应用", "流水线", "测试阶段", "执行集群", "触发方式", "操作"], pipelineRows)
+          : emptyHTML("暂无包含 test 阶段的流水线。请在流水线配置中添加测试阶段。")) +
+          panelHTML("最近运行", (runs.length ? tbl(["运行", "应用", "流水线", "状态", "分支", "触发人", "开始时间", "操作"], runRows)
+            : emptyHTML("最近 100 次运行中没有测试流水线记录。")) +
+            '<p class="x-frac">运行记录最多读取最近 100 条；执行与阶段配置统一由 CI/CD 流水线管理。</p>');
+        if (!p.paint(token, html)) return;
+        p.box.querySelectorAll("[data-test-run]").forEach(function (button) {
+          button.onclick = function () { runDetailModal(button.getAttribute("data-test-run")); };
+        });
+        p.box.querySelectorAll("[data-test-log]").forEach(function (button) {
+          button.onclick = function () { openRunLog(button.getAttribute("data-test-log")); };
+        });
+      }).catch(function (err) { p.error(token, err); });
+    }
+    p.retry = load;
+    load();
   }
 
   function runDetailModal(id) {
@@ -1061,7 +1221,7 @@
           ["触发", E(r.triggered_by || "—")], ["开始", fmtMin(r.started_at)], ["结束", fmtMin(r.finished_at)], ["错误", code(r.error || "—", 120)]]
           .map(function (kv) { return "<dt>" + kv[0] + "</dt><dd>" + kv[1] + "</dd>"; }).join("") + "</dl>";
       var foot = '<button class="x-btn" type="button" data-close>关闭</button><button class="x-btn x-btn--pri" type="button" id="opsRunLogBtn">查看实时日志</button>';
-      dlg("运行详情 · #" + E(r.id), '<div class="x-form">' + info + (rows.length ? tbl(["#", "阶段", "类型", "状态", "Job", "开始", "结束", "错误"], rows) : emptyHTML("该运行没有阶段记录")) + "</div>", foot);
+      dlg("运行详情   #" + E(r.id), '<div class="x-form">' + info + (rows.length ? tbl(["#", "阶段", "类型", "状态", "Job", "开始", "结束", "错误"], rows) : emptyHTML("该运行没有阶段记录")) + "</div>", foot);
       var lb = q("opsRunLogBtn");
       if (lb) lb.onclick = function () { openRunLog(r.id, names); };
     }).catch(function (err) { toast(errMsg(err)); });
@@ -1073,7 +1233,7 @@
   }
   function openRunLog(runId, stageNames) {
     stopRunStream();
-    dlg("运行日志 · #" + E(runId), '<pre class="x-log ops-ro" id="ops-runlog" aria-live="polite" aria-label="运行日志">连接日志流…' + "\n" + "</pre>",
+    dlg("运行日志   #" + E(runId), '<pre class="x-log ops-ro" id="ops-runlog" aria-live="polite" aria-label="运行日志">连接日志流…' + "\n" + "</pre>",
       '<button class="x-btn" type="button" data-close>关闭</button><span class="x-test x-mr" id="ops-runst" role="status">实时跟随中…</span>', true);
     var pre = q("ops-runlog"), st = q("ops-runst"), seen = 0;
     function setSt(text) { if (st && document.body.contains(st)) st.textContent = text; }
@@ -1097,7 +1257,7 @@
           try { var l = JSON.parse(data); append(label(l) + (l.line || "")); } catch (e) { append(String(data)); }
         },
         end: function (data) {
-          try { var d = JSON.parse(data); setSt("已结束 · " + (d.status || "")); } catch (e) { setSt("已结束"); }
+          try { var d = JSON.parse(data); setSt("已结束   " + (d.status || "")); } catch (e) { setSt("已结束"); }
         },
         error: function (err) { append("[日志流错误] " + errMsg(err)); setSt("日志流中断"); }
       }, { follow: 1 });
@@ -1120,7 +1280,7 @@
   }
 
   function cicdArtifacts(el) {
-    var p = livePage(el, "制品", "构建产出的镜像标签（来自运行记录）", '<button class="x-btn" type="button" data-refresh>刷新</button>', cicdTabs("#/cicd/artifact"));
+    var p = livePage(el, "制品", "构建产出的镜像标签（来自运行记录）", '<button class="x-btn" type="button" data-refresh>刷新</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { cicdArtifacts(el); };
     function load() {
       var t = p.newToken();
@@ -1139,20 +1299,103 @@
   }
 
   function cicdPipelines(el) {
-    var p = livePage(el, "流水线", "流水线定义、执行集群与 Jenkins 接入", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newpl>+ 新建流水线</button>', cicdTabs("#/cicd/pipeline"));
+    var routeParts = (location.hash || "").split("/");
+    var detailID = routeParts[3] ? decodeURIComponent(routeParts[3].split("?")[0]) : "";
+    var p = livePage(el, "流水线", "流水线定义、执行集群与 Jenkins 接入", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newpl>+ 新建流水线</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { cicdPipelines(el); };
     el.querySelector("[data-newpl]").onclick = function () { pipelineModal(function () { cicdPipelines(el); }); };
     function load() {
       var t = p.newToken();
-      Promise.all([GET("/cicd/pipelines"), settle(GET("/cicd/targets"), []), settle(GET("/cicd/jenkins"), []), settle(appsLoad(), [])]).then(function (rs) {
+      Promise.all([GET("/cicd/pipelines"), settle(GET("/cicd/targets"), []), settle(GET("/cicd/jenkins"), []), settle(appsLoad(), []), settle(GET("/cicd/argocd"), [])]).then(function (rs) {
         CICD_PL = Array.isArray(rs[0]) ? rs[0] : asArray(rs[0], ["items"]);
         CICD_TG = asArray(rs[1].value, ["items", "targets"]);
         CICD_JK = asArray(rs[2].value, ["items", "jenkins"]);
         CICD_APPS = rs[3].value || [];
+        if (detailID) {
+          var selected = CICD_PL.filter(function (pl) { return String(pl.id) === String(detailID); })[0];
+          if (!selected) {
+            p.paint(t, '<p class="x-crumb">应用交付<i>/</i><a class="x-tlink" href="#/cicd/pipeline">流水线</a></p>' +
+              panelHTML("流水线", emptyHTML("流水线不存在或已被删除。")));
+            return;
+          }
+          GET("/cicd/runs", { pipeline_id: selected.id, page: 1, page_size: 50 }).then(function (runData) {
+            if (t !== p.token) return;
+            var runItems = Array.isArray(runData) ? runData : asArray(runData, ["items", "runs"]);
+            var newest = runItems[0] || null;
+            var detailRequest = newest ? settle(GET("/cicd/runs/" + encodeURIComponent(newest.id)), null) : Promise.resolve({ ok: true, value: null });
+            detailRequest.then(function (runResult) {
+              var runDetail = runResult.value;
+              var stages = Array.isArray(selected.stages) ? selected.stages : [];
+              var statusByIndex = {};
+              (runDetail && Array.isArray(runDetail.stages) ? runDetail.stages : []).forEach(function (stage) { statusByIndex[stage.idx] = stage; });
+              var flow = stages.length
+                ? '<p class="x-plflow" aria-label="流水线执行阶段">' + stages.map(function (stage, index) {
+                  var observed = statusByIndex[index], cls = observed && observed.status === "skipped" ? "off" : "";
+                  return '<b class="' + cls + '">' + E(stage.name || ("阶段 " + (index + 1))) + '</b>';
+                }).join('<span aria-hidden="true">→</span>') + "</p>"
+                : emptyHTML("此流水线没有阶段配置。");
+              var runStages = runDetail && Array.isArray(runDetail.stages) ? runDetail.stages : [];
+              var strip = runStages.length
+                ? '<ol class="x-plstrip">' + runStages.map(function (stage) {
+                  var colors = { succeeded: "#12b76a", running: "#2c66f5", failed: "#f04438", cancelled: "#98a2b3", skipped: "#d0d5dd", rejected: "#f79009", pending: "#d0d5dd" };
+                  return '<li><button class="x-plst' + (stage.status === "running" ? " run" : "") + '" style="--c:' + (colors[stage.status] || "#d0d5dd") +
+                    '" type="button" data-stage-run="' + E(runDetail.id) + '" aria-label="' + E(stage.name + "：" + stage.status) + '">' +
+                    "<b>" + E(stage.name) + "</b><small>" + stTag(stage.status) + (stage.job_name ? "   " + E(stage.job_name) : "") + "</small></button></li>";
+                }).join("") + "</ol>"
+                : emptyHTML("该流水线暂无运行记录。");
+              var runRows = runItems.map(function (run) {
+                var active = ["queued", "running", "cancelling"].indexOf(String(run.status)) >= 0;
+                return [mono("#" + run.id), stTag(run.status), code(run.branch || "—", 20), code(run.commit || "—", 14),
+                  E(run.triggered_by || "—"), fmtMin(run.started_at || run.created_at),
+                  '<span class="ops-nowrap"><button class="x-btn" type="button" data-plrund="' + E(run.id) + '">详情</button>' +
+                  '<button class="x-btn" type="button" data-plrunlog="' + E(run.id) + '">日志</button>' +
+                  (active ? '<button class="x-btn" type="button" data-plruncancel="' + E(run.id) + '">取消</button>' : "") + "</span>"];
+              });
+              var flowNames = stages.map(function (stage) { return E(stage.name); }).join(" → ");
+              var html = '<p class="x-crumb">应用交付<i>/</i><a class="x-tlink" href="#/cicd/pipeline">流水线</a><i>/</i><b>' + E(selected.name) + "</b></p>" +
+                '<div class="x-tbar"><a class="x-btn" href="#/cicd/pipeline">返回流水线列表</a><span class="x-grow"></span>' +
+                '<button class="x-btn" type="button" data-detail-edit="' + E(selected.id) + '">编辑</button>' +
+                '<button class="x-btn" type="button" data-detail-run="' + E(selected.id) + '">运行</button></div>' +
+                panelHTML("流水线信息", '<dl class="x-sum" style="margin:0">' +
+                  [["应用", E(appName(selected.app_id))], ["执行集群", E(targetName(selected.runner_target_id))],
+                    ["触发方式", selected.on_push ? "代码推送" : "手动"], ["阶段", E(stages.length + " 个")],
+                    ["最近更新", fmtMin(selected.updated_at)]].map(function (item) { return "<dt>" + item[0] + "</dt><dd>" + item[1] + "</dd>"; }).join("") +
+                  "</dl><div class=\"x-sethead\" style=\"margin-top:16px\"><h2 class=\"x-h2\">执行顺序</h2></div>" + flow +
+                  (flowNames ? '<p class="x-frac" style="margin-top:8px">' + flowNames + "</p>" : "")) +
+                panelHTML("最近运行阶段", runDetail ? '<p class="x-frac">' + mono("#" + runDetail.id) + "   " + stTag(runDetail.status) + "   " + fmtMin(runDetail.started_at || runDetail.created_at) + "</p>" + strip :
+                  emptyHTML("该流水线暂无运行记录。")) +
+                panelHTML("运行记录", runRows.length ? tbl(["运行", "状态", "分支", "提交", "触发人", "开始时间", "操作"], runRows) :
+                  emptyHTML("该流水线暂无运行记录。"));
+              if (!p.paint(t, html)) return;
+              var edit = p.box.querySelector("[data-detail-edit]");
+              if (edit) edit.onclick = function () { pipelineModal(function () { cicdPipelines(el); }, selected); };
+              var run = p.box.querySelector("[data-detail-run]");
+              if (run) run.onclick = function () { runPipelineModal(function () { cicdPipelines(el); }, [selected]); };
+              [].slice.call(p.box.querySelectorAll("[data-stage-run]")).forEach(function (button) {
+                button.onclick = function () { runDetailModal(button.getAttribute("data-stage-run")); };
+              });
+              [].slice.call(p.box.querySelectorAll("[data-plrund]")).forEach(function (button) {
+                button.onclick = function () { runDetailModal(button.getAttribute("data-plrund")); };
+              });
+              [].slice.call(p.box.querySelectorAll("[data-plrunlog]")).forEach(function (button) {
+                button.onclick = function () { openRunLog(button.getAttribute("data-plrunlog")); };
+              });
+              [].slice.call(p.box.querySelectorAll("[data-plruncancel]")).forEach(function (button) {
+                button.onclick = function () {
+                  var id = button.getAttribute("data-plruncancel");
+                  confirmDo("取消运行", "确定取消流水线运行 #" + E(id) + "？", "取消运行", function () {
+                    write(POST("/cicd/runs/" + encodeURIComponent(id) + "/cancel"), "已请求取消").then(function (result) { if (result) load(); });
+                  });
+                };
+              });
+            });
+          }).catch(function (err) { p.error(t, err); });
+          return;
+        }
         var plRows = CICD_PL.map(function (pl) {
-          return [mono("#" + pl.id), E(pl.name || "—"), E(appName(pl.app_id)), E(targetName(pl.runner_target_id)), pl.on_push ? tag("代码推送", "x-blue") : tag("手动", "x-grey"),
+          return [mono("#" + pl.id), '<a class="x-tlink" href="#/cicd/pipeline/' + encodeURIComponent(pl.id) + '">' + E(pl.name || "—") + "</a>", E(appName(pl.app_id)), E(targetName(pl.runner_target_id)), pl.on_push ? tag("代码推送", "x-blue") : tag("手动", "x-grey"),
             E((pl.stages || []).length + " 阶段"), fmtMin(pl.updated_at),
-            '<span class="ops-nowrap"><button class="x-btn" type="button" data-pld="' + E(pl.id) + '">详情</button><button class="x-btn" type="button" data-plrun="' + E(pl.id) + '">运行</button><button class="x-btn" type="button" data-pldel="' + E(pl.id) + '">删除</button></span>'];
+            '<span class="ops-nowrap"><a class="x-btn" href="#/cicd/pipeline/' + encodeURIComponent(pl.id) + '">详情</a><button class="x-btn" type="button" data-pledit="' + E(pl.id) + '">编辑</button><button class="x-btn" type="button" data-plrun="' + E(pl.id) + '">运行</button><button class="x-btn" type="button" data-pldel="' + E(pl.id) + '">删除</button></span>'];
         });
         var tgRows = CICD_TG.map(function (g) {
           return [E(g.name || "—"), code(g.namespace || "—", 20), code(g.kubeconfig || "********", 14), fmtMin(g.created_at),
@@ -1166,9 +1409,12 @@
           panelHTML("执行集群（runner target）", (tgRows.length ? tbl(["名称", "命名空间", "Kubeconfig", "创建时间", "操作"], tgRows) : emptyHTML("暂无执行集群。流水线构建需要至少一个执行集群。")),
             '<button class="x-btn" type="button" data-newtg style="margin-left:auto">+ 接入集群</button>') +
           panelHTML("Jenkins 服务器", (jkRows.length ? tbl(["名称", "地址", "用户名", "创建时间", "操作"], jkRows) : emptyHTML("暂无 Jenkins 接入。流水线的 jenkins 阶段需要它。")),
-            '<button class="x-btn" type="button" data-newjk style="margin-left:auto">+ 接入 Jenkins</button>');
+            '<button class="x-btn" type="button" data-newjk style="margin-left:auto">+ 接入 Jenkins</button>') +
+          panelHTML("Argo CD", rs[4].ok ? argoConnectionsHTML(asArray(rs[4].value, ["items"])) : banner("Argo CD：" + errMsg(rs[4].error)),
+            '<button class="x-btn" type="button" data-newargo style="margin-left:auto">+ 接入 Argo CD</button>');
         if (!p.paint(t, html)) return;
         bind();
+        bindArgoConnections(p.box, asArray(rs[4].value, ["items"]), load);
       }).catch(function (err) { p.error(t, err); });
     }
     p.retry = load;
@@ -1180,11 +1426,11 @@
       var n2 = p.box.querySelector("[data-newpl2]"); if (n2) n2.onclick = function () { pipelineModal(function () { cicdPipelines(el); }); };
       var nt = p.box.querySelector("[data-newtg]"); if (nt) nt.onclick = function () { targetModal(function () { cicdPipelines(el); }); };
       var nj = p.box.querySelector("[data-newjk]"); if (nj) nj.onclick = function () { jenkinsModal(function () { cicdPipelines(el); }); };
-      [].slice.call(p.box.querySelectorAll("[data-pld]")).forEach(function (b) {
+      [].slice.call(p.box.querySelectorAll("[data-pledit]")).forEach(function (b) {
         b.onclick = function () {
-          var id = b.getAttribute("data-pld"), pl = null;
+          var id = b.getAttribute("data-pledit"), pl = null;
           for (var i = 0; i < CICD_PL.length; i++) if (String(CICD_PL[i].id) === String(id)) pl = CICD_PL[i];
-          if (pl) infoModal("流水线 · " + (pl.name || id), preBlock(pl));
+          if (pl) pipelineModal(function () { cicdPipelines(el); }, pl);
         };
       });
       [].slice.call(p.box.querySelectorAll("[data-plrun]")).forEach(function (b) {
@@ -1216,20 +1462,193 @@
         };
       });
     }
-    function pipelineModal(done) {
+    function pipelineModal(done, existing) {
       if (!CICD_APPS.length) { toast("请先在「应用」页创建应用"); return; }
       if (!CICD_TG.length) { toast("请先接入执行集群"); return; }
-      formModal("新建流水线", [
-        { k: "name", label: "名称（DNS label，≤40）", required: true, placeholder: "main" },
-        { k: "app", label: "应用", kind: "select", options: CICD_APPS.map(function (a) { return { v: a.id, t: a.name }; }) },
-        { k: "target", label: "执行集群", kind: "select", options: CICD_TG.map(function (g) { return { v: g.id, t: g.name + " / " + g.namespace }; }) },
-        { k: "on_push", label: "代码推送自动触发", kind: "checkbox", value: true, hint: "开启" },
-        { k: "stages", label: "阶段 JSON", kind: "textarea", rows: 8, required: true, value: '[\n  {"name": "unit-test", "type": "test", "image": "golang:1.23", "commands": ["go test ./..."]},\n  {"name": "build", "type": "build", "registry_secret": "harbor-push"}\n]' }
-      ], "创建", function (v) {
-        var stages;
-        try { stages = parseJSON(v.stages, []); } catch (err) { toast(errMsg(err)); return; }
-        write(POST("/cicd/pipelines", { name: v.name, app_id: +v.app, runner_target_id: +v.target, on_push: v.on_push, stages: stages }), "流水线已创建").then(function (r) { if (r) { closeAll(); if (done) done(); } });
-      }, "阶段类型：test / script / build / deploy / jenkins；支持 depends_on 并行与 workspace（后端能力）。");
+      var id = "opspipe" + (++ST.formSeq), stageTypes = [
+        { v: "build", t: "构建镜像" }, { v: "test", t: "测试" }, { v: "script", t: "脚本" },
+        { v: "deploy", t: "部署" }, { v: "jenkins", t: "Jenkins Job" }
+      ];
+      var stages = existing && Array.isArray(existing.stages) && existing.stages.length
+        ? existing.stages.map(function (s) {
+          return Object.assign({}, s, {
+            commands: (s.commands || []).join("\n"),
+            params_text: Object.keys(s.params || {}).map(function (k) { return k + "=" + s.params[k]; }).join("\n")
+          });
+        })
+        : [{ name: "unit-test", type: "test", image: "golang:1.23", commands: "go test ./..." }, { name: "build", type: "build", registry_secret: "" }];
+      var appOptions = CICD_APPS.map(function (a) { return { v: a.id, t: a.name }; });
+      var targetOptions = CICD_TG.map(function (t) { return { v: t.id, t: t.name + " / " + t.namespace }; });
+      function options(items, selected, empty) {
+        if (!items.length) return '<option value="">' + E(empty || "暂无可选项") + "</option>";
+        return items.map(function (o) {
+          return '<option value="' + E(o.v) + '"' + (String(o.v) === String(selected) ? " selected" : "") + ">" + E(o.t) + "</option>";
+        }).join("");
+      }
+      var selectedApp = existing ? existing.app_id : CICD_APPS[0].id;
+      var selectedTarget = existing ? existing.runner_target_id : CICD_TG[0].id;
+      var formHTML = '<form class="x-form" id="' + id + '" novalidate>' +
+        '<label><span>流水线名称</span><input class="x-input" name="name" maxlength="64" required value="' + E(existing && existing.name || "") + '" placeholder="例如 release-main" /></label>' +
+        '<label><span>应用</span><select class="x-select" name="app">' + options(appOptions, selectedApp) + "</select></label>" +
+        '<label><span>执行集群</span><select class="x-select" name="target">' + options(targetOptions, selectedTarget) + "</select></label>" +
+        '<label><span>代码推送时自动触发</span><span class="x-check"><input type="checkbox" name="on_push"' + (existing ? (existing.on_push ? " checked" : "") : " checked") + ' style="width:auto" /> 启用</span></label>' +
+        '<section><div class="x-sethead"><h2 class="x-h2">执行阶段</h2><button class="x-btn" type="button" data-stage-add>添加阶段</button></div><div data-stage-list></div></section>' +
+        '<p class="ops-sub">Jenkins Job 可读取参数定义并填入默认值；留空参数不覆盖 Job 默认值。支持 ${BRANCH}、${COMMIT}、${IMAGE_TAG}、${IMAGE}、${RUN_ID}。</p>' +
+        '<span class="x-err" id="' + id + 'err" role="alert" hidden></span></form>';
+      dlg(existing ? "编辑流水线" : "新建流水线", formHTML,
+        '<button class="x-btn" type="button" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="' + id + '">' + (existing ? "保存" : "创建") + "</button>");
+      var form = q(id), err = q(id + "err"), stageList = form && form.querySelector("[data-stage-list]");
+      if (!form || !stageList) return;
+      function currentApp() {
+        for (var i = 0; i < CICD_APPS.length; i++) if (String(CICD_APPS[i].id) === String(form.elements.app.value)) return CICD_APPS[i];
+        return null;
+      }
+      function readStages() {
+        stages = [].slice.call(stageList.querySelectorAll("[data-stage-row]")).map(function (row) {
+          var data = {};
+          [].slice.call(row.querySelectorAll("[data-stage-field]")).forEach(function (field) { data[field.getAttribute("data-stage-field")] = field.value; });
+          return data;
+        });
+      }
+      function field(label, key, value, placeholder, type) {
+        return '<label><span>' + E(label) + '</span><input class="x-input" data-stage-field="' + E(key) + '" type="' + (type || "text") + '" value="' + E(value || "") + '" placeholder="' + E(placeholder || "") + '"' + (type === "number" ? ' min="0" max="86400" step="1"' : "") + " /></label>";
+      }
+      function selectField(label, key, items, selected, empty) {
+        return '<label><span>' + E(label) + '</span><select class="x-select" data-stage-field="' + E(key) + '">' + options(items, selected, empty) + "</select></label>";
+      }
+      function stageBody(stage) {
+        var app = currentApp(), envs = app && Array.isArray(app.envs) ? app.envs.map(function (env) { return { v: env.name, t: env.name + " / " + env.namespace }; }) : [];
+        if (stage.type === "build") return field("镜像覆盖（可选）", "image", stage.image, "留空使用应用镜像仓库") +
+          field("镜像仓库 Secret（可选）", "registry_secret", stage.registry_secret, "如 harbor-push") + field("超时秒数", "timeout_sec", stage.timeout_sec, "默认超时", "number");
+        if (stage.type === "test" || stage.type === "script") return field("运行镜像", "image", stage.image, "如 golang:1.23", "text") +
+          '<label class="ops-stage-wide"><span>执行命令（每行一条）</span><textarea class="x-input" data-stage-field="commands" rows="3" placeholder="go test ./...">' + E(stage.commands || "") + "</textarea></label>" +
+          field("超时秒数", "timeout_sec", stage.timeout_sec, "默认超时", "number");
+        if (stage.type === "deploy") return selectField("部署环境", "deploy_env", envs, stage.deploy_env, "当前应用没有可部署环境");
+        if (stage.type === "jenkins") {
+          var jenkinsOptions = CICD_JK.map(function (j) { return { v: j.id, t: j.name + "   " + j.url }; });
+          return selectField("Jenkins", "jenkins_id", jenkinsOptions, stage.jenkins_id, "请先接入 Jenkins") +
+            '<label><span>Job 名称</span><div class="ops-jenkins-job"><input class="x-input" data-stage-field="jenkins_job" value="' + E(stage.jenkins_job || "") + '" placeholder="folder/job-name" /><button class="x-btn" type="button" data-jenkins-discover>读取参数</button></div></label>' +
+            '<label class="ops-stage-wide"><span>Job 参数（每行 name=value）</span><textarea class="x-input" data-stage-field="params_text" rows="3" placeholder="BRANCH=${BRANCH}">' + E(stage.params_text || "") + "</textarea></label>";
+        }
+        return "";
+      }
+      function renderStages() {
+        stageList.innerHTML = stages.map(function (stage, index) {
+          return '<fieldset class="ops-stage" data-stage-row><div class="ops-stage-head"><strong>阶段 ' + (index + 1) + "</strong>" +
+            '<button class="x-btn" type="button" data-stage-remove="' + index + '" aria-label="移除阶段 ' + (index + 1) + '">移除</button></div>' +
+            '<div class="ops-stage-grid">' + field("阶段标识", "name", stage.name, "如 unit-test") +
+            selectField("执行类型", "type", stageTypes, stage.type) + stageBody(stage) + "</div></fieldset>";
+        }).join("");
+      }
+      stageList.addEventListener("change", function (event) {
+        var fieldNode = event.target.closest("[data-stage-field]");
+        if (!fieldNode) return;
+        if (fieldNode.getAttribute("data-stage-field") === "jenkins_id") {
+          var parent = fieldNode.closest("[data-stage-row]"), schema = parent && parent.querySelector(".ops-jenkins-schema");
+          if (schema) schema.remove();
+          return;
+        }
+        if (fieldNode.getAttribute("data-stage-field") === "type") {
+          readStages();
+          var rows = [].slice.call(stageList.querySelectorAll("[data-stage-row]")), index = rows.indexOf(fieldNode.closest("[data-stage-row]"));
+          if (index >= 0 && stages[index] && !stages[index].name) stages[index].name = "stage-" + (index + 1);
+          renderStages();
+        }
+      });
+      stageList.addEventListener("input", function (event) {
+        if (event.target.matches('[data-stage-field="jenkins_job"]')) {
+          var row = event.target.closest("[data-stage-row]"), schema = row && row.querySelector(".ops-jenkins-schema");
+          if (schema) schema.remove();
+        }
+      });
+      stageList.addEventListener("click", function (event) {
+        var discover = event.target.closest("[data-jenkins-discover]");
+        if (discover) {
+          var row = discover.closest("[data-stage-row]");
+          if (!row) return;
+          var idField = row.querySelector('[data-stage-field="jenkins_id"]');
+          var jobField = row.querySelector('[data-stage-field="jenkins_job"]');
+          var paramsField = row.querySelector('[data-stage-field="params_text"]');
+          var jenkinsId = String(idField && idField.value || ""), job = String(jobField && jobField.value || "").trim();
+          if (!jenkinsId || !job) { toast("请选择 Jenkins 并填写 Job 名称"); return; }
+          discover.disabled = true;
+          discover.textContent = "读取中…";
+          GET("/cicd/jenkins/" + encodeURIComponent(jenkinsId) + "/job-parameters", { job: job }).then(function (data) {
+            if (!stageList.contains(row)) return;
+            var definitions = asArray(data, ["parameters"]);
+            var values;
+            try { values = parseJenkinsParameters(paramsField.value); }
+            catch (error) { toast(error.message || "现有 Jenkins 参数格式错误"); return; }
+            definitions.forEach(function (definition) {
+              if (Object.prototype.hasOwnProperty.call(values, definition.name) || definition.sensitive) return;
+              var value = definition.default_value;
+              if (value == null || /[\r\n]/.test(String(value))) value = "";
+              values[definition.name] = String(value);
+            });
+            paramsField.value = Object.keys(values).map(function (key) { return key + "=" + values[key]; }).join("\n");
+            var descriptions = definitions.map(function (definition) {
+              var detail = [definition.type || "参数", definition.description || ""].filter(Boolean).join("   ");
+              if (definition.choices && definition.choices.length) detail += (detail ? "   " : "") + "可选值：" + definition.choices.join(" / ");
+              if (definition.sensitive) detail += (detail ? "   " : "") + "敏感参数，默认值未读取";
+              return "<li><span class=\"x-name\">" + E(definition.name) + "</span>   " + E(detail) + "</li>";
+            }).join("");
+            var old = row.querySelector(".ops-jenkins-schema");
+            if (old) old.remove();
+            var report = document.createElement("details");
+            report.className = "ops-jenkins-schema";
+            report.innerHTML = "<summary>已发现 " + definitions.length + " 个 Job 参数</summary><ul>" + descriptions + "</ul>";
+            paramsField.parentNode.insertAdjacentElement("afterend", report);
+          }).catch(function (error) { toast("读取 Jenkins 参数失败：" + errMsg(error)); })
+            .finally(function () { if (discover.isConnected) { discover.disabled = false; discover.textContent = "读取参数"; } });
+          return;
+        }
+        var remove = event.target.closest("[data-stage-remove]");
+        if (!remove) return;
+        readStages();
+        stages.splice(Number(remove.getAttribute("data-stage-remove")), 1);
+        renderStages();
+      });
+      form.querySelector("[data-stage-add]").onclick = function () {
+        readStages();
+        if (stages.length >= 12) { err.textContent = "最多配置 12 个阶段"; err.hidden = false; return; }
+        var next = stages.length + 1;
+        stages.push({ name: "stage-" + next, type: "test", image: "", commands: "", timeout_sec: "" });
+        err.hidden = true;
+        renderStages();
+      };
+      form.elements.app.onchange = function () { readStages(); renderStages(); };
+      form.onsubmit = function (event) {
+        event.preventDefault();
+        err.hidden = true;
+        readStages();
+        var app = currentApp(), body;
+        try {
+          var name = String(form.elements.name.value || "").trim();
+          if (!name || name.length > 64) throw new Error("流水线名称为必填，且不能超过 64 个字符");
+          if (!app) throw new Error("请选择有效的应用");
+          body = {
+            name: name,
+            app_id: Number(app.id),
+            runner_target_id: Number(form.elements.target.value),
+            on_push: !!form.elements.on_push.checked,
+            stages: buildPipelineStages(stages, (app.envs || []).map(function (env) { return env.name; }), CICD_JK.map(function (j) { return Number(j.id); }))
+          };
+        } catch (error) {
+          err.textContent = error.message || "流水线配置无效";
+          err.hidden = false;
+          return;
+        }
+        var submit = document.querySelector('button[form="' + id + '"][type="submit"]');
+        if (submit) { submit.disabled = true; submit.textContent = "保存中…"; }
+        var request = existing
+          ? PUT("/cicd/pipelines/" + encodeURIComponent(existing.id), body)
+          : POST("/cicd/pipelines", body);
+        write(request, existing ? "流水线已更新" : "流水线已创建").then(function (result) {
+          if (submit) submit.disabled = false;
+          if (result) { closeAll(); if (done) done(); }
+        });
+      };
+      renderStages();
     }
     function targetModal(done) {
       formModal("接入执行集群", [
@@ -1253,6 +1672,82 @@
     load();
   }
 
+  function argoConnectionsHTML(configs) {
+    return configs.length ? tbl(["名称", "地址", "环境", "项目", "操作"], configs.map(function (c) {
+      return [E(c.name), code(c.url, 60), E(c.env), E(c.project), '<span class="ops-nowrap">' +
+        '<button class="x-btn" type="button" data-argo-apps="' + E(c.id) + '">应用</button>' +
+        '<button class="x-btn" type="button" data-argo-test="' + E(c.id) + '">测试连接</button>' +
+        '<button class="x-btn" type="button" data-argo-edit="' + E(c.id) + '">编辑</button>' +
+        '<button class="x-btn" type="button" data-argo-delete="' + E(c.id) + '">移除</button></span>'];
+    })) : emptyHTML("暂无 Argo CD 接入。可连接已有实例并同步指定项目的应用。");
+  }
+  function bindArgoConnections(box, configs, reload) {
+    function form(existing) {
+      var c = existing || {};
+      formModal(existing ? "编辑 Argo CD" : "接入 Argo CD", [
+        { k: "name", label: "名称", required: true, value: c.name || "" },
+        { k: "url", label: "地址", required: true, value: c.url || "", placeholder: "https://argocd.example.com" },
+        { k: "env", label: "平台环境", required: true, value: c.env || "", placeholder: "与平台环境策略名称一致" },
+        { k: "project", label: "Argo CD 项目", required: true, value: c.project || "default" },
+        { k: "token", label: existing ? "Token（留空保留）" : "Token", kind: "password", value: "" }
+      ], "保存", function (v) {
+        write(existing ? PUT("/cicd/argocd/" + c.id, v) : POST("/cicd/argocd", v), "Argo CD 接入已保存").then(function (res) {
+          if (res) { closeAll(); reload(); }
+        });
+      });
+    }
+    var add = box.querySelector("[data-newargo]");
+    if (add) add.onclick = function () { form(); };
+    [["test", function (c) {
+      write(POST("/cicd/argocd/" + c.id + "/test", {}), "Argo CD 连接正常");
+    }], ["edit", form], ["delete", function (c) {
+      confirmDo("移除 Argo CD", "仅移除平台接入配置，Argo CD 和应用不会被删除。", "移除", function () {
+        write(DEL("/cicd/argocd/" + c.id), "Argo CD 接入已移除").then(function (res) { if (res) reload(); });
+      });
+    }], ["apps", argoApplications]].forEach(function (action) {
+      box.querySelectorAll("[data-argo-" + action[0] + "]").forEach(function (button) {
+        button.onclick = function () {
+          var c = configs.find(function (item) { return String(item.id) === button.getAttribute("data-argo-" + action[0]); });
+          if (c) action[1](c);
+        };
+      });
+    });
+  }
+  function argoApplications(config) {
+    var root = "/cicd/argocd/" + encodeURIComponent(config.id) + "/applications";
+    infoModal("Argo CD   " + config.name, '<div id="opsArgoApps">' + emptyHTML("正在读取应用…") + '</div>');
+    var box = q("opsArgoApps");
+    function load() {
+      GET(root).then(function (result) {
+        if (!box.isConnected) return;
+        var items = asArray(result, ["items"]);
+        box.innerHTML = items.length ? tbl(["应用", "目标集群 / 命名空间", "同步", "健康", "版本", "操作"], items.map(function (a) {
+          var spec = a.spec || {}, destination = spec.destination || {}, status = a.status || {}, name = a.metadata && a.metadata.name || "";
+          return [E(name), code((destination.name || destination.server || "") + " / " + (destination.namespace || ""), 60),
+            E(status.sync && status.sync.status || "Unknown"), E(status.health && status.health.status || "Unknown"),
+            code(status.sync && status.sync.revision || "—", 44),
+            '<button class="x-btn" type="button" data-argo-sync="' + E(name) + '">同步</button>'];
+        })) : emptyHTML("该项目暂无应用");
+        box.querySelectorAll("[data-argo-sync]").forEach(function (button) {
+          button.onclick = function () {
+            var name = button.dataset.argoSync, app = items.find(function (a) { return a.metadata && a.metadata.name === name; });
+            var revision = app && app.status && app.status.sync && app.status.sync.revision;
+            if (!revision) { toast("尚未取得应用目标版本，请先在 Argo CD 刷新应用"); return; }
+            formModal("同步 " + name, [
+              { k: "revision", label: "目标版本", required: true, value: revision },
+              { k: "reason", label: "变更原因", kind: "textarea", rows: 2 }
+            ], "确认同步", function (v) {
+              write(POST(root + "/" + encodeURIComponent(name) + "/sync", v), "同步请求已提交，请查看应用健康状态").then(function (res) {
+                if (res) { closeAll(); argoApplications(config); }
+              });
+            }, E(config.env) + "   " + E(config.project) + "。同步沿用 Argo CD 应用配置；不启用 prune 或 force；受平台环境审批控制。");
+          };
+        });
+      }).catch(function (err) { if (box.isConnected) box.innerHTML = banner("读取应用失败：" + errMsg(err)); });
+    }
+    load();
+  }
+
   /* ---------------------------------------------------------------- delivery 应用 */
 
   function renderDeliveryLive(el) {
@@ -1267,17 +1762,54 @@
     var p = livePage(el, "应用", "CI/CD 应用列表与环境配置", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newapp>+ 新建应用</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { deliveryList(el); };
     el.querySelector("[data-newapp]").onclick = function () { appModal(function () { deliveryList(el); }); };
+    var searchText = "", selectedEnv = "", applicationList = [];
     function load() {
       var t = p.newToken();
       appsLoad().then(function (list) {
-        var rows = list.map(function (a) {
+        applicationList = list;
+        paint(t);
+      }).catch(function (err) { p.error(t, err); });
+    }
+    function paint(token) {
+        var envs = [];
+        applicationList.forEach(function (app) { (app.envs || []).forEach(function (env) {
+          if (env.name && envs.indexOf(env.name) < 0) envs.push(env.name);
+        }); });
+        var needle = searchText.trim().toLowerCase();
+        var filtered = applicationList.filter(function (app) {
+          var text = [app.name, app.repo_url, app.branch, app.image_repo].concat((app.envs || []).map(function (env) { return env.name; })).join(" ").toLowerCase();
+          return (!needle || text.indexOf(needle) >= 0) &&
+            (!selectedEnv || (app.envs || []).some(function (env) { return env.name === selectedEnv; }));
+        });
+        var rows = filtered.map(function (a) {
           var href = "#/delivery/" + encodeURIComponent(a.name);
           return ['<a class="x-tlink" href="' + href + '">' + E(a.name) + "</a>", code(a.repo_url, 46), code(a.branch || "—", 18), code(a.image_repo, 34),
             E((a.envs || []).map(function (e) { return e.name; }).join(", ") || "—"), fmtMin(a.updated_at || a.created_at),
             '<span class="ops-nowrap"><a class="x-btn" href="' + href + '">详情</a><button class="x-btn" type="button" data-appdel="' + E(a.id) + '">删除</button></span>'];
         });
-        var html = panelHTML("应用", rows.length ? tbl(["名称", "代码仓库", "分支", "镜像仓库", "环境", "更新时间", "操作"], rows) : emptyHTML("尚未创建应用。点击右上角「+ 新建应用」接入代码仓库与镜像仓库。"));
-        if (!p.paint(t, html)) return;
+        var filters = barHTML([
+          '<input class="x-input" type="search" data-app-search aria-label="搜索应用" placeholder="搜索应用、仓库或镜像仓库" value="' + E(searchText) + '" />',
+          '<select class="x-select" data-app-env style="width:auto" aria-label="按环境筛选"><option value="">全部环境</option>' +
+            envs.map(function (env) { return '<option value="' + E(env) + '"' + (env === selectedEnv ? " selected" : "") + ">" + E(env) + "</option>"; }).join("") + "</select>",
+          '<span class="x-frac" style="margin-left:auto">' + filtered.length + " / " + applicationList.length + " 个应用</span>"
+        ]);
+        var html = panelHTML("应用", filters + (rows.length
+          ? tbl(["应用", "代码仓库", "默认分支", "镜像仓库", "部署环境", "更新时间", "操作"], rows)
+          : emptyHTML(applicationList.length ? "没有符合当前筛选条件的应用。" : "尚未创建应用。点击右上角「+ 新建应用」接入代码仓库与镜像仓库。")));
+        if (!p.paint(token, html)) return;
+        var search = p.box.querySelector("[data-app-search]");
+        var env = p.box.querySelector("[data-app-env]");
+        if (search) search.oninput = function () {
+          searchText = search.value;
+          var cursor = search.selectionStart;
+          paint(null);
+          var next = p.box.querySelector("[data-app-search]");
+          if (next) {
+            next.focus();
+            try { next.setSelectionRange(cursor, cursor); } catch (e) {}
+          }
+        };
+        if (env) env.onchange = function () { selectedEnv = env.value; paint(null); };
         [].slice.call(p.box.querySelectorAll("[data-appdel]")).forEach(function (b) {
           b.onclick = function () {
             confirmDo("删除应用", "确定删除应用？将级联删除其流水线、运行与发布记录。", "删除", function () {
@@ -1285,7 +1817,6 @@
             });
           };
         });
-      }).catch(function (err) { p.error(t, err); });
     }
     p.retry = load;
     load();
@@ -1318,7 +1849,7 @@
   }
 
   function deliveryDetail(el, name) {
-    var p = livePage(el, "应用 · " + name, "环境部署与发布记录", '<button class="x-btn" type="button" data-refresh>刷新</button>', "");
+    var p = livePage(el, "应用   " + name, "环境部署与发布记录", '<button class="x-btn" type="button" data-refresh>刷新</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { deliveryDetail(el, name); };
     var APP = null, RELS = [], RUNS = [], PIPES = [], RELENV = "";
     var back = '<p style="margin:0 0 12px"><a class="x-tlink" href="#/delivery/apps">← 返回应用列表</a></p>';
@@ -1384,7 +1915,7 @@
       [].slice.call(p.box.querySelectorAll("[data-apprun]")).forEach(function (b) { b.onclick = function () { runDetailModal(b.getAttribute("data-apprun")); }; });
       [].slice.call(p.box.querySelectorAll("[data-applog]")).forEach(function (b) { b.onclick = function () { openRunLog(b.getAttribute("data-applog")); }; });
       [].slice.call(p.box.querySelectorAll("[data-apppl]")).forEach(function (b) {
-        b.onclick = function () { var pl = PIPES.filter(function (x) { return String(x.id) === String(b.getAttribute("data-apppl")); })[0]; if (pl) infoModal("流水线 · " + (pl.name || pl.id), preBlock(pl)); };
+        b.onclick = function () { var pl = PIPES.filter(function (x) { return String(x.id) === String(b.getAttribute("data-apppl")); })[0]; if (pl) infoModal("流水线   " + (pl.name || pl.id), preBlock(pl)); };
       });
       [].slice.call(p.box.querySelectorAll("[data-appplrun]")).forEach(function (b) {
         b.onclick = function () { var pl = PIPES.filter(function (x) { return String(x.id) === String(b.getAttribute("data-appplrun")); })[0]; if (pl) runPipelineModal(function () { deliveryDetail(el, name); }, [pl]); };
@@ -1441,7 +1972,7 @@
   function deliveryWorkspace(el, name, initialPane) {
     var pane = DELIVERY_MENU.indexOf(initialPane) >= 0 ? initialPane : "导览";
     var app = null, selectedEnv = "", inventory = null, alerts = [], appClusters = [], appDatasources = [], auditRows = [], releases = [], runs = [], pipes = [];
-    var p = livePage(el, "应用 · " + name, "应用服务、实例、发布与运行记录", '<button class="x-btn" type="button" data-refresh>刷新</button>', "");
+    var p = livePage(el, "应用   " + name, "应用服务、实例、发布与运行记录", '<button class="x-btn" type="button" data-refresh>刷新</button>', "");
     el.querySelector("[data-refresh]").onclick = load;
     p.retry = load;
 
@@ -1521,25 +2052,25 @@
         var last = releases[0];
         return '<div class="x-sethead"><h2 class="x-h2">应用信息</h2><span class="x-frac">' + E(app.updated_at ? fmtMin(app.updated_at) : "") + "</span></div>" +
           '<dl class="x-sum">' + [["代码仓库", code(app.repo_url, 70)], ["默认分支", E(app.branch || "—")], ["镜像仓库", code(app.image_repo || "—", 60)], ["配置环境", E((app.envs || []).length + " 个")],
-            ["最近发布", last ? E(last.env + " · " + (last.image || last.status || "发布")) : "暂无发布记录"]].map(function (x) { return "<dt>" + x[0] + "</dt><dd>" + x[1] + "</dd>"; }).join("") + "</dl>" +
+            ["最近发布", last ? E(last.env + "   " + (last.image || last.status || "发布")) : "暂无发布记录"]].map(function (x) { return "<dt>" + x[0] + "</dt><dd>" + x[1] + "</dd>"; }).join("") + "</dl>" +
           '<div class="x-cards x-cards4"><button class="x-card x-cardbtn" type="button" data-pane="服务列表"><p>服务</p><strong>' + (env ? services.length : "—") + "</strong></button>" +
           '<button class="x-card x-cardbtn" type="button" data-pane="实例列表"><p>实例</p><strong>' + (env ? pods.length : "—") + "</strong></button>" +
           '<button class="x-card x-cardbtn" type="button" data-pane="部署编排"><p>发布</p><strong>' + releases.length + "</strong></button>" +
           '<button class="x-card x-cardbtn" type="button" data-pane="流程中心"><p>流水线</p><strong>' + pipes.length + "</strong></button></div>" +
-          (env ? '<div class="x-tbar"><span class="x-frac">' + E(env.name) + " · " + E(env.namespace || "未配置命名空间") + " · target #" + E(env.target_id) + '</span><span class="x-grow"></span><a class="x-btn" href="#/cicd/build">构建</a><a class="x-btn" href="#/cicd/artifact">制品</a></div>' : emptyHTML("该应用没有环境配置。"));
+          (env ? '<div class="x-tbar"><span class="x-frac">' + E(env.name) + "   " + E(env.namespace || "未配置命名空间") + "   target #" + E(env.target_id) + '</span><span class="x-grow"></span><a class="x-btn" href="#/cicd/build">构建</a><a class="x-btn" href="#/cicd/artifact">制品</a></div>' : emptyHTML("该应用没有环境配置。"));
       }
       if (pane === "服务列表") {
         if (!env) return emptyHTML("该应用没有环境配置。");
         var serviceRows = services.map(function (s) { return [E(s.name), E(s.namespace), tag(s.type || "ClusterIP", "x-blue"), code(s.cluster_ip || "—", 24),
           E((s.ports || []).map(function (p) { return (p.port || "") + "/" + (p.protocol || "TCP"); }).join(", ") || "—"), code(JSON.stringify(s.selector || {}), 56)]; });
-        return envBar() + '<p class="x-frac">' + E(env.name + " · " + env.namespace + " · " + services.length + " 个与该应用工作负载 selector 匹配的 Kubernetes Service") + (inv.warnings && inv.warnings.length ? "<br />" + inv.warnings.map(E).join("<br />") : "") + "</p>" +
+        return envBar() + '<p class="x-frac">' + E(env.name + "   " + env.namespace + "   " + services.length + " 个与该应用工作负载 selector 匹配的 Kubernetes Service") + (inv.warnings && inv.warnings.length ? "<br />" + inv.warnings.map(E).join("<br />") : "") + "</p>" +
           (serviceRows.length ? tbl(["服务", "命名空间", "类型", "Cluster IP", "端口", "Pod selector"], serviceRows) : emptyHTML("此环境中没有 selector 匹配该应用工作负载的 Service。"));
       }
       if (pane === "实例列表") {
         if (!env) return emptyHTML("该应用没有环境配置。");
         var podRows = pods.map(function (pod, index) { return [E(pod.name), E(pod.namespace), E(pod.ready || "—"), stTag(pod.status || pod.phase || "未知"),
           E(pod.restarts || 0), E(pod.node || "—"), code(pod.pod_ip || "—", 20), '<button class="x-act" type="button" data-app-pod="' + index + '">详情</button>']; });
-        return envBar() + '<p class="x-frac">' + E(env.name + " · " + env.namespace + " · 实时 Pod 清单") + (inv.warnings && inv.warnings.length ? "<br />" + inv.warnings.map(E).join("<br />") : "") + "</p>" +
+        return envBar() + '<p class="x-frac">' + E(env.name + "   " + env.namespace + "   实时 Pod 清单") + (inv.warnings && inv.warnings.length ? "<br />" + inv.warnings.map(E).join("<br />") : "") + "</p>" +
           (podRows.length ? tbl(["Pod", "命名空间", "Ready", "状态", "重启", "节点", "Pod IP", "详情"], podRows) : emptyHTML("此环境当前没有该应用的 Pod。"));
       }
       if (pane === "部署编排") {
@@ -1605,7 +2136,7 @@
           write(POST("/cicd/applications/" + encodeURIComponent(app.id) + "/rollback", { env: env, release_id: +id }), "回滚请求已提交").then(function (result) { if (result) load(); });
         }); };
       });
-      [].slice.call(p.box.querySelectorAll("[data-app-pipeline]")).forEach(function (button) { button.onclick = function () { var pl = pipes.filter(function (x) { return String(x.id) === button.getAttribute("data-app-pipeline"); })[0]; if (pl) infoModal("流水线 · " + (pl.name || pl.id), preBlock(pl)); }; });
+      [].slice.call(p.box.querySelectorAll("[data-app-pipeline]")).forEach(function (button) { button.onclick = function () { var pl = pipes.filter(function (x) { return String(x.id) === button.getAttribute("data-app-pipeline"); })[0]; if (pl) infoModal("流水线   " + (pl.name || pl.id), preBlock(pl)); }; });
       [].slice.call(p.box.querySelectorAll("[data-app-runpipe]")).forEach(function (button) { button.onclick = function () { var pl = pipes.filter(function (x) { return String(x.id) === button.getAttribute("data-app-runpipe"); })[0]; if (pl) runPipelineModal(load, [pl]); }; });
       var newRun = p.box.querySelector("[data-app-newrun]"); if (newRun) newRun.onclick = function () { runPipelineModal(load, pipes); };
       [].slice.call(p.box.querySelectorAll("[data-app-rund]")).forEach(function (button) { button.onclick = function () { runDetailModal(button.getAttribute("data-app-rund")); }; });
@@ -1747,7 +2278,7 @@
         b.onclick = function () { var it = byId(items, b.getAttribute("data-mwcon")); if (it) consoleModal(it); };
       });
       [].slice.call(p.box.querySelectorAll("[data-mwdet]")).forEach(function (b) {
-        b.onclick = function () { var it = byId(items, b.getAttribute("data-mwdet")); if (it) infoModal("实例详情 · " + (it.name || it.id), preBlock(it)); };
+        b.onclick = function () { var it = byId(items, b.getAttribute("data-mwdet")); if (it) infoModal("实例详情   " + (it.name || it.id), preBlock(it)); };
       });
       [].slice.call(p.box.querySelectorAll("[data-mwdel]")).forEach(function (b) {
         b.onclick = function () {
@@ -1832,7 +2363,7 @@
   function riskTag(r) {
     if (!r) return "";
     var cls = r.level === "dangerous" ? "x-red" : r.level === "write" ? "x-orange" : "x-green";
-    return tag(r.label + (r.reason ? " · " + r.reason : ""), cls);
+    return tag(r.label + (r.reason ? "   " + r.reason : ""), cls);
   }
   function cellHTML(v) {
     if (v == null) return '<span class="x-frac">—</span>';
@@ -1847,8 +2378,8 @@
 
   function sqlConsoleModal(it) {
     var prod = isProd(it.env);
-    dlg("SQL 控制台 · " + E(it.name),
-      '<div class="x-form"><p class="x-desc" style="margin:0">环境 <b>' + E(it.env || "*") + "</b> · 类型 " + E(it.type) + (prod ? ' · <span class="x-tag x-red x-tag--s">生产</span>' : "") + "</p>" +
+    dlg("SQL 控制台   " + E(it.name),
+      '<div class="x-form"><p class="x-desc" style="margin:0">环境 <b>' + E(it.env || "*") + "</b>   类型 " + E(it.type) + (prod ? '   <span class="x-tag x-red x-tag--s">生产</span>' : "") + "</p>" +
       inputHTML("opsdb", "数据库（可选）", (it.options && it.options.database) || "", "默认库") +
       '<label class="x-full"><span>SQL</span><textarea class="x-input" id="opssql" rows="6" placeholder="SELECT * FROM users LIMIT 10" aria-label="SQL 语句"></textarea></label>' +
       inputHTML("opstmo", "超时（秒）", "30", "") +
@@ -1900,8 +2431,8 @@
   }
 
   function redisConsoleModal(it) {
-    dlg("Redis 控制台 · " + E(it.name),
-      '<div class="x-form"><p class="x-desc" style="margin:0">环境 <b>' + E(it.env || "*") + "</b> · 类型 Redis" + (isProd(it.env) ? ' · <span class="x-tag x-red x-tag--s">生产</span>' : "") + "</p>" +
+    dlg("Redis 控制台   " + E(it.name),
+      '<div class="x-form"><p class="x-desc" style="margin:0">环境 <b>' + E(it.env || "*") + "</b>   类型 Redis" + (isProd(it.env) ? '   <span class="x-tag x-red x-tag--s">生产</span>' : "") + "</p>" +
       '<label class="x-full"><span>命令</span><textarea class="x-input" id="opsredis" rows="3" placeholder="HGET user:1 name" aria-label="Redis 命令"></textarea></label>' +
       inputHTML("opsrdb", "DB（可选，留空使用实例配置）", "", "") +
       '<div id="opsrisk" aria-live="polite" style="min-height:22px"></div>' +
@@ -1943,53 +2474,92 @@
   // 平台访问域名：保存后由后端自动创建/更新 Ingress（见 server/internal/platform）
   function domainPanel(d) {
     var hasIngress = !!d.ingress_available, cls = d.ingress_class || "";
+    var address = window.location.origin || (window.location.protocol + "//" + window.location.host);
     var state = !hasIngress
       ? '<span class="x-tag x-orange">未检测到 Ingress</span> 域名不会生效，请用 IP:NodePort 访问'
       : '<span class="x-tag x-green">Ingress 可用' + (cls ? "（" + E(cls) + "）" : "") + "</span>";
     return '<div class="x-panel" style="margin-bottom:16px">' +
-      '<div class="x-tbar" style="margin-bottom:8px"><h2 class="x-h2" style="margin:0">访问域名</h2>' +
-      '<span class="x-frac">证书：自签 · CN=xingshu matrix · 有效期 10 年</span></div>' +
+      '<div class="x-tbar" style="margin-bottom:8px"><h2 class="x-h2" style="margin:0">平台入口</h2>' +
+      '<span class="x-frac">TLS 使用平台已配置的 Secret</span></div>' +
+      '<div class="x-tbar" style="margin:0 0 8px"><span class="x-frac">当前访问地址</span><code class="x-mono">' + E(address) + "</code></div>" +
+      '<div class="x-tbar" style="margin-bottom:8px"><h3 class="x-h2" style="margin:0">Ingress 域名（可选）</h3>' +
+      '<span class="x-frac">当前地址自动读取；域名仅用于 Ingress 配置</span></div>' +
       '<div class="x-tbar" style="margin:0">' +
       '<input class="x-input" data-dom value="' + E(d.domain || "") + '" placeholder="如 xingshu-matrix.com" aria-label="平台访问域名" style="max-width:320px" />' +
       '<button class="x-btn x-btn--pri" type="button" data-domsave>保存并应用</button>' +
       '<button class="x-btn" type="button" data-domclear>清除域名</button>' +
       '<span class="x-frac">' + state + "</span></div>" +
       '<p class="x-frac" style="margin:10px 0 0;line-height:1.7">' +
-      '· 域名需要集群内存在 Ingress 控制器；保存时平台会自动创建/更新 Ingress（host=该域名，TLS 复用 <code class="x-mono">' + E(d.tls_secret || "xingshu-matrix-tls") + '</code>）。<br />' +
-      '· 集群没有 Ingress 时保存依旧成功，但域名不生效，请使用 <code class="x-mono">http(s)://节点IP:' + E(d.nodeport || "30080") + '</code> 访问。<br />' +
-      "· 清空并保存会删除平台自己的 Ingress，回退到 NodePort。" +
+      '  域名需要集群内存在 Ingress 控制器；保存时平台会自动创建/更新 Ingress（host=该域名，TLS 复用 <code class="x-mono">' + E(d.tls_secret || "xingshu-matrix-tls") + '</code>）。<br />' +
+      '  集群没有 Ingress 时保存依旧成功，但域名不生效，请使用 <code class="x-mono">http(s)://节点IP:' + E(d.nodeport || "30080") + '</code> 访问。<br />' +
+      "  清空并保存会删除平台自己的 Ingress，回退到 NodePort。" +
       '</p></div>';
   }
+  function registryMirrorPanel(mirror) {
+    var provider = mirror && mirror.provider || "dockerhub";
+    var endpoint = mirror && mirror.endpoint || "";
+    var selected = function (value, text) {
+      return '<option value="' + value + '"' + (provider === value ? " selected" : "") + ">" + text + "</option>";
+    };
+    var hint = provider === "aliyun"
+      ? "填写阿里云账号控制台分配的地址。官方说明：已停止同步最新镜像，仅限个人非商业用途，且非阿里云 ECS 访问可能返回 403。"
+      : provider === "daocloud"
+        ? "默认使用 DaoCloud Docker Hub 镜像代理；镜像路径会按官方格式改写。"
+        : provider === "custom"
+          ? "填写兼容 Docker Registry v2 且无需认证的镜像代理基础地址，不要包含账号密码或查询参数。"
+          : "直接从 docker.io 拉取，不配置代理。";
+    return panelHTML("集群镜像源", '<div class="x-form" style="max-width:760px">' +
+      '<div class="x-row2"><label><span>镜像源</span><select class="x-select" data-mirror-provider>' +
+      selected("dockerhub", "Docker Hub（docker.io 直连）") +
+      selected("aliyun", "阿里云镜像加速（个人开发）") +
+      selected("daocloud", "DaoCloud") +
+      selected("custom", "自定义") +
+      '</select></label><label><span>镜像代理地址</span><input class="x-input" data-mirror-endpoint value="' + E(endpoint) +
+      '" placeholder="https://registry-mirror.example.com"' + (provider === "dockerhub" ? " disabled" : "") + ' /></label></div>' +
+      '<div class="x-tbar" style="margin:0"><span class="x-frac" data-mirror-hint>' + E(hint) +
+      '</span><button class="x-btn x-btn--pri" type="button" data-mirror-save>保存镜像源</button></div>' +
+      '<p class="x-frac" style="margin:8px 0 0">仅影响之后通过平台新建的 K3s 集群中 Docker Hub 镜像的拉取；已存在集群不会被修改，其他镜像仓库保持原配置。</p>' +
+      '</div>');
+  }
   function renderSettingsLive(el) {
-    var p = livePage(el, "设置", "平台设置、公开配置与环境变更策略", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newset>+ 新建设置</button>', "");
+    var p = livePage(el, "系统设置", "基础信息、代码仓库、镜像仓库、集群与可观测性配置", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newset>+ 新建设置</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { renderSettingsLive(el); };
-    el.querySelector("[data-newset]").onclick = function () { settingModal(null, function () { renderSettingsLive(el); }); };
-    var SET = [], PUB = {}, POL = [];
+    var newSettingButton = el.querySelector("[data-newset]");
+    newSettingButton.disabled = true;
+    newSettingButton.onclick = function () { settingModal(null, function () { renderSettingsLive(el); }); };
+    var SET = [], POL = [];
     function load() {
       var t = p.newToken();
-      Promise.all([settle(GET("/settings"), []), settle(GET("/settings/public"), {}), settle(GET("/env-policies"), []), settle(GET("/platform/domain"), {})]).then(function (rs) {
+      Promise.all([settle(GET("/settings"), []), settle(GET("/env-policies"), []), settle(GET("/platform/domain"), {}), settle(GET("/provision/registry-mirror"), { provider: "dockerhub", endpoint: "" })]).then(function (rs) {
         SET = rs[0].ok ? asArray(rs[0].value, ["items", "settings"]) : [];
-        PUB = rs[1].ok && rs[1].value && typeof rs[1].value === "object" ? rs[1].value : {};
-        POL = rs[2].ok ? asArray(rs[2].value, ["items", "policies"]) : [];
-        var DOM = rs[3] && rs[3].ok && rs[3].value ? rs[3].value : {};
+        POL = rs[1].ok ? asArray(rs[1].value, ["items", "policies"]) : [];
+        var DOM = rs[2] && rs[2].ok && rs[2].value ? rs[2].value : {};
+        var MIRROR = rs[3] && rs[3].ok && rs[3].value ? rs[3].value : { provider: "dockerhub", endpoint: "" };
+        if (newSettingButton) newSettingButton.disabled = !rs[0].ok;
         var failed = [];
         if (!rs[0].ok) failed.push("平台设置：" + errMsg(rs[0].error));
-        if (!rs[1].ok) failed.push("公开设置：" + errMsg(rs[1].error));
-        if (!rs[2].ok) failed.push("环境策略：" + errMsg(rs[2].error));
+        if (!rs[1].ok) failed.push("环境策略：" + errMsg(rs[1].error));
+        if (!rs[3].ok) failed.push("集群镜像源：" + errMsg(rs[3].error));
+        var configKeys = systemConfigKeys();
         var setRows = SET.map(function (s) {
+          var notifyKey = s.key === "notify" || s.key.indexOf("notify.") === 0;
+          if (s.key === "platform.domain" || s.key === "aiops.policy" || s.key === "provision.registry_mirror" ||
+              s.key === "ai.features" || s.key === "public.notices" || notifyKey || configKeys[s.key]) return null;
           return [code(s.key, 42), settingVal(s), E(s.description || "—"), s.secret ? tag("加密", "x-orange") : E("—"), fmtMin(s.updated_at),
             '<span class="ops-nowrap"><button class="x-btn" type="button" data-setedit="' + E(s.key) + '">编辑</button> <button class="x-btn" type="button" data-setdel="' + E(s.key) + '">删除</button></span>'];
-        });
-        var pubKeys = Object.keys(PUB);
-        var pubRows = pubKeys.map(function (k) { return [code(k, 42), code(JSON.stringify(PUB[k]), 120)]; });
+        }).filter(Boolean);
         var polRows = POL.map(function (x) {
           return [E(x.env), E(x.name || "—"), x.require_approval ? tag("需要审批", "x-orange") : tag("直接执行", "x-green"),
             E(x.approver_permission || "—"), fmtMin(x.updated_at), '<button class="x-btn" type="button" data-poledit="' + E(x.env) + '">编辑</button>'];
         });
-        var html = domainPanel(DOM) + (failed.length ? banner("部分设置区块加载失败（其余区块仍可用）：" + failed.join("；")) : "") +
+        var configPanel = systemConfigPanelResult(rs[0].ok, SET);
+        var html = domainPanel(DOM) + registryMirrorPanel(MIRROR) + configPanel +
+          panelHTML("告警通知", '<div class="x-tbar" style="margin:0"><span class="x-frac">通知渠道由监控告警统一管理' +
+            (SET.some(function (s) { return s.key === "notify" || s.key.indexOf("notify.") === 0; }) ? "；历史 notify.* 配置已隐藏且不会参与发送。" : "。") +
+            '</span><a class="x-btn x-btn--pri" href="#/observe/channels">管理通知渠道</a></div>') +
+          (failed.length ? banner("部分设置区块加载失败（其余区块仍可用）：" + failed.join("；")) : "") +
           panelHTML("平台设置", setRows.length ? tbl(["键", "值", "说明", "加密", "更新时间", "操作"], setRows) : emptyHTML("暂无设置项。点击右上角「+ 新建设置」。")) +
-          panelHTML("公开设置（/settings/public）", pubRows.length ? tbl(["键", "值"], pubRows) : emptyHTML("暂无 public.* 公开配置")) +
-          panelHTML("环境变更策略（/env-policies）", polRows.length ? tbl(["环境", "名称", "变更审批", "审批权限", "更新时间", "操作"], polRows) : emptyHTML("暂无环境策略。可编辑添加 prod / test / dev 的审批要求。"));
+          panelHTML("环境审批策略", polRows.length ? tbl(["环境", "名称", "变更审批", "审批权限", "更新时间", "操作"], polRows) : emptyHTML("暂无环境策略。可编辑添加 prod / test / dev 的审批要求。"));
         if (!p.paint(t, html)) return;
         bind();
       }).catch(function (err) { p.error(t, err); });
@@ -2001,6 +2571,73 @@
       return code(typeof v === "string" ? v : JSON.stringify(v), 100);
     }
     function bind() {
+      [].slice.call(p.box.querySelectorAll("[data-system-config]")).forEach(function (form) {
+        var section = systemConfigSchema().filter(function (item) { return item.key === form.getAttribute("data-system-config"); })[0];
+        if (!section) return;
+        var check = form.querySelector("[data-config-check]");
+        if (check) check.onclick = function () {
+          var urls = section.fields.filter(function (field) { return field.kind === "url"; }).map(function (field) {
+            return form.elements[field.key].value.trim();
+          }).filter(Boolean);
+          var valid = urls.every(function (value) {
+            try { return /^https?:$/.test(new URL(value).protocol); } catch (e) { return false; }
+          });
+          var result = form.querySelector(".x-test");
+          result.className = "x-test" + (valid ? "" : " bad");
+          result.textContent = valid
+            ? "地址格式有效；此检查不验证远端连通性。"
+            : "地址格式无效，请填写 http:// 或 https:// 地址。";
+        };
+        form.onsubmit = function (event) {
+          event.preventDefault();
+          var requests = [];
+          section.fields.forEach(function (field) {
+            var control = form.elements[field.key];
+            var clear = field.secret && form.elements[field.key + "__clear"];
+            var value = field.kind === "url" ? control.value.trim() : control.value;
+            if (field.secret && clear && clear.checked) {
+              requests.push({ key: field.key, run: function () { return DEL("/settings/" + encodeURIComponent(field.key)); } });
+            } else if (field.secret) {
+              if (value !== "") requests.push({ key: field.key, run: function () {
+                return PUT("/settings/" + encodeURIComponent(field.key), {
+                  value: value, secret: true, description: section.label + "集成参数"
+                });
+              } });
+            } else {
+              requests.push({ key: field.key, run: function () {
+                return PUT("/settings/" + encodeURIComponent(field.key), {
+                  value: value, secret: false, description: section.label + "集成参数"
+                });
+              } });
+            }
+          });
+          if (!requests.length) {
+            toast("没有需要保存或清除的配置");
+            return;
+          }
+          form.querySelectorAll("button").forEach(function (button) { button.disabled = true; });
+          var savedKeys = [], failedKeys = [];
+          requests.reduce(function (chain, request) {
+            return chain.then(function () {
+              return request.run().then(function () { savedKeys.push(request.key); }, function () { failedKeys.push(request.key); });
+            });
+          }, Promise.resolve()).then(function () {
+            if (failedKeys.length) {
+              form.querySelectorAll("button").forEach(function (button) { button.disabled = false; });
+              var result = form.querySelector("[data-config-result]");
+              if (result) {
+                result.className = "x-test bad";
+                result.textContent = (savedKeys.length ? "部分配置已保存；" : "配置未保存；") +
+                  "失败项：" + failedKeys.join("、") + "。当前输入已保留，请修正后重试。";
+              }
+              toast((savedKeys.length ? "部分配置已保存。" : "配置未保存。") + "失败项：" + failedKeys.join("、"));
+            } else {
+              toast(section.label + "配置已保存");
+              renderSettingsLive(el);
+            }
+          });
+        };
+      });
       var domInput = p.box.querySelector("[data-dom]");
       var save = p.box.querySelector("[data-domsave]");
       if (save) save.onclick = function () {
@@ -2019,6 +2656,46 @@
       if (clear) clear.onclick = function () {
         if (domInput) domInput.value = "";
         if (save) save.click();
+      };
+      var mirrorProvider = p.box.querySelector("[data-mirror-provider]");
+      var mirrorEndpoint = p.box.querySelector("[data-mirror-endpoint]");
+      var mirrorHint = p.box.querySelector("[data-mirror-hint]");
+      var lastMirrorProvider = mirrorProvider && mirrorProvider.value;
+      var mirrorHints = {
+        dockerhub: "直接从 docker.io 拉取，不配置代理。",
+        aliyun: "填写阿里云账号控制台分配的地址。官方说明：已停止同步最新镜像，仅限个人非商业用途，且非阿里云 ECS 访问可能返回 403。",
+        daocloud: "默认使用 DaoCloud Docker Hub 镜像代理；镜像路径会按官方格式改写。",
+        custom: "填写兼容 Docker Registry v2 的镜像代理基础地址，不要包含账号密码或查询参数。"
+      };
+      if (mirrorProvider && mirrorEndpoint) {
+        mirrorProvider.onchange = function () {
+          if (mirrorProvider.value === "dockerhub") mirrorEndpoint.value = "";
+          else if (mirrorProvider.value === "daocloud" && lastMirrorProvider !== "daocloud") mirrorEndpoint.value = "https://m.daocloud.io";
+          else if (mirrorProvider.value === "aliyun" && lastMirrorProvider === "daocloud" && mirrorEndpoint.value.trim() === "https://m.daocloud.io") mirrorEndpoint.value = "";
+          mirrorEndpoint.disabled = mirrorProvider.value === "dockerhub";
+          if (mirrorHint) mirrorHint.textContent = mirrorHints[mirrorProvider.value] || "";
+          lastMirrorProvider = mirrorProvider.value;
+        };
+      }
+      var mirrorSave = p.box.querySelector("[data-mirror-save]");
+      if (mirrorSave) mirrorSave.onclick = function () {
+        var config = {
+          provider: mirrorProvider.value,
+          endpoint: mirrorProvider.value === "dockerhub" ? "" : mirrorEndpoint.value.trim()
+        };
+        if (config.provider !== "dockerhub" && !config.endpoint) {
+          toast(config.provider === "aliyun" ? "请填写阿里云账号专属加速地址" : "请填写镜像代理地址");
+          mirrorEndpoint.focus();
+          return;
+        }
+        mirrorSave.disabled = true;
+        PUT("/provision/registry-mirror", config).then(function () {
+          toast("集群镜像源已保存");
+          renderSettingsLive(el);
+        }).catch(function (err) {
+          mirrorSave.disabled = false;
+          toast("保存失败：" + errMsg(err));
+        });
       };
       [].slice.call(p.box.querySelectorAll("[data-setedit]")).forEach(function (b) {
         b.onclick = function () {
@@ -2045,19 +2722,23 @@
     function settingModal(st, done) {
       var isEdit = !!st;
       var valText = st ? (st.secret ? "" : JSON.stringify(st.value)) : '""';
-      formModal(isEdit ? "编辑设置 · " + st.key : "新建设置", [
-        { k: "key", label: "键（小写点分名称，如 notify.webhook）", required: true, value: st ? st.key : "", placeholder: "notify.webhook" },
+      formModal(isEdit ? "编辑设置   " + st.key : "新建设置", [
+        { k: "key", label: "键（小写点分名称）", required: true, value: st ? st.key : "", placeholder: "public.site_name" },
         { k: "value", label: "值（JSON，例如 \"https://...\" 或 {\"k\":1}）", kind: "textarea", rows: 4, required: true, value: valText },
         { k: "secret", label: "加密存储", kind: "checkbox", value: !!(st && st.secret), hint: "加密" },
         { k: "description", label: "说明", value: st ? st.description || "" : "" }
       ], isEdit ? "保存" : "创建", function (v) {
+        if (v.key === "platform.domain" || v.key === "aiops.policy" || v.key === "provision.registry_mirror" || v.key === "notify" || v.key.indexOf("notify.") === 0) {
+          toast("此配置由专属模块管理，请使用平台入口或通知渠道页面");
+          return;
+        }
         var value;
         try { value = parseJSON(v.value, ""); } catch (err) { toast(errMsg(err)); return; }
         write(PUT("/settings/" + encodeURIComponent(v.key), { value: value, secret: v.secret, description: v.description }), "设置已保存").then(function (r) { if (r) { closeAll(); if (done) done(); } });
       }, isEdit ? "secret 类型编辑时不会回显原值；留空将保存 JSON 空字符串。" : "值必须是合法 JSON；secret=true 时整体加密存储并在读取时掩码。");
     }
     function envPolicyModal(env, cur, done) {
-      formModal("环境策略 · " + env, [
+      formModal("环境策略   " + env, [
         { k: "name", label: "环境名称", value: cur ? cur.name || env : env },
         { k: "require_approval", label: "变更需要审批", kind: "checkbox", value: cur ? !!cur.require_approval : isProd(env), hint: "需要审批" },
         { k: "approver_permission", label: "审批权限码", value: cur ? cur.approver_permission || "" : "approval:approve", placeholder: "approval:approve" }
@@ -2066,6 +2747,93 @@
       });
     }
     load();
+  }
+
+  function systemConfigSchema() {
+    return [
+      { key: "basic", label: "基础信息", fields: [
+        { key: "platform.name", label: "平台名称", kind: "text", placeholder: "星枢 Matrix" }
+      ] },
+      { key: "scm", label: "代码仓库", fields: [
+        { key: "scm.type", label: "类型", kind: "select", options: ["GitLab", "Gitea", "GitHub Enterprise"] },
+        { key: "scm.url", label: "地址", kind: "url", placeholder: "https://git.example.com" },
+        { key: "scm.token", label: "Token", kind: "password", secret: true }
+      ] },
+      { key: "registry", label: "镜像仓库", fields: [
+        { key: "registry.url", label: "Harbor 地址", kind: "url", placeholder: "https://harbor.example.com" },
+        { key: "registry.user", label: "用户名", kind: "text" },
+        { key: "registry.pass", label: "密码", kind: "password", secret: true }
+      ] },
+      { key: "k8s", label: "K8s 集群", fields: [
+        { key: "k8s.name", label: "集群名称", kind: "text" },
+        { key: "k8s.api", label: "API Server 地址", kind: "url", placeholder: "https://kubernetes.example.com:6443" },
+        { key: "k8s.kubeconfig", label: "kubeconfig", kind: "textarea", secret: true, rows: 5 }
+      ] },
+      { key: "observability", label: "可观测性", fields: [
+        { key: "obs.prom", label: "Prometheus 地址", kind: "url", placeholder: "https://prometheus.example.com" },
+        { key: "obs.log", label: "日志地址", kind: "url", placeholder: "https://loki.example.com" }
+      ] }
+    ];
+  }
+
+  function systemConfigKeys() {
+    var out = {};
+    systemConfigSchema().forEach(function (section) {
+      section.fields.forEach(function (field) { out[field.key] = true; });
+    });
+    return out;
+  }
+
+  function systemConfigPanels(settings) {
+    function find(key) {
+      for (var i = 0; i < settings.length; i++) if (settings[i].key === key) return settings[i];
+      return null;
+    }
+    return systemConfigSchema().map(function (section) {
+      var fields = section.fields.map(function (field) {
+        var setting = find(field.key), value = "";
+        if (setting && !setting.secret) {
+          try {
+            var decoded = typeof setting.value === "string" ? setting.value : JSON.stringify(setting.value);
+            value = decoded == null ? "" : decoded;
+          } catch (e) { value = ""; }
+        }
+        var input;
+        if (field.kind === "select") {
+          input = '<select class="x-select" name="' + E(field.key) + '">' + field.options.map(function (option) {
+            return '<option value="' + E(option) + '"' + (value === option ? " selected" : "") + ">" + E(option) + "</option>";
+          }).join("") + "</select>";
+        } else if (field.kind === "textarea") {
+          input = '<textarea class="x-input x-mono" name="' + E(field.key) + '" rows="' + (field.rows || 4) +
+            '" placeholder="' + E(setting && setting.has_value ? "留空保持已保存的密钥" : "粘贴 kubeconfig 内容") + '">' + E(value) + "</textarea>";
+        } else {
+          input = '<input class="x-input" type="' + E(field.kind) + '" name="' + E(field.key) + '" value="' + E(value) +
+            '" placeholder="' + E(setting && setting.has_value && field.secret ? "留空保持已保存的密钥" : field.placeholder || "") +
+            '" autocomplete="off" />';
+        }
+        var secretStatus = field.secret
+          ? '<span class="x-frac">' + (setting && setting.has_value ? "密钥已配置，不会回显" : "未设置") + '</span>' +
+            (setting && setting.has_value ? '<label class="x-check"><input type="checkbox" name="' + E(field.key) +
+              '__clear" /> 清除已保存值</label>' : "")
+          : "";
+        return '<label' + (field.kind === "textarea" ? ' class="x-full"' : "") + '><span>' + E(field.label) +
+          "</span>" + input + secretStatus + "</label>";
+      }).join("");
+      var targets = section.fields.filter(function (field) { return field.kind === "url"; });
+      return '<form class="x-panel x-form x-setform" data-system-config="' + E(section.key) + '" novalidate>' +
+        '<div class="x-sethead"><h2 class="x-h2">' + E(section.label) + "</h2></div>" +
+        '<div class="x-fields">' + fields + "</div>" +
+        '<div class="x-testrow">' + (targets.length ? '<button class="x-btn" type="button" data-config-check>检查地址</button>' +
+          '<span class="x-test" role="status"></span>' : "") +
+        '<span class="x-test" data-config-result role="status" aria-live="polite"></span>' +
+        '<button class="x-btn x-btn--pri" type="submit" style="margin-left:auto">保存</button></div></form>';
+    }).join("");
+  }
+
+  function systemConfigPanelResult(available, settings) {
+    return available
+      ? systemConfigPanels(settings)
+      : panelHTML("平台配置", banner("平台配置读取失败，已停用配置编辑，避免空值覆盖已有设置。请刷新后重试。"));
   }
 
   /* ---------------------------------------------------------------- ai 智能助手 */
@@ -2167,7 +2935,7 @@
       return body;
     }
     function modelModal(m, done) {
-      formModal(m ? "编辑模型 · " + m.name : "新建模型", [
+      formModal(m ? "编辑模型   " + m.name : "新建模型", [
         { k: "name", label: "名称", required: true, value: m ? m.name : "", placeholder: "gpt-4o" },
         { k: "provider", label: "提供方", value: m ? m.provider || "" : "openai", placeholder: "openai / deepseek / azure" },
         { k: "base_url", label: "Base URL", required: true, value: m ? m.base_url : "", placeholder: "https://api.openai.com/v1" },
@@ -2192,7 +2960,7 @@
       }, "仅支持 OpenAI 兼容的 /chat/completions 端点；API Key 加密存储。");
     }
     function promptModal(x, done) {
-      formModal(x ? "编辑提示词 · " + x.name : "新建提示词", [
+      formModal(x ? "编辑提示词   " + x.name : "新建提示词", [
         { k: "scene", label: "场景（如 alert / log / chat）", required: true, value: x ? x.scene : "", placeholder: "alert" },
         { k: "name", label: "名称", required: true, value: x ? x.name : "" },
         { k: "description", label: "描述", value: x ? x.description || "" : "" },
@@ -2252,7 +3020,7 @@
   function oncallRow(w) {
     return [E(w.schedule || ("#" + w.schedule_id)), E("L" + w.layer), E(w.username || "—"), E(w.env || "*"),
       fmtMin(w.starts_at), fmtMin(w.ends_at), w.override ? tag("代班", "x-orange") : tag("轮值", "x-blue"),
-      E(w.next_username || "—") + (w.next_starts_at ? " · " + fmtMin(w.next_starts_at) : "")];
+      E(w.next_username || "—") + (w.next_starts_at ? "   " + fmtMin(w.next_starts_at) : "")];
   }
 
   function ocSchedules(el) {
@@ -2324,7 +3092,7 @@
         .map(function (kv) { return "<dt>" + kv[0] + "</dt><dd>" + kv[1] + "</dd>"; }).join("") + "</dl>";
       var foot = '<button class="x-btn" type="button" data-close>关闭</button>' +
         '<button class="x-btn" type="button" data-schededit>编辑排班</button><button class="x-btn" type="button" data-rotadd>+ 轮值层</button><button class="x-btn x-btn--pri" type="button" data-ovadd>+ 代班</button>';
-      dlg("排班详情 · " + E(s.name || id), '<div class="x-form">' + info +
+      dlg("排班详情   " + E(s.name || id), '<div class="x-form">' + info +
         panelHTML("轮值层", rotRows.length ? tbl(["层级", "名称", "起始", "换班周期", "成员顺序", "操作"], rotRows) : emptyHTML("尚未配置轮值层")) +
         panelHTML("代班", ovRows.length ? tbl(["层级", "值班人", "开始", "结束", "原因", "操作"], ovRows) : emptyHTML("暂无代班")) + "</div>", foot);
       var can = function (sel, fn) { var b = q(sel); if (b) b.onclick = fn; };
@@ -2357,7 +3125,7 @@
   }
 
   function ocScheduleModal(s, done) {
-    formModal(s ? "编辑排班 · " + s.name : "新建排班", [
+    formModal(s ? "编辑排班   " + s.name : "新建排班", [
       { k: "name", label: "名称（唯一）", required: true, value: s ? s.name : "", placeholder: "core-api" },
       { k: "description", label: "说明", kind: "textarea", rows: 2, value: s ? s.description || "" : "" },
       { k: "env", label: "环境（空 = 全局）", value: s ? s.env || "" : "" },
@@ -2369,7 +3137,7 @@
     });
   }
   function rotationModal(scheduleId, rot, done) {
-    formModal(rot ? "编辑轮值层 · L" + rot.layer : "新增轮值层", [
+    formModal(rot ? "编辑轮值层   L" + rot.layer : "新增轮值层", [
       { k: "layer", label: "层级（1 = 一线，2+ = 升级层）", kind: "number", required: true, value: rot ? rot.layer : "1" },
       { k: "name", label: "名称", value: rot ? rot.name || "primary" : "primary" },
       { k: "start_at", label: "起始时间", kind: "datetime-local", required: true, value: dtLocal(rot ? rot.start_at : new Date()) },
@@ -2462,7 +3230,7 @@
   function incidentModal(done) {
     GET("/oncall/schedules", { page: 1, page_size: 100 }).then(function (data) {
       var items = asArray(data, ["items", "schedules"]);
-      var schOpts = [{ v: 0, t: "不关联排班" }].concat(items.map(function (s) { return { v: s.id, t: s.name + (s.env ? " · " + s.env : "") }; }));
+      var schOpts = [{ v: 0, t: "不关联排班" }].concat(items.map(function (s) { return { v: s.id, t: s.name + (s.env ? "   " + s.env : "") }; }));
       formModal("发起故障", [
         { k: "title", label: "标题", required: true, placeholder: "API 5xx 飙升" },
         { k: "description", label: "描述", kind: "textarea", rows: 3 },
@@ -2487,8 +3255,8 @@
         var x = data.incident || {}, tl = asArray(data, ["timeline"]);
         var info = '<dl class="x-sum">' + [["ID", mono("#" + x.id)], ["标题", E(x.title)], ["级别", sevTag(x.severity)], ["状态", stTag(x.status)],
           ["服务", E(x.service || "—")], ["环境", E(x.env || "*")], ["处理人", E(x.assigned_to || "—")], ["声明人", E(x.declared_by || "—")],
-          ["声明时间", fmtMin(x.declared_at)], ["认领", E(x.acked_by || "—") + (x.acked_at ? " · " + fmtMin(x.acked_at) : "")],
-          ["解决", E(x.resolved_by || "—") + (x.resolved_at ? " · " + fmtMin(x.resolved_at) : "")], ["解决说明", E(x.resolve_note || "—")],
+          ["声明时间", fmtMin(x.declared_at)], ["认领", E(x.acked_by || "—") + (x.acked_at ? "   " + fmtMin(x.acked_at) : "")],
+          ["解决", E(x.resolved_by || "—") + (x.resolved_at ? "   " + fmtMin(x.resolved_at) : "")], ["解决说明", E(x.resolve_note || "—")],
           ["描述", E(x.description || "—")]]
           .map(function (kv) { return "<dt>" + kv[0] + "</dt><dd>" + kv[1] + "</dd>"; }).join("") + "</dl>";
         var tlRows = tl.map(function (e) { return [fmtTime(e.created_at), stTag(e.kind), E(e.actor || "—"), E(e.message || "—")]; });
@@ -2572,8 +3340,8 @@
     function sloModal(s, done) {
       dsList({ type: "prometheus" }).then(function (data) {
         var proms = Array.isArray(data) ? data : asArray(data, ["items"]);
-        var promOpts = [{ v: 0, t: "不指定（manual 可留空）" }].concat(proms.map(function (d) { return { v: d.id, t: d.name + " · " + (d.env || "*") }; }));
-        formModal(s ? "编辑 SLO · " + s.name : "新建 SLO", [
+        var promOpts = [{ v: 0, t: "不指定（manual 可留空）" }].concat(proms.map(function (d) { return { v: d.id, t: d.name + "   " + (d.env || "*") }; }));
+        formModal(s ? "编辑 SLO   " + s.name : "新建 SLO", [
           { k: "name", label: "名称", required: true, value: s ? s.name : "" },
           { k: "service", label: "服务", value: s ? s.service || "" : "" },
           { k: "env", label: "环境", value: s ? s.env || "" : "" },
@@ -2609,8 +3377,8 @@
         ]);
         var pts = Array.isArray(data.points) ? data.points : [];
         var trend = pts.length > 1 ? '<p class="ops-sub">预算趋势（剩余 %）</p>' + spark(pts.map(function (pt) { return [pt.ts, pt.remaining_pct]; })) : "";
-        infoModal("错误预算 · " + (data.slo && data.slo.name ? data.slo.name : id), warn + cards +
-          '<p class="ops-sub">' + health + " · 来源 " + E(data.source || "") + " · 区间 " + fmtMin(data.from) + " → " + fmtMin(data.to) + "</p>" + trend + preBlock(b));
+        infoModal("错误预算   " + (data.slo && data.slo.name ? data.slo.name : id), warn + cards +
+          '<p class="ops-sub">' + health + "   来源 " + E(data.source || "") + "   区间 " + fmtMin(data.from) + " → " + fmtMin(data.to) + "</p>" + trend + preBlock(b));
       }).catch(function (err) { toast(errMsg(err)); });
     }
     function entriesModal(s) {
@@ -2620,8 +3388,8 @@
           return [mono("#" + e.id), fmtMin(e.period_start), fmtMin(e.period_end), num(e.good), num(e.total), E(e.note || "—"),
             '<button class="x-btn" type="button" data-entdel="' + E(e.id) + '">删除</button>'];
         });
-        dlg("手工 SLI 录入 · " + E(s.name), '<div class="x-form">' +
-          '<p class="x-desc" style="margin:0">SLO #' + E(s.id) + "（" + E(s.source) + "） · 仅 manual 来源可录入手工窗口。</p>" +
+        dlg("手工 SLI 录入   " + E(s.name), '<div class="x-form">' +
+          '<p class="x-desc" style="margin:0">SLO #' + E(s.id) + "（" + E(s.source) + "）   仅 manual 来源可录入手工窗口。</p>" +
           (rows.length ? tbl(["ID", "窗口开始", "窗口结束", "good", "total", "备注", "操作"], rows) : emptyHTML("暂无手工条目")) + "</div>",
           '<button class="x-btn" type="button" data-close>关闭</button>' + (s.source === "manual" ? '<button class="x-btn x-btn--pri" type="button" data-entadd>+ 新增窗口</button>' : ""));
         [].slice.call(document.querySelectorAll("[data-entadd]")).forEach(function (b) {
@@ -2716,7 +3484,7 @@
           '<button class="x-btn" type="button" data-row="' + i + '">详情</button>'];
       });
       return panelHTML("审计记录", tbl(["时间", "操作人", "IP", "方法", "路径", "资源", "动作", "结果", "耗时", "操作"], body),
-        '<span class="x-frac" style="margin-left:auto">第 ' + st.page + " 页 · 每页 " + st.size + " 条</span>") +
+        '<span class="x-frac" style="margin-left:auto">第 ' + st.page + " 页   每页 " + st.size + " 条</span>") +
         '<div class="x-tbar" style="justify-content:flex-end">' +
         '<button class="x-btn" type="button" data-prev' + (st.page <= 1 ? " disabled" : "") + '>上一页</button>' +
         '<button class="x-btn" type="button" data-next' + (st.page * st.size >= total ? " disabled" : "") + '>下一页</button></div>';
@@ -2756,17 +3524,15 @@
   }
 
   var RENDERERS = {
-    observe: renderObserveLive,
-    logs: renderLogsLive,
     cicd: renderCicdLive,
     delivery: renderDeliveryLive,
     release: renderReleaseLive,
     middleware: renderMiddlewareLive,
     oncall: renderOncallLive,
     settings: renderSettingsLive,
-    ai: renderAiLive,
     audit: renderAuditLive,
-    appstatus: renderDeliveryLive
+    appstatus: renderDeliveryLive,
+    testing: renderTestingLive
   };
   function install() {
     if (!live()) return false;
@@ -2859,21 +3625,30 @@
       var t = p.newToken();
       Promise.all([
         GET("/automation/workflows", { page_size: 100 }),
-        GET("/automation/runs", { page_size: 50 })
+        GET("/automation/runs", { page_size: 50 }),
+        settle(GET("/automation/ansible/runtime"), null)
       ]).then(function (rs) {
         var w = rs[0] || {}, runs = rs[1] || {};
+        var runtimeResult = rs[2] || {};
         WFS = Array.isArray(w.items) ? w.items : asArray(w, ["workflows"]);
         var runList = Array.isArray(runs.items) ? runs.items : asArray(runs, ["runs"]);
+        var runtime = runtimeResult.value;
+        var runtimePanel = runtime
+          ? panelHTML("Ansible 执行引擎", runtime.available
+            ? '<p class="ops-sub">' + E(runtime.version || "Ansible Core") + '   平台服务端内置   可用</p>'
+            : banner(runtime.error || "平台服务端 Ansible 运行时不可用。"))
+          : panelHTML("Ansible 执行引擎", banner("无法读取平台服务端运行时状态。"));
         var wfTable = WFS.length ? tbl(["ID", "名称", "触发方式", "状态", "版本", "更新时间", "操作"], WFS.map(function (wf) {
           return [mono(wf.id), E(wf.name), E(wf.trigger || "—"), stTag(wf.status || "active"), E(wf.current_version != null ? "v" + wf.current_version : "—"), fmtMin(wf.updated_at),
             '<span class="ops-nowrap"><button class="x-btn" type="button" data-wftrig="' + E(wf.id) + '">触发</button><button class="x-btn" type="button" data-wfver="' + E(wf.id) + '">新版本</button></span>'];
         })) : emptyHTML("暂无流程定义。");
         var runTable = runList.length ? tbl(["运行", "流程", "版本", "状态", "触发人", "开始", "结束", "错误", "操作"], runList.map(function (r) {
           return [mono(r.id), E(r.workflow_id), E(r.version != null ? "v" + r.version : "—"), stTag(r.status), E(r.triggered_by || "—"), fmtMin(r.started_at), fmtMin(r.finished_at), code(r.error || "—", 60),
-            '<span class="ops-nowrap">' + (r.status === "failed" ? '<button class="x-btn" type="button" data-runretry="' + E(r.id) + '">重试</button>' : "") +
-            (r.status === "queued" || r.status === "running" ? '<button class="x-btn" type="button" data-runcancel="' + E(r.id) + '">取消</button>' : "") + "</span>"];
+            '<span class="ops-nowrap"><button class="x-btn" type="button" data-runinfo="' + E(r.id) + '">详情</button>' +
+            (r.status === "failed" && r.engine !== "ansible" ? '<button class="x-btn" type="button" data-runretry="' + E(r.id) + '">重试</button>' : "") +
+            (r.status === "awaiting_approval" || r.status === "queued" || r.status === "running" ? '<button class="x-btn" type="button" data-runcancel="' + E(r.id) + '">取消</button>' : "") + "</span>"];
         })) : emptyHTML("暂无执行记录。");
-        var html = panelHTML("流程定义", wfTable, '<button class="x-btn x-btn--pri" type="button" data-wfnew style="margin-left:auto">+ 新建流程</button>') + panelHTML("执行记录", runTable);
+        var html = runtimePanel + panelHTML("流程定义", wfTable, '<button class="x-btn x-btn--pri" type="button" data-wfnew style="margin-left:auto">+ 新建流程</button>') + panelHTML("执行记录", runTable);
         if (!p.paint(t, html)) return;
         bind(runList);
       }).catch(function (err) { p.error(t, err); });
@@ -2884,9 +3659,23 @@
       if (nw) nw.onclick = function () { wfModal(function () { load(); }); };
       [].slice.call(p.box.querySelectorAll("[data-wftrig]")).forEach(function (b) {
         b.onclick = function () {
-          confirmDo("触发流程", "确认按当前版本创建一次受控执行？", "触发", function () {
-            write(POST("/automation/workflows/" + encodeURIComponent(b.getAttribute("data-wftrig")) + "/trigger"), "已触发，执行记录为 queued").then(function (r) { if (r) load(); });
-          });
+          var id = b.getAttribute("data-wftrig");
+          GET("/automation/workflows/" + encodeURIComponent(id)).then(function (wf) {
+            var steps = Array.isArray(wf.steps) ? wf.steps : asArray(wf, ["steps"]);
+            var needsAnsible = String(wf.playbook || "").trim() !== "" ||
+              steps.some(function (step) { return String(step && step.type || "").indexOf("ansible.") === 0; });
+            if (needsAnsible) { ansibleRunModal(wf, function () { load(); }); return; }
+            confirmDo("触发流程", "确认按当前版本创建一次受控执行？", "触发", function () {
+              write(POST("/automation/workflows/" + encodeURIComponent(id) + "/trigger", {}), "已触发，执行记录为 queued").then(function (r) { if (r) load(); });
+            });
+          }).catch(function (err) { toast(errMsg(err)); });
+        };
+      });
+      [].slice.call(p.box.querySelectorAll("[data-runinfo]")).forEach(function (b) {
+        b.onclick = function () {
+          GET("/automation/runs/" + encodeURIComponent(b.getAttribute("data-runinfo"))).then(function (run) {
+            infoModal("运行详情   #" + run.id, preBlock(run));
+          }).catch(function (err) { toast(errMsg(err)); });
         };
       });
       [].slice.call(p.box.querySelectorAll("[data-wfver]")).forEach(function (b) {
@@ -2904,19 +3693,54 @@
         { k: "name", label: "名称", required: true, placeholder: "夜间巡检" },
         { k: "description", label: "描述", kind: "textarea", rows: 3 },
         { k: "trigger", label: "触发方式", kind: "select", options: [{ v: "manual", t: "手动" }, { v: "schedule", t: "定时" }, { v: "event", t: "事件" }], value: "manual" },
-        { k: "steps", label: "步骤 JSON（受控步骤白名单，不能执行任意 Shell）", kind: "textarea", rows: 6, required: true, value: '[\n  {"type": "noop", "name": "开始"}\n]' }
+        { k: "steps", label: "简化步骤（Ansible builtin 模块）", kind: "textarea", rows: 8, value: '[\n  {"type": "ansible.ping", "name": "连通性检查"},\n  {"type": "ansible.package_present", "name": "确保 nginx 已安装", "package": "nginx"},\n  {"type": "ansible.service_started", "name": "确保 nginx 运行", "service": "nginx", "enabled": true}\n]' },
+        { k: "playbook", label: "自定义 playbook.yml（填写后优先于简化步骤）", kind: "textarea", rows: 10, placeholder: '- name: Configure target hosts\n  hosts: all\n  gather_facts: false\n  tasks:\n    - name: Check connectivity\n      ansible.builtin.ping: {}' }
       ], "创建", function (v) {
         var steps;
-        try { steps = parseJSON(v.steps, []); } catch (err) { toast(errMsg(err)); return; }
-        write(POST("/automation/workflows", { name: v.name, description: v.description, trigger: v.trigger, steps: steps }), "流程已创建（v1）").then(function (r) { if (r) { closeAll(); if (done) done(); } });
+        try { steps = parseJSON(v.steps || "[]", []); } catch (err) { toast(errMsg(err)); return; }
+        write(POST("/automation/workflows", { name: v.name, description: v.description, trigger: v.trigger, steps: steps, playbook: v.playbook }), "流程已创建（v1）").then(function (r) { if (r) { closeAll(); if (done) done(); } });
       });
     }
     function versionModal(id, done) {
-      formModal("创建新版本", [{ k: "steps", label: "步骤 JSON", kind: "textarea", rows: 8, required: true, value: "[]" }], "创建版本", function (v) {
+      formModal("创建新版本", [
+        { k: "steps", label: "简化步骤（Ansible builtin 模块）", kind: "textarea", rows: 8, value: '[\n  {"type": "ansible.ping", "name": "连通性检查"}\n]' },
+        { k: "playbook", label: "自定义 playbook.yml（填写后优先于简化步骤）", kind: "textarea", rows: 10 }
+      ], "创建版本", function (v) {
         var steps;
-        try { steps = parseJSON(v.steps, []); } catch (err) { toast(errMsg(err)); return; }
-        write(POST("/automation/workflows/" + encodeURIComponent(id) + "/versions", { steps: steps }), "新版本已创建").then(function (r) { if (r) { closeAll(); if (done) done(); } });
+        try { steps = parseJSON(v.steps || "[]", []); } catch (err) { toast(errMsg(err)); return; }
+        write(POST("/automation/workflows/" + encodeURIComponent(id) + "/versions", { steps: steps, playbook: v.playbook }), "新版本已创建").then(function (r) { if (r) { closeAll(); if (done) done(); } });
       });
+    }
+    function ansibleRunModal(wf, done) {
+      var id = String(wf.id);
+      formModal("运行 Ansible 流程   " + (wf.name || ("#" + id)), [
+        { k: "env", label: "环境", required: true, placeholder: "prod" },
+        { k: "ips", label: "目标 IP（逗号或换行分隔）", required: true, placeholder: "10.0.0.10, 10.0.0.11" },
+        { k: "port", label: "SSH 端口", kind: "number", value: 22, required: true },
+        { k: "username", label: "SSH 用户名", required: true, placeholder: "root" },
+        { k: "password", label: "SSH 密码", kind: "password", required: true },
+        { k: "become_password", label: "sudo 密码（可留空）", kind: "password" }
+      ], "预检并继续", function (v) {
+        var port = Number(v.port);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) { toast("SSH 端口须为 1 到 65535"); return; }
+        write(POST("/automation/ansible/preflight", {
+          env: v.env, ips: v.ips, port: port, username: v.username,
+          password: v.password, become_password: v.become_password
+        }), "SSH 预检完成").then(function (preflight) {
+          if (!preflight || preflight.__approval) return;
+          var items = asArray(preflight, ["items"]);
+          if (!items.length) { toast("SSH 预检没有返回目标主机"); return; }
+          var fingerprints = items.map(function (host) { return E(host.ip) + "   " + E(host.fingerprint); }).join("<br>");
+          var message = "请核对目标 IP 对应的 SSH 主机密钥指纹。确认后凭据仅用于本次运行，并在结束后清除。<br><br>" + fingerprints;
+          confirmDo("确认 SSH 主机密钥", message, "执行流程", function () {
+            closeAll();
+            write(POST("/automation/workflows/" + encodeURIComponent(id) + "/trigger", {
+              env: v.env, preflight_token: preflight.confirmation_token
+            }),
+              "Ansible 流程已入队").then(function (result) { if (result && done) done(); });
+          });
+        });
+      }, "平台服务端内置 Ansible；目标机不需要安装 Ansible。自定义 Playbook 限定为受支持的 ansible.builtin 模块并必须使用 hosts: all；目标机需提供 Python，非 root 用户需有 sudo 权限。SSH 密钥预检十分钟有效且只能使用一次。");
     }
     load();
   }
@@ -2933,6 +3757,7 @@
     } catch (e) {}
   }
   window.XSLiveOpsAutomation = renderAutomationLive;
+  window.XSLiveOpsRules = obsRules;
   window.XSLiveOps = {
     version: VERSION,
     live: live,
@@ -2947,6 +3772,9 @@
       asArray: asArray, pick: pick, parseJSON: parseJSON, autoSummary: autoSummary,
       alertKey: alertKey, claimPayload: claimPayload,
       sqlRisk: sqlRisk, redisRisk: redisRisk, cellHTML: cellHTML,
+      parseJenkinsParameters: parseJenkinsParameters, buildPipelineStages: buildPipelineStages,
+      systemConfigSchema: systemConfigSchema, systemConfigPanels: systemConfigPanels,
+      systemConfigPanelResult: systemConfigPanelResult,
       toISO: toISO, dtLocal: dtLocal, memberList: memberList,
       tabsHTML: tabsHTML, stTag: stTag, sevTag: sevTag, fieldHTML: fieldHTML,
       routes: ROUTE_KEYS, renderers: RENDERERS

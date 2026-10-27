@@ -68,6 +68,32 @@ type Task struct {
 	FinishedAt  *time.Time `json:"finished_at"`
 }
 
+func redactTaskText(text string) string {
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(strings.ToValidUTF8(text, "\uFFFD"), "\n")
+	for i, line := range lines {
+		lower := strings.ToLower(line)
+		sensitive := false
+		for _, key := range []string{"authorization", "password", "passwd", "token", "secret", "api_key", "apikey", "private_key"} {
+			if strings.Contains(lower, key) {
+				sensitive = true
+				break
+			}
+		}
+		if !sensitive {
+			continue
+		}
+		if idx := strings.IndexAny(line, ":="); idx >= 0 {
+			lines[i] = line[:idx+1] + " [REDACTED]"
+		} else {
+			lines[i] = "[REDACTED]"
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 const (
 	StatusRunning = "running"
 	StatusSuccess = "success"
@@ -360,18 +386,21 @@ func scanTask(row pgx.Row) (*Task, error) {
 		}
 		return nil, err
 	}
+	t.Command = redactTaskText(t.Command)
+	t.Output = redactTaskText(t.Output)
+	t.Error = redactTaskText(t.Error)
 	return &t, nil
 }
 
 func (s *store) createTask(ctx context.Context, t *Task) error {
 	return s.db.QueryRow(ctx, `INSERT INTO hosts_tasks (host_id,kind,batch_id,command,timeout_sec,triggered_by,ticket_id)
 		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id,status,started_at`,
-		t.HostID, t.Kind, t.BatchID, t.Command, t.TimeoutSec, t.TriggeredBy, t.TicketID).Scan(&t.ID, &t.Status, &t.StartedAt)
+		t.HostID, t.Kind, t.BatchID, redactTaskText(t.Command), t.TimeoutSec, t.TriggeredBy, t.TicketID).Scan(&t.ID, &t.Status, &t.StartedAt)
 }
 
 func (s *store) finishTask(ctx context.Context, id int64, status string, exit *int, output, errMsg string) error {
 	_, err := s.db.Exec(ctx, `UPDATE hosts_tasks SET status=$2, exit_code=$3, output=$4, error=$5, finished_at=now() WHERE id=$1 AND status='running'`,
-		id, status, exit, strings.ToValidUTF8(output, "\uFFFD"), errMsg)
+		id, status, exit, redactTaskText(output), redactTaskText(errMsg))
 	return err
 }
 

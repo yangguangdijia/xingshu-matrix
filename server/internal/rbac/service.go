@@ -218,7 +218,9 @@ func (s *Service) UserAccess(ctx context.Context, userID int64) (roles, perms, e
 	rows, err := s.db.Query(ctx, `
 		SELECT r.code, r.env_scope,
 		       COALESCE((SELECT array_agg(permission) FROM role_permissions rp WHERE rp.role_id=r.id), '{}')
-		FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=$1 ORDER BY r.code`, userID)
+		FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+		JOIN users u ON u.id=ur.user_id
+		WHERE ur.user_id=$1 AND u.status='active' ORDER BY r.code`, userID)
 	if err != nil {
 		return nil, nil, nil, err
 	}

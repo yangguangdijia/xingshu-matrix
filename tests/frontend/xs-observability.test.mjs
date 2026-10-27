@@ -68,6 +68,26 @@ test("alert location resolves cluster, pod, and node without treating exporters 
   const broad = O.alertLocation({ datasource_id: 7, env: "dev", alertname: "AlertmanagerProblem", labels: { namespace: "monitoring" } }, clusters, sources, inventories);
   assert.equal(broad.cluster, null); assert.match(broad.note, /无法唯一确认/);
 });
+test("alert remediation requires one explicit live workload match in a firing alert", () => {
+  const alert = { status: "firing", labels: { namespace: "shop", deployment: "checkout" } };
+  const workloads = { deployments: [{ name: "checkout", namespace: "shop", ready: "1/2", replicas: 2, status: "Progressing" }] };
+  const target = O.alertRemediationTarget(alert, cluster, workloads);
+  assert.deepEqual({ ...target }, {
+    clusterId: 1, clusterName: "dev-a", env: "dev", namespace: "shop",
+    kind: "deployments", kindLabel: "Deployment", name: "checkout",
+    ready: "1/2", replicas: 2, status: "Progressing"
+  });
+  assert.equal(O.alertRemediationTarget({ ...alert, status: "resolved" }, cluster, workloads), null);
+  assert.equal(O.alertRemediationTarget(alert, null, workloads), null);
+  assert.equal(O.alertRemediationTarget(alert, cluster, { deployments: [] }), null);
+  assert.equal(O.alertRemediationTarget({ ...alert, labels: { ...alert.labels, statefulset: "checkout" } }, cluster, workloads), null);
+  assert.equal(O.alertRemediationTarget({ ...alert, labels: { deployment: "checkout" } }, cluster, workloads), null);
+});
+test("diagnostic input redacts common credential forms and bounds length", () => {
+  assert.equal(O.redactDiagnosticText("Authorization: Bearer abc123 token=xyz password: 'hidden'"),
+    "Authorization: Bearer [REDACTED] token=[REDACTED] password: [REDACTED]");
+  assert.equal(O.redactDiagnosticText("x".repeat(1300)).length, 1200);
+});
 test("application alerts require exact workload and cluster ownership", () => {
   const scope = {
     appName: "checkout", namespace: "shop", targetId: 1, targetCluster: cluster, environmentClusterCount: 2,

@@ -15,10 +15,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/app"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/audit"
@@ -45,7 +47,8 @@ const (
 
 // Module is the observability module.
 type Module struct {
-	d *app.Deps
+	d  *app.Deps
+	wg sync.WaitGroup
 }
 
 // New returns the observability module.
@@ -123,6 +126,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	}
 
 	m.registerAITools()
+	m.registerAIOps(g)
 }
 
 // ---------------------------------------------------------------- datasources
@@ -358,6 +362,10 @@ func (m *Module) updateDS(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
+	if cur.Type == "kubernetes" {
+		httpx.Fail(c, httpx.Conflict("Kubernetes health sources are managed by AIOps configuration"))
+		return
+	}
 	var in dsInput
 	if !httpx.Bind(c, &in) {
 		return
@@ -411,8 +419,13 @@ func (m *Module) deleteDS(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := m.loadDS(c, rbac.PrincipalFrom(c), id); err != nil {
+	ds, err := m.loadDS(c, rbac.PrincipalFrom(c), id)
+	if err != nil {
 		httpx.Fail(c, err)
+		return
+	}
+	if ds.Type == "kubernetes" {
+		httpx.Fail(c, httpx.Conflict("disable health detection in AIOps configuration instead of deleting its source"))
 		return
 	}
 	if _, err := m.d.DB.Exec(c, `DELETE FROM obs_datasources WHERE id=$1`, id); err != nil {
@@ -452,6 +465,24 @@ func (m *Module) testDS(c *gin.Context) {
 		return
 	}
 	start := time.Now()
+	if ds.Type == "kubernetes" {
+		var cl healthCluster
+		clusterID, _ := strconv.ParseInt(ds.opt("cluster_id"), 10, 64)
+		cl, err = m.repairCluster(c, clusterID)
+		if err == nil {
+			cs, clientErr := m.healthClient(c, cl)
+			err = clientErr
+			if err == nil {
+				_, err = cs.CoreV1().Namespaces().List(c.Request.Context(), metav1.ListOptions{Limit: 1})
+			}
+		}
+		res := gin.H{"ok": err == nil, "latency_ms": time.Since(start).Milliseconds()}
+		if err != nil {
+			res["error"] = "Kubernetes health check failed; verify cluster connection and read permissions"
+		}
+		httpx.OK(c, res)
+		return
+	}
 	info, err := newClient(ds).Test(c)
 	res := gin.H{"ok": err == nil, "latency_ms": time.Since(start).Milliseconds(), "info": info}
 	if err != nil {

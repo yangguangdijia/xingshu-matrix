@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/app"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/approval"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/rbac"
 )
 
@@ -27,6 +28,7 @@ const (
 	PermRead    = "bastion:read"
 	PermManage  = "bastion:manage"
 	PermConnect = "bastion:connect"
+	PermRequest = "bastion:request"
 	PermAudit   = "bastion:audit"
 	PermKill    = "bastion:kill"
 )
@@ -66,6 +68,7 @@ func (m *Module) Permissions() []rbac.Permission {
 		rbac.P("bastion", "bastion", "read", "查看堡垒机资产与账号"),
 		rbac.P("bastion", "bastion", "manage", "管理资产、系统账号、授权规则、命令过滤"),
 		rbac.P("bastion", "bastion", "connect", "通过堡垒机连接已授权资产"),
+		rbac.P("bastion", "bastion", "request", "申请 SSH 资产临时访问授权"),
 		rbac.P("bastion", "bastion", "audit", "查看会话、命令审计与录像"),
 		rbac.P("bastion", "bastion", "kill", "强制断开在线会话"),
 	}
@@ -107,6 +110,15 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.POST("/sessions/:id/kill", rbac.RequirePerm(PermKill), m.killSession)
 
 	g.GET("/guacd/health", rbac.RequirePerm(PermRead), m.guacdHealth)
+	if d.Approval != nil {
+		d.Approval.MustRegister(approval.TypeSpec{
+			Type: AccessRequestType, Module: "bastion", Description: "申请 SSH 资产临时访问授权",
+			CreatePermission: PermRequest, ApproverPermission: "approval:approve", PolicyIndependent: true,
+			Handler: approval.HandlerFunc(m.approveAccessRequest),
+		})
+		g.GET("/requestable-assets", rbac.RequirePerm(PermRequest), m.listRequestableAssets)
+		g.POST("/access-requests", rbac.RequirePerm(PermRequest), m.createAccessRequest)
+	}
 }
 
 // Start marks sessions left "active" by a previous process as closed.

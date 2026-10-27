@@ -7,6 +7,7 @@ package platform
 import (
 	"context"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,17 +23,19 @@ import (
 // EnvInfo is the environment probe result. Every optional field is nil when the
 // value cannot be determined — the UI renders it as "未接入".
 type EnvInfo struct {
-	Deploy       string    `json:"deploy"` // kubernetes | binary
-	Cluster      *string   `json:"cluster"`
-	Namespace    *string   `json:"namespace"`
-	Nodes        *int      `json:"nodes"`
-	CPU          *Resource `json:"cpu"`
-	Memory       *Resource `json:"memory"`
-	StorageClass *string   `json:"storage_class"`
-	IngressClass *string   `json:"ingress_class"`
-	IngressOK    bool      `json:"ingress_available"`
-	MetricsOK    bool      `json:"metrics_available"`
-	Message      string    `json:"message,omitempty"`
+	Deploy           string    `json:"deploy"` // kubernetes | binary
+	Cluster          *string   `json:"cluster"`
+	Namespace        *string   `json:"namespace"`
+	Nodes            *int      `json:"nodes"`
+	CPU              *Resource `json:"cpu"`
+	Memory           *Resource `json:"memory"`
+	EphemeralStorage *Resource `json:"ephemeral_storage"` // Node ephemeral storage; not PVC capacity.
+	StorageClass     *string   `json:"storage_class"`
+	StorageClasses   []string  `json:"storage_classes"`
+	IngressClass     *string   `json:"ingress_class"`
+	IngressOK        bool      `json:"ingress_available"`
+	MetricsOK        bool      `json:"metrics_available"`
+	Message          string    `json:"message,omitempty"`
 }
 
 // Resource carries allocatable (total) and requested (used) amounts.
@@ -67,24 +70,19 @@ func probeEnv(ctx context.Context) EnvInfo {
 	if nodes, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{}); err == nil {
 		n := len(nodes.Items)
 		info.Nodes = &n
-		var cpu, mem resource.Quantity
-		for _, node := range nodes.Items {
-			cpu.Add(node.Status.Allocatable[corev1.ResourceCPU])
-			mem.Add(node.Status.Allocatable[corev1.ResourceMemory])
+		if pods, err := client.CoreV1().Pods("").List(ctx, metav1.ListOptions{}); err == nil {
+			usage := requestedResources(pods.Items)
+			allocatable := nodeAllocatableResources(nodes.Items)
+			info.CPU = &Resource{Used: round2(usage.CPU), Total: round2(allocatable.CPU), Unit: "核"}
+			info.Memory = &Resource{Used: round2(usage.Memory / gib), Total: round2(allocatable.Memory / gib), Unit: "GiB"}
+			info.EphemeralStorage = &Resource{Used: round2(usage.Disk / gib), Total: round2(allocatable.Disk / gib), Unit: "GiB"}
+		} else {
+			info.Message = "无法读取 Pod 资源请求：CPU、内存和临时磁盘容量未接入"
 		}
-		usedCPU, usedMem := requestedResources(ctx)
-		info.CPU = &Resource{Used: round2(usedCPU), Total: round2(cpu.AsApproximateFloat64()), Unit: "核"}
-		info.Memory = &Resource{Used: round2(usedMem / (1024 * 1024 * 1024)), Total: round2(mem.AsApproximateFloat64() / (1024 * 1024 * 1024)), Unit: "GiB"}
 	}
 
 	if classes, err := client.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{}); err == nil {
-		for _, sc := range classes.Items {
-			if isDefaultClass(sc) {
-				name := sc.Name
-				info.StorageClass = &name
-				break
-			}
-		}
+		info.StorageClasses, info.StorageClass = storageClassInfo(classes.Items)
 	}
 	// metrics.k8s.io 是否存在（决定 CPU/内存使用率能不能取到）
 	if _, err := client.Discovery().ServerResourcesForGroupVersion("metrics.k8s.io/v1beta1"); err == nil {
@@ -98,18 +96,17 @@ func probeEnv(ctx context.Context) EnvInfo {
 	return info
 }
 
-// requestedResources sums container requests across all namespaces.
-func requestedResources(ctx context.Context) (float64, float64) {
-	client, err := client()
-	if err != nil {
-		return 0, 0
-	}
-	pods, err := client.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return 0, 0
-	}
-	var cpu, mem resource.Quantity
-	for _, p := range pods.Items {
+const gib = 1024 * 1024 * 1024
+
+type resourceUsage struct {
+	CPU    float64
+	Memory float64
+	Disk   float64
+}
+
+func requestedResources(pods []corev1.Pod) resourceUsage {
+	var cpu, mem, disk resource.Quantity
+	for _, p := range pods {
 		if p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
 			continue
 		}
@@ -120,9 +117,48 @@ func requestedResources(ctx context.Context) (float64, float64) {
 			if v, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
 				mem.Add(v)
 			}
+			if v, ok := c.Resources.Requests[corev1.ResourceEphemeralStorage]; ok {
+				disk.Add(v)
+			}
 		}
 	}
-	return cpu.AsApproximateFloat64(), mem.AsApproximateFloat64()
+	return resourceUsage{
+		CPU:    cpu.AsApproximateFloat64(),
+		Memory: mem.AsApproximateFloat64(),
+		Disk:   disk.AsApproximateFloat64(),
+	}
+}
+
+func nodeAllocatableResources(nodes []corev1.Node) resourceUsage {
+	var cpu, mem, disk resource.Quantity
+	for _, node := range nodes {
+		cpu.Add(node.Status.Allocatable[corev1.ResourceCPU])
+		mem.Add(node.Status.Allocatable[corev1.ResourceMemory])
+		disk.Add(node.Status.Allocatable[corev1.ResourceEphemeralStorage])
+	}
+	return resourceUsage{
+		CPU:    cpu.AsApproximateFloat64(),
+		Memory: mem.AsApproximateFloat64(),
+		Disk:   disk.AsApproximateFloat64(),
+	}
+}
+
+func storageClassInfo(classes []storagev1.StorageClass) ([]string, *string) {
+	names := make([]string, 0, len(classes))
+	defaults := make([]string, 0, 1)
+	for _, sc := range classes {
+		names = append(names, sc.Name)
+		if isDefaultClass(sc) {
+			defaults = append(defaults, sc.Name)
+		}
+	}
+	sort.Strings(names)
+	sort.Strings(defaults)
+	var defaultName *string
+	if len(defaults) == 1 {
+		defaultName = &defaults[0]
+	}
+	return names, defaultName
 }
 
 func isDefaultClass(sc storagev1.StorageClass) bool {

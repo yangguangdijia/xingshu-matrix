@@ -16,15 +16,17 @@ import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/hosts"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/middleware"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/observability"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/provision"
 )
 
 // All returns the modules registered at startup, in order.
 func All() []app.Module {
 	return []app.Module{
 		// ---- infrastructure ------------------------------------------------
-		cluster.New(), // internal/cluster: K8s clusters (kubeconfig / matrix-cluster-agent tunnel), nodes, workloads, Web Shell
-		hosts.New(),   // internal/hosts: matrix-agent enrolment (gRPC), host inventory, command/script execution
-		bastion.New(), // internal/bastion: SSH proxy + recording (MinIO), RDP/VNC via guacd, DB protocol proxy
+		cluster.New(),   // internal/cluster: K8s clusters (kubeconfig / matrix-cluster-agent tunnel), nodes, workloads, Web Shell
+		provision.New(), // SSH installation of fresh Kubernetes clusters, gated by environment approval
+		hosts.New(),     // internal/hosts: matrix-agent enrolment (gRPC), host inventory, command/script execution
+		bastion.New(),   // internal/bastion: SSH proxy + recording (MinIO), RDP/VNC via guacd, DB protocol proxy
 
 		// ---- observability -------------------------------------------------
 		observability.New(), // internal/observability: Prometheus query, Alertmanager webhook (use Deps.Public), logs (ES/Loki), traces

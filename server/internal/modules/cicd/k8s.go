@@ -58,7 +58,16 @@ func stagePod(a *Application, r *Run, s Stage, secret string) corev1.PodSpec {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		env = append(env, corev1.EnvVar{Name: k, Value: s.Env[k]})
+		value := s.Env[k]
+		if sensitiveStageKey.MatchString(k) {
+			if secret, secretKey, ok := secretReferenceParts(value); ok {
+				env = append(env, corev1.EnvVar{Name: k, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: secret}, Key: secretKey,
+				}}})
+				continue
+			}
+		}
+		env = append(env, corev1.EnvVar{Name: k, Value: value})
 	}
 	step := corev1.Container{Name: stepContainer, Env: env, VolumeMounts: mounts, WorkingDir: srcDir}
 	switch s.Type {

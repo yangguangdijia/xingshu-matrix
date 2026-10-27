@@ -22,14 +22,79 @@ import (
 // ---- hosts CRUD ----------------------------------------------------------------
 
 func (m *Module) listHosts(c *gin.Context) {
-	p := httpx.ParsePage(c)
+	p := rbac.PrincipalFrom(c)
+	env, scopeErr := scopedHostListEnv(p, c.Query("env"))
+	if scopeErr != nil {
+		httpx.Fail(c, scopeErr)
+		return
+	}
+	page := httpx.ParsePage(c)
 	online, _ := strconv.ParseBool(c.Query("online"))
-	items, total, err := m.st.listHosts(c, hostFilter{Env: c.Query("env"), Keyword: c.Query("keyword"), OnlineOnly: online}, p)
+	items, total, err := m.st.listHosts(c, hostFilter{Env: env, Keyword: c.Query("keyword"), OnlineOnly: online}, page)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, httpx.NewPageResult(items, total, p))
+	httpx.OK(c, httpx.NewPageResult(items, total, page))
+}
+
+func scopedHostListEnv(p *rbac.Principal, env string) (string, *httpx.Error) {
+	if p == nil {
+		return "", httpx.Unauthorized("authentication required")
+	}
+	env = strings.TrimSpace(env)
+	if env != "" {
+		if !p.CanEnv(env) {
+			return "", httpx.Forbidden("environment not in your scope: " + env)
+		}
+		return env, nil
+	}
+	if p.EnvScope == nil || containsEnv(p.EnvScope, "*") {
+		return "", nil
+	}
+	if len(p.EnvScope) == 1 && strings.TrimSpace(p.EnvScope[0]) != "" {
+		return p.EnvScope[0], nil
+	}
+	return "", httpx.Forbidden("select an environment in your scope")
+}
+
+func containsEnv(scope []string, env string) bool {
+	for _, item := range scope {
+		if item == env {
+			return true
+		}
+	}
+	return false
+}
+
+func hostInScope(p *rbac.Principal, h *Host) bool {
+	return p != nil && h != nil && p.CanEnv(h.Env)
+}
+
+func tasksInScope(p *rbac.Principal, tasks []Task, hostEnvs map[int64]string) bool {
+	if p == nil {
+		return false
+	}
+	for _, task := range tasks {
+		env, ok := hostEnvs[task.HostID]
+		if !ok || !p.CanEnv(env) {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Module) requireHostScope(c *gin.Context, h *Host) bool {
+	p := rbac.PrincipalFrom(c)
+	if p == nil {
+		httpx.Fail(c, httpx.Unauthorized("authentication required"))
+		return false
+	}
+	if !hostInScope(p, h) {
+		httpx.Fail(c, httpx.Forbidden("environment not in your scope"))
+		return false
+	}
+	return true
 }
 
 func (m *Module) hostParam(c *gin.Context) (*Host, bool) {
@@ -40,6 +105,9 @@ func (m *Module) hostParam(c *gin.Context) (*Host, bool) {
 	h, err := m.st.getHost(c, id)
 	if err != nil {
 		httpx.Fail(c, err)
+		return nil, false
+	}
+	if !m.requireHostScope(c, h) {
 		return nil, false
 	}
 	return h, true
@@ -180,7 +248,7 @@ func (m *Module) exec(c *gin.Context) {
 		return
 	}
 	audit.SetResource(c, "host", strconv.FormatInt(h.ID, 10))
-	audit.SetDetail(c, gin.H{"command": trunc(in.Command, 500), "env": h.Env})
+	audit.SetDetail(c, gin.H{"host_id": h.ID, "env": h.Env, "operation": "exec"})
 	res, err := m.execForPrincipal(c, rbac.PrincipalFrom(c), execRequest{HostIDs: []int64{h.ID}, Command: in.Command, TimeoutSec: in.TimeoutSec}, "")
 	if err != nil {
 		httpx.Fail(c, err)
@@ -217,7 +285,7 @@ func (m *Module) batchExec(c *gin.Context) {
 	}
 	batchID := "b" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	audit.SetResource(c, "host_batch", batchID)
-	audit.SetDetail(c, gin.H{"command": trunc(in.Command, 500), "host_ids": in.HostIDs})
+	audit.SetDetail(c, gin.H{"host_ids": in.HostIDs, "operation": "batch_exec"})
 	res, err := m.execForPrincipal(c, rbac.PrincipalFrom(c), execRequest(in), batchID)
 	if err != nil {
 		httpx.Fail(c, err)
@@ -231,38 +299,52 @@ func (m *Module) batchExec(c *gin.Context) {
 }
 
 func (m *Module) getTask(c *gin.Context) {
-	id, ok := httpx.ParamID(c, "id")
+	t, ok := m.taskParam(c)
 	if !ok {
-		return
-	}
-	t, err := m.st.getTask(c, id)
-	if err != nil {
-		httpx.Fail(c, err)
 		return
 	}
 	httpx.OK(c, t)
 }
 
 func (m *Module) streamTask(c *gin.Context) {
-	id, ok := httpx.ParamID(c, "id")
+	t, ok := m.taskParam(c)
 	if !ok {
-		return
-	}
-	t, err := m.st.getTask(c, id)
-	if err != nil {
-		httpx.Fail(c, err)
 		return
 	}
 	m.sse(c, t)
 }
 
-func (m *Module) listHostTasks(c *gin.Context) {
+func (m *Module) taskParam(c *gin.Context) (*Task, bool) {
 	id, ok := httpx.ParamID(c, "id")
+	if !ok {
+		return nil, false
+	}
+	t, err := m.st.getTask(c, id)
+	if err != nil {
+		httpx.Fail(c, err)
+		return nil, false
+	}
+	envs := make(map[int64]string, 1)
+	h, err := m.st.getHost(c, t.HostID)
+	if err != nil {
+		httpx.Fail(c, err)
+		return nil, false
+	}
+	envs[h.ID] = h.Env
+	if !tasksInScope(rbac.PrincipalFrom(c), []Task{*t}, envs) {
+		httpx.Fail(c, httpx.Forbidden("environment not in your scope"))
+		return nil, false
+	}
+	return t, true
+}
+
+func (m *Module) listHostTasks(c *gin.Context) {
+	h, ok := m.hostParam(c)
 	if !ok {
 		return
 	}
 	p := httpx.ParsePage(c)
-	items, total, err := m.st.listTasks(c, id, "", p)
+	items, total, err := m.st.listTasks(c, h.ID, "", p)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -277,10 +359,36 @@ func (m *Module) listBatchTasks(c *gin.Context) {
 		return
 	}
 	p := httpx.ParsePage(c)
-	items, total, err := m.st.listTasks(c, 0, b, p)
+	all, total, err := m.st.listTasks(c, 0, b, httpx.Page{Page: 1, Size: maxBatchHosts + 1})
 	if err != nil {
 		httpx.Fail(c, err)
 		return
+	}
+	if total > maxBatchHosts || int64(len(all)) != total {
+		httpx.Fail(c, httpx.Conflict("batch task scope could not be verified"))
+		return
+	}
+	envs := make(map[int64]string, len(all))
+	for _, task := range all {
+		if _, ok := envs[task.HostID]; ok {
+			continue
+		}
+		h, err := m.st.getHost(c, task.HostID)
+		if err != nil {
+			httpx.Fail(c, err)
+			return
+		}
+		envs[h.ID] = h.Env
+	}
+	if !tasksInScope(rbac.PrincipalFrom(c), all, envs) {
+		httpx.Fail(c, httpx.Forbidden("environment not in your scope"))
+		return
+	}
+	start := p.Offset()
+	var items []Task
+	if start < len(all) {
+		end := min(start+p.Limit(), len(all))
+		items = all[start:end]
 	}
 	httpx.OK(c, httpx.NewPageResult(items, total, p))
 }
@@ -377,7 +485,20 @@ func (m *Module) pushFile(c *gin.Context) {
 	audit.SetResource(c, "host", strconv.FormatInt(h.ID, 10))
 	audit.SetDetail(c, gin.H{"path": in.Path, "bytes": len(raw)})
 	req := fileRequest{HostID: h.ID, Path: in.Path, ContentBase64: in.ContentBase64, Mode: uint32(mode)}
-	tk, pending, err := m.d.Approval.Gate(c, pr, approval.CreateInput{Type: TypeFilePush, Env: h.Env, Payload: req,
+	if m.d.Approval == nil {
+		httpx.Fail(c, httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "审批服务不可用，文件推送已拒绝"))
+		return
+	}
+	if m.d.Crypto == nil {
+		httpx.Fail(c, httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "文件审批加密服务不可用，推送已拒绝"))
+		return
+	}
+	payload := fileApprovalPayload{Env: h.Env, HostID: h.ID, Path: in.Path, Mode: uint32(mode)}
+	if payload.EncryptedContent, err = m.d.Crypto.EncryptBytes(raw, fileApprovalAAD(&payload)); err != nil {
+		httpx.Fail(c, httpx.Internal(err))
+		return
+	}
+	tk, pending, err := m.d.Approval.Gate(c, pr, approval.CreateInput{Type: TypeFilePush, Env: h.Env, Payload: payload,
 		Title: fmt.Sprintf("向主机 %s 推送文件 %s (%d 字节)", h.Name, in.Path, len(raw))})
 	if err != nil {
 		httpx.Fail(c, err)
