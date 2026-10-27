@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -67,11 +68,32 @@ func ParseMigrations(fsys fs.FS) ([]Migration, error) {
 		if err != nil {
 			return nil, err
 		}
-		sum := sha256.Sum256(b)
-		out = append(out, Migration{Version: v, Name: m[2], SQL: string(b), Checksum: hex.EncodeToString(sum[:])})
+		out = append(out, Migration{Version: v, Name: m[2], SQL: string(b), Checksum: migrationChecksum(b)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Version < out[j].Version })
 	return out, nil
+}
+
+func normalizedMigrationSQL(sql []byte) []byte {
+	normalized := bytes.ReplaceAll(sql, []byte("\r\n"), []byte("\n"))
+	return bytes.ReplaceAll(normalized, []byte("\r"), []byte("\n"))
+}
+
+func checksumBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func migrationChecksum(sql []byte) string {
+	return checksumBytes(normalizedMigrationSQL(sql))
+}
+
+func migrationChecksumMatches(stored string, sql []byte) bool {
+	normalized := normalizedMigrationSQL(sql)
+	if stored == checksumBytes(normalized) {
+		return true
+	}
+	return stored == checksumBytes(bytes.ReplaceAll(normalized, []byte("\n"), []byte("\r\n")))
 }
 
 // Migrate applies pending migrations of all sources in order, each migration in
@@ -129,7 +151,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, sources 
 		}
 		for _, m := range migs {
 			if sum, ok := applied[m.Version]; ok {
-				if sum != m.Checksum {
+				if !migrationChecksumMatches(sum, []byte(m.SQL)) {
 					return fmt.Errorf("module %s migration %04d_%s was modified after being applied (checksum mismatch); add a new migration instead", src.Module, m.Version, m.Name)
 				}
 				continue
