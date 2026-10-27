@@ -4,6 +4,12 @@ on:
     branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Application version to package"
+        required: true
+        default: "dev"
+        type: string
 permissions:
   contents: read
   packages: write
@@ -27,12 +33,38 @@ jobs:
         # 浏览器级冒烟（tests/frontend/smoke.mjs）需要本机 Chrome，只在手工执行。
         run: node --test tests/frontend/xs-api.test.mjs
       - uses: docker/login-action@v3
+        if: github.event_name != 'workflow_dispatch'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
+        if: github.event_name != 'workflow_dispatch'
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/xingshu-matrix:latest
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/xingshu-matrix:latest
+            ghcr.io/${{ github.repository_owner }}/xingshu-matrix:${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+          build-args: |
+            VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+            COMMIT=${{ github.sha }}
+      - name: Export OCI image for deployment
+        if: github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: ghcr.io/${{ github.repository_owner }}/xingshu-matrix:${{ inputs.version }}
+          outputs: type=oci,name=ghcr.io/${{ github.repository_owner }}/xingshu-matrix:${{ inputs.version }},dest=/tmp/xingshu-matrix.oci.tar
+          build-args: |
+            VERSION=${{ inputs.version }}
+            COMMIT=${{ github.sha }}
+      - name: Upload OCI image
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: xingshu-matrix-${{ inputs.version }}-${{ github.sha }}
+          path: /tmp/xingshu-matrix.oci.tar
+          if-no-files-found: error
+          retention-days: 1
