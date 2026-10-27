@@ -40,6 +40,19 @@ func TestMigrationChecksumRejectsSQLChanges(t *testing.T) {
 	}
 }
 
+func TestMigrationChecksumAcceptsOneTrailingBlankLine(t *testing.T) {
+	sql := []byte("CREATE TABLE example (id BIGINT PRIMARY KEY);\n")
+	withBlankLine := append(append([]byte(nil), sql...), '\n')
+	if !migrationChecksumMatches(checksumBytes(withBlankLine), sql) {
+		t.Fatal("did not recognize a historical trailing blank line")
+	}
+
+	withTwoBlankLines := append(append([]byte(nil), sql...), '\n', '\n')
+	if migrationChecksumMatches(checksumBytes(withTwoBlankLines), sql) {
+		t.Fatal("accepted multiple trailing blank lines")
+	}
+}
+
 func TestCoreMigrationMatchesAppliedWindowsChecksum(t *testing.T) {
 	migrations, err := ParseMigrations(CoreMigrations())
 	if err != nil {

@@ -90,10 +90,21 @@ func migrationChecksum(sql []byte) string {
 
 func migrationChecksumMatches(stored string, sql []byte) bool {
 	normalized := normalizedMigrationSQL(sql)
-	if stored == checksumBytes(normalized) {
-		return true
+	crlf := bytes.ReplaceAll(normalized, []byte("\n"), []byte("\r\n"))
+	candidates := [][]byte{normalized, crlf}
+	// A few Windows-built migrations were recorded with one extra trailing
+	// newline. Accept that line-ending variation, but not arbitrary whitespace
+	// changes in the SQL body.
+	candidates = append(candidates,
+		append(append([]byte(nil), normalized...), '\n'),
+		append(append([]byte(nil), crlf...), '\r', '\n'),
+	)
+	for _, candidate := range candidates {
+		if stored == checksumBytes(candidate) {
+			return true
+		}
 	}
-	return stored == checksumBytes(bytes.ReplaceAll(normalized, []byte("\n"), []byte("\r\n")))
+	return false
 }
 
 // Migrate applies pending migrations of all sources in order, each migration in
