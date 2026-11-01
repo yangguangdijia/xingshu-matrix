@@ -27,6 +27,7 @@ import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/crypto"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/rbac"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/store"
 )
 
 //go:embed migrations/*.sql
@@ -56,6 +57,8 @@ type Module struct {
 	clients       *clientCache
 	discoveryWG   sync.WaitGroup
 	discoveryWake chan struct{}
+	hub           agentHub
+	tunnelHub     interface{ Close() error }
 }
 
 // New returns the module.
@@ -119,10 +122,18 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 		}
 	}
 
+	initCtx, cancelInit := context.WithTimeout(context.Background(), 15*time.Second)
+	m.initAgentHub(initCtx, d)
+	cancelInit()
+	d.Clusters = clusterAccess{m: m}
+
 	g := r.Group("/clusters")
 	m.RegisterResourceRoutes(g)
 	m.RegisterProjectQuotaRoutes(g)
 	m.RegisterComponentRoutes(g)
+	g.POST("/agent", rbac.RequirePerm(PermClusterManage), m.createAgentCluster)
+	g.POST("/:id/agent/manifest", rbac.RequirePerm(PermClusterManage), m.agentManifest)
+	g.POST("/:id/agent/reset", rbac.RequirePerm(PermClusterManage), m.resetAgentBinding)
 	g.GET("", rbac.RequirePerm(PermClusterRead), m.listClusters)
 	g.GET("/health", rbac.RequirePerm(PermClusterRead), m.clusterHealth)
 	g.POST("", rbac.RequirePerm(PermClusterManage), m.createCluster)
@@ -258,15 +269,26 @@ type Cluster struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 
-	encKubeconfig string
+	ConnectMode      string     `json:"connect_mode"`
+	AgentVersion     string     `json:"agent_version,omitempty"`
+	AgentConnectedAt *time.Time `json:"agent_connected_at,omitempty"`
+	AgentSeenAt      *time.Time `json:"agent_seen_at,omitempty"`
+	AgentOnline      *bool      `json:"agent_online,omitempty"`
+	AgentBound       bool       `json:"agent_bound,omitempty"`
+
+	encKubeconfig    string
+	agentFingerprint string
 }
 
-const clusterCols = `id,name,env,description,api_server,kubeconfig,version,status,last_error,checked_at,created_by,created_at,updated_at`
+const clusterCols = `id,name,env,description,api_server,kubeconfig,version,status,last_error,checked_at,created_by,created_at,updated_at,` +
+	`connect_mode,agent_version,agent_connected_at,agent_seen_at,agent_fingerprint`
 
 func scanCluster(row pgx.Row) (*Cluster, error) {
 	var c Cluster
 	err := row.Scan(&c.ID, &c.Name, &c.Env, &c.Description, &c.APIServer, &c.encKubeconfig, &c.Version,
-		&c.Status, &c.LastError, &c.CheckedAt, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+		&c.Status, &c.LastError, &c.CheckedAt, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
+		&c.ConnectMode, &c.AgentVersion, &c.AgentConnectedAt, &c.AgentSeenAt, &c.agentFingerprint)
+	c.AgentBound = c.agentFingerprint != ""
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, httpx.NotFound("cluster not found")
 	}
@@ -278,7 +300,14 @@ func scanCluster(row pgx.Row) (*Cluster, error) {
 	} else {
 		c.APIServer = ""
 	}
-	c.Kubeconfig = crypto.Mask(c.encKubeconfig)
+	if c.ConnectMode == "" {
+		c.ConnectMode = app.ClusterConnectKubeconfig
+	}
+	if c.ConnectMode == app.ClusterConnectAgent {
+		c.Kubeconfig = ""
+	} else {
+		c.Kubeconfig = crypto.Mask(c.encKubeconfig)
+	}
 	return &c, nil
 }
 
@@ -310,6 +339,9 @@ func (m *Module) clusterFor(c *gin.Context) (*Cluster, bool) {
 }
 
 func (m *Module) kube(ctx context.Context, cl *Cluster) (*kubeClients, error) {
+	if cl.ConnectMode == app.ClusterConnectAgent {
+		return m.agentClients(ctx, cl)
+	}
 	return m.clients.get(cl, func() (string, error) { return m.d.Crypto.Decrypt(cl.encKubeconfig) })
 }
 
@@ -320,6 +352,7 @@ type clusterInput struct {
 	APIServer   string `json:"api_server" binding:"max=512"`
 	Kubeconfig  string `json:"kubeconfig"`
 	Context     string `json:"context"`
+	ConnectMode string `json:"connect_mode,omitempty"`
 }
 
 type registryApprovalPayload struct {
@@ -502,17 +535,23 @@ func (m *Module) executeRegistryChange(ctx context.Context, id, applicantID int6
 
 	switch row.Action {
 	case "create":
-		if mutation.Input.Env != row.Env || mutation.Input.Name != row.Cluster || mutation.Input.Kubeconfig == "" {
+		agentMode := mutation.Input.ConnectMode == app.ClusterConnectAgent
+		if mutation.Input.Env != row.Env || mutation.Input.Name != row.Cluster ||
+			(!agentMode && mutation.Input.Kubeconfig == "") || (agentMode && mutation.Input.Kubeconfig != "") {
 			return nil, httpx.Conflict("集群注册审批内容不匹配")
 		}
-		encrypted, err := m.d.Crypto.Encrypt(mutation.Input.Kubeconfig)
-		if err != nil {
-			return nil, httpx.Internal(err)
+		encrypted, mode, apiServer := "", app.ClusterConnectAgent, ""
+		if !agentMode {
+			mode, apiServer = app.ClusterConnectKubeconfig, mutation.Input.APIServer
+			encrypted, err = m.d.Crypto.Encrypt(mutation.Input.Kubeconfig)
+			if err != nil {
+				return nil, httpx.Internal(err)
+			}
 		}
 		created, err := scanCluster(m.d.DB.QueryRow(ctx, `INSERT INTO cluster_clusters
-			(name,env,description,api_server,kubeconfig,created_by)
-			VALUES($1,$2,$3,$4,$5,$6) RETURNING `+clusterCols,
-			mutation.Input.Name, row.Env, mutation.Input.Description, mutation.Input.APIServer, encrypted, mutation.Actor))
+			(name,env,description,api_server,kubeconfig,created_by,connect_mode)
+			VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING `+clusterCols,
+			mutation.Input.Name, row.Env, mutation.Input.Description, apiServer, encrypted, mutation.Actor, mode))
 		if err != nil {
 			if strings.Contains(strings.ToLower(err.Error()), "duplicate key") {
 				return nil, httpx.Conflict("cluster name already exists")
@@ -526,6 +565,10 @@ func (m *Module) executeRegistryChange(ctx context.Context, id, applicantID int6
 		if in.Env != row.Env || strings.TrimSpace(in.Name) == "" {
 			return nil, httpx.BadRequest("cluster identity is invalid")
 		}
+		in.Name = strings.TrimSpace(in.Name)
+		if current.ConnectMode == app.ClusterConnectAgent && in.Kubeconfig != "" {
+			return nil, httpx.Conflict("agent 接入的集群不能写入 kubeconfig")
+		}
 		encrypted := current.encKubeconfig
 		if in.Kubeconfig != "" {
 			encrypted, err = m.d.Crypto.Encrypt(in.Kubeconfig)
@@ -533,10 +576,36 @@ func (m *Module) executeRegistryChange(ctx context.Context, id, applicantID int6
 				return nil, httpx.Internal(err)
 			}
 		}
-		updated, err := scanCluster(m.d.DB.QueryRow(ctx, `UPDATE cluster_clusters SET name=$2,description=$3,api_server=$4,
-			kubeconfig=$5,updated_at=now() WHERE id=$1 RETURNING `+clusterCols,
-			current.ID, in.Name, in.Description, in.APIServer, encrypted))
+		var updated *Cluster
+		err = store.InTx(ctx, m.d.DB, func(tx pgx.Tx) error {
+			var scanErr error
+			updated, scanErr = scanCluster(tx.QueryRow(ctx, `UPDATE cluster_clusters SET name=$2,description=$3,api_server=$4,
+				kubeconfig=$5,updated_at=now() WHERE id=$1 AND name=$6 RETURNING `+clusterCols,
+				current.ID, in.Name, in.Description, in.APIServer, encrypted, current.Name))
+			if scanErr != nil {
+				return scanErr
+			}
+			if updated.Name == current.Name {
+				return nil
+			}
+			for _, hook := range m.d.ClusterRenameHooks {
+				if err := hook(ctx, tx, current.ID, current.Name, updated.Name); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if store.IsUniqueViolation(err) {
+			return nil, httpx.Conflict("集群名称已被使用")
+		}
 		if err != nil {
+			var httpErr *httpx.Error
+			if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
+				return nil, httpx.Conflict("集群在修改期间已被更改，请刷新后重试")
+			}
+			if errors.As(err, &httpErr) && httpErr.Status < 500 {
+				return nil, httpErr
+			}
 			return nil, httpx.Internal(errors.New("cluster update failed"))
 		}
 		m.clients.drop(current.ID)
@@ -545,6 +614,9 @@ func (m *Module) executeRegistryChange(ctx context.Context, id, applicantID int6
 		return updated, nil
 	case "delete":
 		tag, err := m.d.DB.Exec(ctx, `DELETE FROM cluster_clusters WHERE id=$1 AND env=$2 AND name=$3`, current.ID, row.Env, row.Cluster)
+		if store.IsForeignKeyViolation(err) {
+			return nil, httpx.Conflict("集群仍被 CI/CD 执行集群等资源引用，请先解除引用")
+		}
 		if err != nil || tag.RowsAffected() != 1 {
 			return nil, httpx.Conflict("cluster changed before deletion")
 		}
@@ -650,6 +722,10 @@ func (m *Module) listClusters(c *gin.Context) {
 		}
 		items = append(items, *cl)
 	}
+	rows.Close()
+	for i := range items {
+		m.markAgentOnline(ctx, &items[i])
+	}
 	httpx.OK(c, httpx.NewPageResult(items, total, p))
 }
 
@@ -681,6 +757,7 @@ func containsEnv(scope []string, env string) bool {
 
 func (m *Module) getCluster(c *gin.Context) {
 	if cl, ok := m.clusterFor(c); ok {
+		m.markAgentOnline(c.Request.Context(), cl)
 		httpx.OK(c, cl)
 	}
 }
@@ -697,12 +774,32 @@ func prepareKubeconfig(in *clusterInput) error {
 	return nil
 }
 
+// normalizeClusterName trims the name and rejects values that break paths, labels or logs.
+func normalizeClusterName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || len([]rune(name)) > 128 {
+		return "", httpx.Validation("集群名称必填，且不能超过 128 个字符")
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' {
+			return "", httpx.Validation("集群名称不能包含控制字符或斜杠")
+		}
+	}
+	return name, nil
+}
+
 func (m *Module) createCluster(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxKubeconfigRequestBytes)
 	var in clusterInput
 	if !httpx.Bind(c, &in) {
 		return
 	}
+	name, err := normalizeClusterName(in.Name)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	in.Name = name
 	p := rbac.PrincipalFrom(c)
 	if p == nil || strings.TrimSpace(in.Env) == "" {
 		httpx.Fail(c, httpx.BadRequest("an environment is required"))
@@ -712,6 +809,7 @@ func (m *Module) createCluster(c *gin.Context) {
 		httpx.Fail(c, httpx.Forbidden("no access to environment "+in.Env))
 		return
 	}
+	in.ConnectMode = ""
 	if strings.TrimSpace(in.Kubeconfig) == "" {
 		httpx.Fail(c, httpx.BadRequest("kubeconfig is required"))
 		return
@@ -746,6 +844,12 @@ func (m *Module) updateCluster(c *gin.Context) {
 	if !httpx.Bind(c, &in) {
 		return
 	}
+	name, err := normalizeClusterName(in.Name)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	in.Name = name
 	p := rbac.PrincipalFrom(c)
 	if p == nil || !p.CanEnv(in.Env) {
 		httpx.Fail(c, httpx.Forbidden("no access to environment "+in.Env))
@@ -753,6 +857,11 @@ func (m *Module) updateCluster(c *gin.Context) {
 	}
 	if in.Env != cl.Env {
 		httpx.Fail(c, httpx.BadRequest("cluster environment changes are not supported"))
+		return
+	}
+	in.ConnectMode = ""
+	if cl.ConnectMode == app.ClusterConnectAgent && strings.TrimSpace(in.Kubeconfig) != "" {
+		httpx.Fail(c, httpx.BadRequest("agent 接入的集群不使用 kubeconfig；如需重新接入请重新生成接入清单"))
 		return
 	}
 	if strings.TrimSpace(in.Kubeconfig) != "" && !strings.Contains(in.Kubeconfig, "***") {

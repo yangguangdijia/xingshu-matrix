@@ -217,6 +217,9 @@ spec:
               value: info
             - name: POD_NAMESPACE
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            # Lets replicas relay requests to the replica holding a cluster agent tunnel.
+            - name: MATRIX_POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
             - name: MATRIX_NODEPORT
               value: "30080"
             - name: MATRIX_TLS_SECRET

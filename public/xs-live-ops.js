@@ -313,6 +313,128 @@
     return target;
   }
 
+  var PROM_TEMPLATES = [
+    { key: "cpu", label: "CPU", range: "1h", query: '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])))' },
+    { key: "memory", label: "内存", range: "1h", query: '100 * (1 - sum(node_memory_MemAvailable_bytes{}) / sum(node_memory_MemTotal_bytes{}))' },
+    { key: "disk", label: "磁盘", range: "6h", query: '100 * (1 - sum(node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}) / sum(node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}))' },
+    { key: "pod", label: "Pod", range: "1h", query: 'sum(kube_pod_status_phase{phase="Running"} == 1)' },
+    { key: "restarts", label: "重启", range: "1h", query: 'sum(increase(kube_pod_container_status_restarts_total{}[1h]))' },
+    { key: "network", label: "网络", range: "1h", query: 'sum(rate(node_network_receive_bytes_total{device!="lo"}[5m])) + sum(rate(node_network_transmit_bytes_total{device!="lo"}[5m]))' },
+    { key: "api-errors", label: "API 错误", range: "1h", query: 'sum(rate(apiserver_request_total{code=~"5.."}[5m]))' }
+  ];
+  function promTemplateSelection(key) {
+    for (var i = 0; i < PROM_TEMPLATES.length; i++) {
+      if (PROM_TEMPLATES[i].key === key) return { query: PROM_TEMPLATES[i].query, range: PROM_TEMPLATES[i].range, knownTemplate: true };
+    }
+    return null;
+  }
+  function decodeQueryPart(value) {
+    try { return decodeURIComponent(String(value || "").replace(/\+/g, " ")); } catch (e) { return String(value || ""); }
+  }
+  function parseDeliveryHash(hash) {
+    var raw = String(hash || "").replace(/^#\/?/, ""), splitAt = raw.indexOf("?");
+    var path = splitAt >= 0 ? raw.slice(0, splitAt) : raw, query = splitAt >= 0 ? raw.slice(splitAt + 1) : "";
+    var parts = path.split("/"), params = {};
+    query.split("&").forEach(function (pair) {
+      if (!pair) return;
+      var at = pair.indexOf("="), key = decodeQueryPart(at >= 0 ? pair.slice(0, at) : pair);
+      params[key] = decodeQueryPart(at >= 0 ? pair.slice(at + 1) : "");
+    });
+    var appName = parts[0] === "delivery" && parts[1] && parts[1] !== "apps" ? decodeQueryPart(parts[1]) : "";
+    var helm = null;
+    if (parts[0] === "delivery" && parts[1] === "apps" && params.helm_chart) {
+      helm = {
+        name: params.helm_env || "",
+        target_id: "",
+        namespace: "",
+        helm: { chart: params.helm_chart, repo: params.helm_repo || "", version: params.helm_version || "", release: "" }
+      };
+    }
+    return { appName: appName, pane: parts[2] ? decodeQueryPart(parts[2]) : "", helm: helm };
+  }
+  function normalizeAppEnvValues(input) {
+    var values = assign({}, input || {}), existingHelm = values.helm || {};
+    var chart = values.helm_chart || existingHelm.chart || "", release = values.helm_release || existingHelm.release || "";
+    var repo = values.helm_repo || existingHelm.repo || "", version = values.helm_version || existingHelm.version || "";
+    delete values.helm_chart; delete values.helm_release; delete values.helm_repo; delete values.helm_version; delete values.helm;
+    if (!values.name || !values.namespace) throw new Error("每个环境都需要填写环境名称和命名空间");
+    if (!values.target_id || !/^\d+$/.test(String(values.target_id))) throw new Error("执行集群 ID 必须是正整数");
+    values.target_id = Number(values.target_id);
+    if (chart || release || repo || version) {
+      if (!chart || !release) throw new Error("Helm 环境需要同时填写 Chart 与 Release");
+      values.helm = { chart: chart, release: release };
+      if (repo) values.helm.repo = repo;
+      if (version) values.helm.version = version;
+    } else if (!values.deployment || !values.container) {
+      throw new Error("非 Helm 环境需要填写 Deployment 和容器");
+    }
+    return values;
+  }
+  function isMaskedSecret(value) {
+    return /^(?:\*{4,}|-{4,}|•{4,}|已配置|<redacted>|masked)$/i.test(String(value || "").trim());
+  }
+  function applicationPayload(values) {
+    var payload = {
+      name: values.name, repo_url: values.repo_url, branch: values.branch, dockerfile: values.dockerfile,
+      context_dir: values.context_dir, image_repo: values.image_repo, git_username: values.git_username, envs: values.envs
+    };
+    if (values.git_token && !isMaskedSecret(values.git_token)) payload.git_token = values.git_token;
+    return payload;
+  }
+  function matchesText(values, query) {
+    var needle = String(query || "").trim().toLowerCase();
+    return !needle || values.join(" ").toLowerCase().indexOf(needle) >= 0;
+  }
+  function filterMiddlewareInstances(items, query) {
+    return (items || []).filter(function (item) { return matchesText([item.name || "", mwTypeLabel(item.type || ""), item.type || "", item.env || "", (item.endpoints || []).join(" ")], query); });
+  }
+  function filterReleaseRecords(items, query) {
+    return (items || []).filter(function (item) { return matchesText([item.id || "", item.env || "", item.kind || "", item.image || "", item.previous_image || "", item.status || "", item.created_by || ""], query); });
+  }
+  function filterBuildRecords(items, query, applications, pipelines) {
+    var apps = {}, pipes = {};
+    (applications || []).forEach(function (item) { apps[String(item.id)] = item.name || ""; });
+    (pipelines || []).forEach(function (item) { pipes[String(item.id)] = item.name || ""; });
+    return (items || []).filter(function (item) {
+      return matchesText([item.id || "", apps[String(item.app_id)] || "", pipes[String(item.pipeline_id)] || "", item.status || "", item.branch || "", item.commit || "", item.image_tag || "", item.triggered_by || ""], query);
+    });
+  }
+  function restoreSearchFocus(box, selector, cursor) {
+    var next = box && box.querySelector(selector);
+    if (!next) return;
+    next.focus();
+    try { if (cursor != null) next.setSelectionRange(cursor, cursor); } catch (e) {}
+  }
+  function middlewareTypeDefaults(type, current) {
+    var out = assign({}, current || {}), hints = {
+      kafka: "broker.example.com:9092", rabbitmq: "https://rabbitmq.example.com:15672", rocketmq: "https://rocketmq.example.com:8080",
+      mysql: "mysql.example.com:3306", postgres: "postgres.example.com:5432", redis: "redis.example.com:6379"
+    };
+    if (!String(out.endpoints || "").trim()) out.endpointPlaceholder = hints[type] || "host:port";
+    if (out.tls == null) out.tls = false;
+    if (out.tls_skip_verify == null) out.tls_skip_verify = false;
+    return out;
+  }
+  function middlewareListQuery(type, keyword) {
+    var query = { page: 1, page_size: 100 }, value = String(keyword || "").trim();
+    if (type) query.type = type;
+    if (value) query.keyword = value;
+    return query;
+  }
+  function middlewareInstancePayload(values) {
+    var endpoints = Array.isArray(values.endpoints) ? values.endpoints : String(values.endpoints || "").split(/[\n,]+/);
+    return {
+      name: values.name, type: values.type, env: values.env,
+      endpoints: endpoints.map(function (item) { return String(item || "").trim(); }).filter(Boolean),
+      description: values.description,
+      auth: {
+        username: values.username, password: values.password, tls: !!values.tls,
+        tls_skip_verify: !!values.tls_skip_verify, sasl_mechanism: values.sasl_mechanism || ""
+      },
+      options: values.options || {}
+    };
+  }
+
   /* ---------------------------------------------------------------- fmt 格式化 */
 
   function pad2(n) { return (n < 10 ? "0" : "") + n; }
@@ -545,12 +667,14 @@
       field("deployment", "Deployment", row.deployment, "web") +
       field("container", "容器", row.container, "app") +
       field("helm_chart", "Helm Chart", row.helm_chart || row.helm && row.helm.chart, "repo/chart") +
+      field("helm_repo", "Helm 仓库", row.helm_repo || row.helm && row.helm.repo, "https://charts.example.com") +
+      field("helm_version", "Helm 版本", row.helm_version || row.helm && row.helm.version, "1.2.3") +
       field("helm_release", "Helm Release", row.helm_release || row.helm && row.helm.release, "web") +
       '<td class="ops-nowrap"><button class="x-btn" type="button" data-app-env-remove aria-label="删除环境">×</button></td></tr>';
   }
 
   function appEnvsHTML(rows) {
-    return '<div data-app-envs><div style="overflow-x:auto"><table class="x-table"><thead><tr><th>环境</th><th>执行集群 ID</th><th>命名空间</th><th>Deployment</th><th>容器</th><th>Helm Chart</th><th>Helm Release</th><th>操作</th></tr></thead>' +
+    return '<div data-app-envs><div style="overflow-x:auto"><table class="x-table"><thead><tr><th>环境</th><th>执行集群 ID</th><th>命名空间</th><th>Deployment</th><th>容器</th><th>Helm Chart</th><th>Helm 仓库</th><th>Helm 版本</th><th>Helm Release</th><th>操作</th></tr></thead>' +
       '<tbody data-app-env-rows>' + (rows || []).map(appEnvRowHTML).join("") + '</tbody></table></div>' +
       '<div class="x-tbar" style="margin-top:8px"><button class="x-btn" type="button" data-app-env-add>+ 添加环境</button></div></div>';
   }
@@ -564,19 +688,7 @@
         if (value) values[input.getAttribute("data-app-env-field")] = value;
       });
       if (!Object.keys(values).length) return;
-      if (!values.name || !values.namespace) throw new Error("每个环境都需要填写环境名称和命名空间");
-      if (!values.target_id || !/^\d+$/.test(values.target_id)) throw new Error("执行集群 ID 必须是正整数");
-      values.target_id = Number(values.target_id);
-      var chart = values.helm_chart, release = values.helm_release;
-      delete values.helm_chart;
-      delete values.helm_release;
-      if (chart || release) {
-        if (!chart || !release) throw new Error("Helm 环境需要同时填写 Chart 与 Release");
-        values.helm = { chart: chart, release: release };
-      } else if (!values.deployment || !values.container) {
-        throw new Error("非 Helm 环境需要填写 Deployment 和容器");
-      }
-      rows.push(values);
+      rows.push(normalizeAppEnvValues(values));
     });
     if (!rows.length) throw new Error("至少添加一个部署环境");
     return rows;
@@ -670,9 +782,12 @@
 
   function fieldHTML(f) {
     var attrs = f.required ? ' required aria-required="true"' : "";
-    var span = "<span>" + (f.required ? '<b class="x-req">*</b> ' : "") + E(f.label || f.k) + "</span>";
+    var span = '<span' + (f.required ? ' class="x-req"' : '') + '>' + E(f.label || f.k) + "</span>";
     var ctl;
-    if (f.kind === "appEnvs") {
+    if (f.kind === "details") {
+      return '<details class="x-full" data-form-details><summary>' + E(f.label || "高级设置") + '</summary><div class="x-form" style="margin-top:12px">' +
+        (f.fields || []).map(fieldHTML).join("") + "</div></details>";
+    } else if (f.kind === "appEnvs") {
       return '<div class="x-sf-group x-full">' + span + appEnvsHTML(f.value || []) + "</div>";
     } else if (f.kind === "automationSteps") {
       return '<div class="x-sf-group x-full">' + span + automationStepsHTML(f.value || []) + "</div>";
@@ -697,8 +812,16 @@
     }
     return "<label" + (f.kind === "textarea" ? ' class="x-full"' : "") + ">" + span + ctl + "</label>";
   }
+  function flattenFormFields(fields) {
+    var out = [];
+    (fields || []).forEach(function (field) {
+      if (field.kind === "details") out = out.concat(flattenFormFields(field.fields || []));
+      else out.push(field);
+    });
+    return out;
+  }
   function formModal(title, fields, okLabel, onSubmit, hint) {
-    var id = "opsf" + (++ST.formSeq);
+    var id = "opsf" + (++ST.formSeq), valueFields = flattenFormFields(fields);
     var html = '<form class="x-form" id="' + id + '" novalidate>' + (hint ? '<p class="x-desc" style="margin:0">' + hint + "</p>" : "") +
       fields.map(fieldHTML).join("") + '<span class="x-err" id="' + id + 'err" hidden></span></form>';
     dlg(E(title), html, '<button class="x-btn" type="button" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="' + id + '">' + E(okLabel || "保存") + "</button>");
@@ -709,7 +832,7 @@
       var err = q(id + "err");
       err.hidden = true;
       var vals = {}, bad = "";
-      fields.forEach(function (fd) {
+      valueFields.forEach(function (fd) {
         if (fd.kind === "appEnvs") {
           try { vals[fd.k] = readAppEnvs(f); }
           catch (err) { bad = bad || ((fd.label || fd.k) + "：" + err.message); }
@@ -765,7 +888,7 @@
     history.replaceState(null, "", "#/observe/events");
     return id;
   }
-  var OB = { promId: 0, range: "1h", query: "up" };
+  var OB = { promId: 0, range: "1h", query: "up", templateQuery: "" };
 
   function renderObserveLive(el) {
     var pg = obPage();
@@ -989,7 +1112,9 @@
         '<select class="x-select" data-promrange aria-label="时间范围" style="width:auto">' + ranges.map(function (r) { return '<option value="' + r.v + '"' + (r.v === OB.range ? " selected" : "") + ">" + r.t + "</option>"; }).join("") + "</select>",
         '<input class="x-input x-search" data-promq value="' + E(OB.query) + '" placeholder="PromQL，如 up 或 rate(http_requests_total[5m])" aria-label="PromQL 查询语句" />',
         '<button class="x-btn x-btn--pri" type="button" data-promrun>查询</button>'
-      ]) + '<div data-promres>' + emptyHTML("输入 PromQL 后点击查询") + "</div>");
+      ]) + '<div class="x-tbar" aria-label="常用 PromQL 模板"><span class="x-frac">常用模板</span>' + PROM_TEMPLATES.map(function (item) {
+        return '<button class="x-btn" type="button" data-prom-template="' + E(item.key) + '">' + E(item.label) + '</button>';
+      }).join("") + '</div><div data-promres>' + emptyHTML("输入 PromQL 后点击查询") + "</div>");
     }
     function latestMetric(res) {
       var payload = res && res.data ? res.data : res || {};
@@ -1078,7 +1203,20 @@
       var run = p.box.querySelector("[data-promrun]");
       if (run) run.onclick = function () { runProm(p.box); if (OB.scope) loadMetricSummary(OB.scope.cluster, OB.scope); };
       var inp = p.box.querySelector("[data-promq]");
-      if (inp) inp.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); runProm(p.box); } };
+      if (inp) {
+        inp.oninput = function () { if (inp.value.trim() !== OB.templateQuery) OB.templateQuery = ""; };
+        inp.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); runProm(p.box); } };
+      }
+      [].slice.call(p.box.querySelectorAll("[data-prom-template]")).forEach(function (button) {
+        button.onclick = function () {
+          var selected = promTemplateSelection(button.getAttribute("data-prom-template"));
+          if (!selected) return;
+          OB.query = selected.query; OB.range = selected.range; OB.templateQuery = selected.query;
+          var queryInput = p.box.querySelector("[data-promq]"), rangeInput = p.box.querySelector("[data-promrange]");
+          if (queryInput) { queryInput.value = selected.query; queryInput.focus(); }
+          if (rangeInput) rangeInput.value = selected.range;
+        };
+      });
       var nw = p.box.querySelector('[data-act="newds"]');
       if (nw) nw.onclick = function () { location.hash = "#/cluster/integrations"; };
     }
@@ -1096,7 +1234,11 @@
     if (!OB.query) { box.innerHTML = emptyHTML("请输入 PromQL 查询语句"); return; }
     var steps = { "15m": "15s", "1h": "30s", "6h": "2m", "24h": "5m", "7d": "30m" };
     var query;
-    try { query = window.XSObserve.scopedPromQuery(OB.query, scope); } catch (err) { box.innerHTML = errorHTML(err); return; }
+    try {
+      query = OB.templateQuery && OB.templateQuery === OB.query
+        ? window.XSObserve.scopedPromQuery(OB.query, scope, true)
+        : window.XSObserve.scopedPromQuery(OB.query, scope);
+    } catch (err) { box.innerHTML = errorHTML(err); return; }
     box.innerHTML = loadingHTML("查询中…");
     GET("/observability/prometheus/" + encodeURIComponent(OB.promId) + "/query_range", {
       cluster_id: cluster.id, query: query, start: "now-" + OB.range, end: "now", step: steps[OB.range] || "30s"
@@ -2055,7 +2197,7 @@
 
   /* ---------------------------------------------------------------- cicd CI/CD */
 
-  var CICD_F = { status: "", appId: 0 };
+  var CICD_F = { status: "", appId: 0, query: "" };
   var CICD_APPS = [], CICD_PL = [], CICD_TG = [], CICD_JK = [];
 
   function appsLoad() {
@@ -2086,21 +2228,30 @@
     var p = livePage(el, "构建", "流水线运行记录与实时日志（SSE）", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-runpl>+ 运行流水线</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { cicdBuilds(el); };
     el.querySelector("[data-runpl]").onclick = function () { runPipelineModal(function () { cicdBuilds(el); }); };
+    var runItems = [];
     function load() {
       var t = p.newToken();
       var qy = { page: 1, page_size: 50 };
       if (CICD_F.status) qy.status = CICD_F.status;
       if (CICD_F.appId) qy.app_id = CICD_F.appId;
       Promise.all([GET("/cicd/runs", qy), settle(appsLoad(), []), settle(GET("/cicd/pipelines"), [])]).then(function (rs) {
-        var data = rs[0] || {}, items = Array.isArray(data) ? data : asArray(data, ["items"]);
+        var data = rs[0] || {};
+        runItems = Array.isArray(data) ? data : asArray(data, ["items"]);
         CICD_APPS = rs[1].value || [];
         CICD_PL = asArray(rs[2].value, ["items"]);
+        paint(t);
+      }).catch(function (err) { p.error(t, err); });
+    }
+    function paint(t) {
+        var items = runItems;
+        var visibleItems = filterBuildRecords(items, CICD_F.query, CICD_APPS, CICD_PL);
         var filters = barHTML([
           '<select class="x-select" data-cfst style="width:auto">' + runStatusOptions().map(function (o) { return '<option value="' + E(o.v) + '"' + (o.v === CICD_F.status ? " selected" : "") + ">" + o.t + "</option>"; }).join("") + "</select>",
           '<select class="x-select" data-cfapp style="width:auto"><option value="">全部应用</option>' + CICD_APPS.map(function (a) { return '<option value="' + E(a.id) + '"' + (String(a.id) === String(CICD_F.appId) ? " selected" : "") + ">" + E(a.name) + "</option>"; }).join("") + "</select>",
-          '<span class="x-frac" style="margin-left:auto">共 ' + num((data && data.total) != null ? data.total : items.length) + " 次运行</span>"
+          '<input class="x-input" type="search" data-cfsearch aria-label="搜索构建记录" placeholder="搜索运行、应用、流水线、分支或提交" value="' + E(CICD_F.query) + '" />',
+          '<span class="x-frac" style="margin-left:auto">' + visibleItems.length + " / " + items.length + " 条（当前筛选）</span>"
         ]);
-        var rows = items.map(function (r) {
+        var rows = visibleItems.map(function (r) {
           var active = ["queued", "running", "cancelling"].indexOf(String(r.status)) >= 0;
           return [mono("#" + r.id), E(appName(r.app_id)), E(pipelineName(r.pipeline_id)), stTag(r.status), code(r.branch || "—", 18),
             code(r.commit || "—", 10), code(r.image_tag || "—", 18), E(r.triggered_by || "—"), fmtMin(r.started_at || r.created_at),
@@ -2108,16 +2259,21 @@
             '<button class="x-btn" type="button" data-runl="' + E(r.id) + '">日志</button>' +
             (active ? '<button class="x-btn" type="button" data-runc="' + E(r.id) + '">取消</button>' : "") + "</span>"];
         });
-        var html = panelHTML("运行记录", filters + (items.length ? tbl(["运行", "应用", "流水线", "状态", "分支", "提交", "镜像标签", "触发人", "开始", "操作"], rows) : emptyHTML("暂无运行记录。")));
+        var html = panelHTML("运行记录", filters + (visibleItems.length ? tbl(["运行", "应用", "流水线", "状态", "分支", "提交", "镜像标签", "触发人", "开始", "操作"], rows) : emptyHTML(items.length ? "没有符合当前文本搜索的运行记录。" : "暂无运行记录。")));
         if (!p.paint(t, html)) return;
         bind(items);
-      }).catch(function (err) { p.error(t, err); });
     }
     p.retry = load;
     function bind(items) {
-      var st = p.box.querySelector("[data-cfst]"), ap = p.box.querySelector("[data-cfapp]");
+      var st = p.box.querySelector("[data-cfst]"), ap = p.box.querySelector("[data-cfapp]"), search = p.box.querySelector("[data-cfsearch]");
       if (st) st.onchange = function () { CICD_F.status = st.value; load(); };
       if (ap) ap.onchange = function () { CICD_F.appId = +ap.value; load(); };
+      if (search) search.oninput = function () {
+        CICD_F.query = search.value;
+        var cursor = search.selectionStart;
+        paint(null);
+        restoreSearchFocus(p.box, "[data-cfsearch]", cursor);
+      };
       [].slice.call(p.box.querySelectorAll("[data-rund]")).forEach(function (b) {
         b.onclick = function () { runDetailModal(b.getAttribute("data-rund")); };
       });
@@ -2294,6 +2450,86 @@
     load();
   }
 
+  /* 执行集群：只引用「集群管理」中已注册的集群（cluster_id），不再接收 kubeconfig。 */
+  var TARGET_NO_CLUSTER = "未注册集群，请先在集群管理接入";
+  function targetClusterOptions(clusters) {
+    return asArray(clusters, ["items", "clusters"]).filter(function (c) {
+      return c && /^\d+$/.test(String(c.id == null ? "" : c.id)) && Number(c.id) > 0;
+    }).map(function (c) {
+      return { v: String(c.id), t: String(c.name || ("#" + c.id)) + " (" + (c.env ? String(c.env) : "未设环境") + ")", env: String(c.env || "") };
+    });
+  }
+  function targetFormFields(options, existing) {
+    var available = options.length > 0;
+    var selected = existing && existing.cluster_id != null ? String(existing.cluster_id) : (available ? options[0].v : "");
+    var envOf = "";
+    options.forEach(function (o) { if (o.v === selected) envOf = o.env; });
+    var fields = [];
+    if (!existing) fields.push({ k: "name", label: "名称", required: true, placeholder: "ci-cluster" });
+    fields.push(
+      { k: "cluster_id", label: "集群", kind: "select", required: true, value: selected,
+        options: available ? options.map(function (o) { return { v: o.v, t: o.t }; }) : [{ v: "", t: TARGET_NO_CLUSTER }] },
+      { k: "env", label: "环境（由集群决定）", value: envOf, placeholder: "—" },
+      { k: "namespace", label: "Job 命名空间", value: existing && existing.namespace ? existing.namespace : "matrix-cicd" }
+    );
+    return fields;
+  }
+  function targetPayload(values, existing) {
+    var id = String(values.cluster_id == null ? "" : values.cluster_id).trim();
+    if (!/^\d+$/.test(id) || Number(id) < 1) throw new Error("请选择已注册集群");
+    var body = { cluster_id: Number(id), namespace: String(values.namespace || "").trim() || "matrix-cicd" };
+    if (!existing) {
+      var name = String(values.name || "").trim();
+      if (!name) throw new Error("请填写：名称");
+      body.name = name;
+    }
+    return body;
+  }
+  function targetRowCells(g) {
+    var cluster = g.legacy_kubeconfig
+      ? tag("旧版 kubeconfig", "x-orange")
+      : (g.cluster_name ? E(g.cluster_name) : (g.cluster_id != null ? E("#" + g.cluster_id) + " " + tag("集群不可读", "x-orange") : "—"));
+    var actions = (g.legacy_kubeconfig ? '<button class="x-btn" type="button" data-tglink="' + E(g.id) + '">关联集群</button>' : "") +
+      '<button class="x-btn" type="button" data-tgdel="' + E(g.id) + '">删除</button>';
+    return [E(g.name || "—"), cluster, E(g.env || "—"), code(g.namespace || "—", 20), fmtMin(g.created_at), '<span class="ops-nowrap">' + actions + "</span>"];
+  }
+  function bindTargetForm(form, options, available) {
+    if (!form) return;
+    var select = form.elements && form.elements.cluster_id;
+    var env = form.elements && form.elements.env;
+    if (env) { env.readOnly = true; env.setAttribute("aria-readonly", "true"); }
+    var submit = form.id ? document.querySelector('[form="' + form.id + '"]') : null;
+    if (!available) {
+      if (select) select.disabled = true;
+      if (submit) submit.disabled = true;
+      return;
+    }
+    if (select && env) select.onchange = function () {
+      env.value = "";
+      options.forEach(function (o) { if (o.v === String(select.value)) env.value = o.env; });
+    };
+  }
+  // targetModal 新建（existing 为空）或将旧版执行集群关联到已注册集群（PUT /cicd/targets/:id）。
+  function targetModal(done, existing) {
+    settle(GET("/clusters", { page_size: 500 }), null).then(function (res) {
+      var options = res.ok ? targetClusterOptions(res.value) : [];
+      var available = options.length > 0;
+      var hint = !res.ok ? E("集群列表读取失败：" + errMsg(res.error) + "。" + TARGET_NO_CLUSTER)
+        : !available ? E(TARGET_NO_CLUSTER)
+        : existing ? E("关联后将清除「" + (existing.name || "") + "」保存的旧版 kubeconfig，之后只能通过已注册集群访问，且不能改回 kubeconfig。")
+        : E("执行集群只引用集群管理中已注册的集群，凭据由集群管理统一保存；环境由所选集群决定。");
+      var form = formModal(existing ? "关联集群：" + (existing.name || "") : "接入执行集群", targetFormFields(options, existing),
+        existing ? "关联" : "接入", function (v, f, err) {
+          if (!available) { err.textContent = TARGET_NO_CLUSTER; err.hidden = false; return; }
+          var body;
+          try { body = targetPayload(v, existing); } catch (e) { err.textContent = e.message; err.hidden = false; return; }
+          var request = existing ? PUT("/cicd/targets/" + encodeURIComponent(existing.id), body) : POST("/cicd/targets", body);
+          write(request, existing ? "执行集群已关联" : "执行集群已接入").then(function (r) { if (r) { closeAll(); if (done) done(); } });
+        }, hint);
+      bindTargetForm(form, options, available);
+    });
+  }
+
   function cicdPipelines(el) {
     var routeParts = (location.hash || "").split("/");
     var detailID = routeParts[3] ? decodeURIComponent(routeParts[3].split("?")[0]) : "";
@@ -2419,16 +2655,13 @@
             E((pl.stages || []).length + " 阶段"), fmtMin(pl.updated_at),
             '<span class="ops-nowrap"><a class="x-btn" href="#/cicd/pipeline/' + encodeURIComponent(pl.id) + '">详情</a><button class="x-btn" type="button" data-pledit="' + E(pl.id) + '">编辑</button><button class="x-btn" type="button" data-plrun="' + E(pl.id) + '">运行</button><button class="x-btn" type="button" data-pldel="' + E(pl.id) + '">删除</button></span>'];
         });
-        var tgRows = CICD_TG.map(function (g) {
-          return [E(g.name || "—"), code(g.namespace || "—", 20), code(g.kubeconfig || "********", 14), fmtMin(g.created_at),
-            '<button class="x-btn" type="button" data-tgdel="' + E(g.id) + '">删除</button>'];
-        });
+        var tgRows = CICD_TG.map(targetRowCells);
         var jkRows = CICD_JK.map(function (j) {
           return [E(j.name || "—"), code(j.url || "—", 60), E(j.username || "—"), fmtMin(j.created_at), '<button class="x-btn" type="button" data-jkdel="' + E(j.id) + '">删除</button>'];
         });
         var html = panelHTML("流水线定义", (plRows.length ? tbl(["ID", "名称", "应用", "执行集群", "触发", "阶段", "更新时间", "操作"], plRows) : emptyHTML("暂无流水线。点击右上角「+ 新建流水线」。")),
           '<button class="x-btn" type="button" data-newpl2 style="margin-left:auto">+ 新建</button>') +
-          panelHTML("执行集群（runner target）", (tgRows.length ? tbl(["名称", "命名空间", "Kubeconfig", "创建时间", "操作"], tgRows) : emptyHTML("暂无执行集群。流水线构建需要至少一个执行集群。")),
+          panelHTML("执行集群（runner target）", (tgRows.length ? tbl(["名称", "集群", "环境", "命名空间", "创建时间", "操作"], tgRows) : emptyHTML("暂无执行集群。流水线构建需要至少一个执行集群。")),
             '<button class="x-btn" type="button" data-newtg style="margin-left:auto">+ 接入集群</button>') +
           panelHTML("Jenkins 服务器", (jkRows.length ? tbl(["名称", "地址", "用户名", "创建时间", "操作"], jkRows) : emptyHTML("暂无 Jenkins 接入。流水线的 jenkins 阶段需要它。")),
             '<button class="x-btn" type="button" data-newjk style="margin-left:auto">+ 接入 Jenkins</button>') +
@@ -2467,6 +2700,13 @@
           confirmDo("删除流水线", "确定删除流水线 #" + E(b.getAttribute("data-pldel")) + "？", "删除", function () {
             write(DEL("/cicd/pipelines/" + encodeURIComponent(b.getAttribute("data-pldel"))), "流水线已删除").then(function (r) { if (r) load(); });
           });
+        };
+      });
+      [].slice.call(p.box.querySelectorAll("[data-tglink]")).forEach(function (b) {
+        b.onclick = function () {
+          var id = b.getAttribute("data-tglink"), tg = null;
+          for (var i = 0; i < CICD_TG.length; i++) if (String(CICD_TG[i].id) === String(id)) tg = CICD_TG[i];
+          if (tg) targetModal(function () { cicdPipelines(el); }, tg);
         };
       });
       [].slice.call(p.box.querySelectorAll("[data-tgdel]")).forEach(function (b) {
@@ -2672,15 +2912,6 @@
       };
       renderStages();
     }
-    function targetModal(done) {
-      formModal("接入执行集群", [
-        { k: "name", label: "名称", required: true, placeholder: "ci-cluster" },
-        { k: "namespace", label: "Job 命名空间", value: "matrix-cicd" },
-        { k: "kubeconfig", label: "kubeconfig（服务端解析后加密存储）", kind: "textarea", rows: 8, required: true, placeholder: "apiVersion: v1\nkind: Config\n..." }
-      ], "接入", function (v) {
-        write(POST("/cicd/targets", { name: v.name, namespace: v.namespace, kubeconfig: v.kubeconfig }), "执行集群已接入").then(function (r) { if (r) { closeAll(); if (done) done(); } });
-      });
-    }
     function jenkinsModal(done) {
       formModal("接入 Jenkins", [
         { k: "name", label: "名称", required: true, placeholder: "jk" },
@@ -2773,18 +3004,25 @@
   /* ---------------------------------------------------------------- delivery 应用 */
 
   function renderDeliveryLive(el) {
-    var parts = (location.hash || "").split("/");
-    var seg = parts[2] || "";
-    var name = seg && seg !== "apps" ? decodeURIComponent(seg) : "";
-    if (name) return deliveryWorkspace(el, name, parts[3] ? decodeURIComponent(parts[3]) : "");
+    var parsed = parseDeliveryHash(location.hash || ""), name = parsed.appName;
+    if (name) return deliveryWorkspace(el, name, parsed.pane || "");
+    if (parsed.helm) return deliveryList(el, parsed.helm);
     return deliveryList(el);
   }
 
-  function deliveryList(el) {
-    var p = livePage(el, "应用", "CI/CD 应用列表与环境配置", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newapp>+ 新建应用</button>', "");
+  function deliveryList(el, helmEnv) {
+    var p = livePage(el, "应用", "CI/CD 应用列表与环境配置", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newapp>接入 Git 仓库</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { deliveryList(el); };
     el.querySelector("[data-newapp]").onclick = function () { appModal(function () { deliveryList(el); }); };
     var searchText = "", selectedEnv = "", applicationList = [];
+    if (helmEnv) {
+      var initialHelmEnv = helmEnv;
+      helmEnv = null;
+      history.replaceState(null, "", "#/delivery/apps");
+      if (p.active() && String(location.hash || "").split("?")[0] === "#/delivery/apps") {
+        appModal(function () { if (p.active()) deliveryList(el); }, null, { envs: [initialHelmEnv] });
+      }
+    }
     function load() {
       var t = p.newToken();
       appsLoad().then(function (list) {
@@ -2807,7 +3045,7 @@
           var href = "#/delivery/" + encodeURIComponent(a.name);
           return ['<a class="x-tlink" href="' + href + '">' + E(a.name) + "</a>", code(a.repo_url, 46), code(a.branch || "—", 18), code(a.image_repo, 34),
             E((a.envs || []).map(function (e) { return e.name; }).join(", ") || "—"), fmtMin(a.updated_at || a.created_at),
-            '<span class="ops-nowrap"><a class="x-btn" href="' + href + '">详情</a><button class="x-btn" type="button" data-appdel="' + E(a.id) + '">删除</button></span>'];
+            '<span class="ops-nowrap"><a class="x-btn" href="' + href + '">详情</a><button class="x-btn" type="button" data-appedit="' + E(a.id) + '">编辑</button><button class="x-btn" type="button" data-appdel="' + E(a.id) + '">删除</button></span>'];
         });
         var filters = barHTML([
           '<input class="x-input" type="search" data-app-search aria-label="搜索应用" placeholder="搜索应用、仓库或镜像仓库" value="' + E(searchText) + '" />',
@@ -2832,6 +3070,12 @@
           }
         };
         if (env) env.onchange = function () { selectedEnv = env.value; paint(null); };
+        [].slice.call(p.box.querySelectorAll("[data-appedit]")).forEach(function (button) {
+          button.onclick = function () {
+            var id = button.getAttribute("data-appedit"), app = applicationList.filter(function (item) { return String(item.id) === String(id); })[0];
+            if (app) appModal(function () { load(); }, app);
+          };
+        });
         [].slice.call(p.box.querySelectorAll("[data-appdel]")).forEach(function (b) {
           b.onclick = function () {
             confirmDo("删除应用", "确定删除应用？将级联删除其流水线、运行与发布记录。", "删除", function () {
@@ -2844,30 +3088,34 @@
     load();
   }
 
-  function appModal(done) {
-    formModal("新建应用", [
-      { k: "name", label: "名称（≤64）", required: true, placeholder: "web" },
-      { k: "repo_url", label: "代码仓库地址", required: true, placeholder: "https://gitlab.example.com/team/web.git" },
-      { k: "branch", label: "默认分支", value: "main" },
-      { k: "dockerfile", label: "Dockerfile 路径", value: "Dockerfile" },
-      { k: "context_dir", label: "构建上下文目录", value: "." },
-      { k: "image_repo", label: "镜像仓库地址", required: true, placeholder: "harbor.example.com/team/web" },
-      { k: "git_username", label: "Git 用户名" },
-      { k: "git_token", label: "Git Token", kind: "password" },
-      { k: "envs", label: "部署环境", kind: "appEnvs", required: true, value: [
-        { name: "test", target_id: 1, namespace: "web-test", deployment: "web", container: "app" }
-      ] }
-    ], "创建", function (v) {
-      write(POST("/cicd/applications", {
-        name: v.name, repo_url: v.repo_url, branch: v.branch, dockerfile: v.dockerfile, context_dir: v.context_dir,
-        image_repo: v.image_repo, git_username: v.git_username, git_token: v.git_token, envs: v.envs
-      }), "应用已创建").then(function (r) {
+  function appModal(done, app, initial) {
+    var editing = !!(app && app.id != null), source = assign({}, app || {}, initial || {});
+    var defaultEnvs = editing ? (app.envs || []) : [{ name: "test", target_id: 1, namespace: "web-test", deployment: "web", container: "app" }];
+    var envs = initial && initial.envs ? initial.envs : defaultEnvs;
+    var helmPrefill = !!(initial && initial.envs && initial.envs.some(function (env) { return env && env.helm && env.helm.chart; }));
+    var formHint = helmPrefill
+      ? "已预填 Helm Chart、仓库和版本；仍需补齐应用名、代码仓库、镜像仓库、执行集群、Namespace 和 Release。表单不会自动提交。"
+      : "每个环境填写 Deployment+容器，或 Helm Chart+Release；执行集群 ID 指向目标集群。Git Token 不会回显；编辑时留空或保留掩码不会替换现有 Token。";
+    formModal(editing ? "编辑 Git 仓库" : "接入 Git 仓库", [
+      { k: "name", label: "名称（≤64）", required: true, placeholder: "web", value: source.name || "" },
+      { k: "repo_url", label: "代码仓库地址", required: true, placeholder: "https://gitlab.example.com/team/web.git", value: source.repo_url || "" },
+      { k: "branch", label: "默认分支", value: source.branch || "main" },
+      { k: "dockerfile", label: "Dockerfile 路径", value: source.dockerfile || "Dockerfile" },
+      { k: "context_dir", label: "构建上下文目录", value: source.context_dir || "." },
+      { k: "image_repo", label: "镜像仓库地址", required: true, placeholder: "harbor.example.com/team/web", value: source.image_repo || "" },
+      { k: "git_username", label: "Git 用户名", value: source.git_username || "" },
+      { k: "git_token", label: "Git Token", kind: "password", value: "", placeholder: editing ? "留空或保持掩码以保留现有 Token" : "可选" },
+      { k: "envs", label: "部署环境", kind: "appEnvs", required: true, value: envs }
+    ], editing ? "保存" : "接入", function (v) {
+      var payload = applicationPayload(v);
+      var request = editing ? PUT("/cicd/applications/" + encodeURIComponent(app.id), payload) : POST("/cicd/applications", payload);
+      write(request, editing ? "应用已更新" : "应用已创建").then(function (r) {
         if (!r) return;
         closeAll();
-        if (r.webhook_secret) infoModal("Webhook 密钥（仅显示一次）", '<p class="x-desc">请立即配置到 Git 仓库 Webhook：</p>' + preBlock((r.webhook_url || ("/api/v1/cicd/webhooks/" + (r.id || ""))) + "\nSecret: " + r.webhook_secret));
+        if (!editing && r.webhook_secret) infoModal("Webhook 密钥（仅显示一次）", '<p class="x-desc">请立即配置到 Git 仓库 Webhook：</p>' + preBlock((r.webhook_url || ("/api/v1/cicd/webhooks/" + (r.id || ""))) + "\nSecret: " + r.webhook_secret));
         if (done) done();
       });
-    }, "每个环境填写 Deployment+容器，或 Helm Chart+Release；执行集群 ID 指向目标集群。");
+    }, formHint);
   }
 
   function deliveryDetail(el, name) {
@@ -3189,11 +3437,11 @@
 
   /* ---------------------------------------------------------------- release 发布单 */
 
-  var REL = { appId: 0, env: "" };
+  var REL = { appId: 0, env: "", query: "" };
   function renderReleaseLive(el) {
     var p = livePage(el, "发布单", "应用发布与回滚记录（按应用聚合）", '<button class="x-btn" type="button" data-refresh>刷新</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { renderReleaseLive(el); };
-    var APP = null, RELS = [];
+    var APP = null, RELS = [], releaseApps = [];
     function load() {
       var t = p.newToken();
       appsLoad().then(function (apps) {
@@ -3208,23 +3456,34 @@
     function fetchRels(t, apps) {
       return GET("/cicd/applications/" + encodeURIComponent(APP.id) + "/releases", REL.env ? { env: REL.env } : undefined).then(function (data) {
         RELS = Array.isArray(data) ? data : asArray(data, ["items", "releases"]);
+        releaseApps = apps;
+        paintRels(t, apps);
+      });
+    }
+    function paintRels(t, apps) {
+        var visibleReleases = filterReleaseRecords(RELS, REL.query);
         var appSel = '<select class="x-select" data-relapp style="width:auto">' + apps.map(function (a) { return '<option value="' + E(a.id) + '"' + (String(a.id) === String(APP.id) ? " selected" : "") + ">" + E(a.name) + "</option>"; }).join("") + "</select>";
         var envSel = '<select class="x-select" data-relenvpick style="width:auto"><option value="">全部环境</option>' + (APP.envs || []).map(function (e) { return '<option value="' + E(e.name) + '"' + (e.name === REL.env ? " selected" : "") + ">" + E(e.name) + "</option>"; }).join("") + "</select>";
-        var rows = RELS.map(function (r) {
+        var rows = visibleReleases.map(function (r) {
           return [mono("#" + r.id), E(r.env), tag(r.kind || "deploy", r.kind === "rollback" ? "x-orange" : "x-blue"), code(r.image, 42), code(r.previous_image, 30),
             stTag(r.status), E(r.created_by || "—"), fmtMin(r.created_at), fmtMin(r.finished_at),
             '<button class="x-btn" type="button" data-rrb="' + E(r.id) + '" data-rrb2="' + E(r.env) + '">回滚到此</button>'];
         });
         var html = banner("发布单页按应用聚合展示后端发布记录（POST /cicd/applications/:id/deploy|rollback）；后端暂未提供发布单聚合实体。") +
-          panelHTML("发布记录", barHTML([appSel, envSel, '<span class="x-frac" style="margin-left:auto">共 ' + RELS.length + " 条</span>"]) + (RELS.length ? tbl(["ID", "环境", "类型", "镜像", "上一镜像", "状态", "操作人", "创建", "完成", "操作"], rows) : emptyHTML("该应用暂无发布记录")));
+          panelHTML("发布记录", barHTML([appSel, envSel, '<input class="x-input" type="search" data-relsearch aria-label="搜索发布记录" placeholder="搜索发布、环境、镜像、状态或操作人" value="' + E(REL.query) + '" />', '<span class="x-frac" style="margin-left:auto">' + visibleReleases.length + " / " + RELS.length + " 条</span>"]) + (visibleReleases.length ? tbl(["ID", "环境", "类型", "镜像", "上一镜像", "状态", "操作人", "创建", "完成", "操作"], rows) : emptyHTML(RELS.length ? "没有符合当前文本搜索的发布记录。" : "该应用暂无发布记录")));
         if (!p.paint(t, html)) return;
         bind(apps);
-      });
     }
     function bind(apps) {
-      var as = p.box.querySelector("[data-relapp]"), es = p.box.querySelector("[data-relenvpick]");
+      var as = p.box.querySelector("[data-relapp]"), es = p.box.querySelector("[data-relenvpick]"), search = p.box.querySelector("[data-relsearch]");
       if (as) as.onchange = function () { REL.appId = +as.value; REL.env = ""; renderReleaseLive(el); };
       if (es) es.onchange = function () { REL.env = es.value; renderReleaseLive(el); };
+      if (search) search.oninput = function () {
+        REL.query = search.value;
+        var cursor = search.selectionStart;
+        paintRels(null, releaseApps);
+        restoreSearchFocus(p.box, "[data-relsearch]", cursor);
+      };
       [].slice.call(p.box.querySelectorAll("[data-rrb]")).forEach(function (b) {
         b.onclick = function () {
           var env = b.getAttribute("data-rrb2"), rel = b.getAttribute("data-rrb");
@@ -3247,6 +3506,7 @@
   function mwTypeLabel(t) { for (var i = 0; i < MW_TYPES.length; i++) if (MW_TYPES[i].v === t) return MW_TYPES[i].t; return t; }
   function mwIsMQ(t) { return t === "kafka" || t === "rabbitmq" || t === "rocketmq"; }
   function mwIsDB(t) { return t === "mysql" || t === "postgres"; }
+  function canManageMiddleware() { return !!(window.XS && typeof window.XS.can === "function" && window.XS.can("middleware:manage")); }
 
   function renderMiddlewareLive(el) {
     var parts = (location.hash || "").split("/");
@@ -3254,18 +3514,32 @@
     if (!MW_TYPES.some(function (x) { return x.v === tab; })) tab = "";
     var deepId = parts[3] ? decodeURIComponent(parts[3]) : "";
     var p = livePage(el, "中间件", "Kafka / RabbitMQ / RocketMQ / MySQL / PostgreSQL / Redis 实例", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newmw>+ 新建实例</button>', "");
+    var manage = canManageMiddleware(), newButton = el.querySelector("[data-newmw]");
     el.querySelector("[data-refresh]").onclick = function () { renderMiddlewareLive(el); };
-    el.querySelector("[data-newmw]").onclick = function () { mwModal(function () { renderMiddlewareLive(el); }); };
+    newButton.disabled = !manage;
+    newButton.title = manage ? "" : "需要 middleware:manage 权限";
+    newButton.onclick = function () { if (manage) mwModal(function () { renderMiddlewareLive(el); }); };
+    var searchText = "", serverSearchText = "", middlewareItems = [], searchTimer = null;
     function load() {
-      var t = p.newToken();
-      var qy = { page: 1, page_size: 100 };
-      if (tab) qy.type = tab;
-      GET("/middleware/instances", qy).then(function (data) {
-        var items = Array.isArray(data) ? data : asArray(data, ["items"]);
+      var t = p.newToken(), requestedSearch = searchText.trim();
+      GET("/middleware/instances", middlewareListQuery(tab, requestedSearch)).then(function (data) {
+        if (!p.active(t)) return;
+        middlewareItems = Array.isArray(data) ? data : asArray(data, ["items"]);
+        serverSearchText = requestedSearch;
+        var active = document.activeElement, typing = !!(active && active.hasAttribute && active.hasAttribute("data-mwsearch") && p.box.contains(active));
+        var cursor = typing ? active.selectionStart : null;
+        paint(t, false);
+        if (typing) restoreSearchFocus(p.box, "[data-mwsearch]", cursor);
+      }).catch(function (err) { if (p.active(t)) p.error(t, err); });
+    }
+    function paint(token, searching) {
+        var authoritative = !searching && serverSearchText === searchText.trim();
+        var items = authoritative ? middlewareItems : filterMiddlewareInstances(middlewareItems, searchText);
         var typeFilter = '<div class="x-tbar"><label><span>类型</span><select class="x-select" data-mwtype>' +
           '<option value=""' + (tab ? "" : " selected") + '>全部</option>' +
           MW_TYPES.map(function (x) { return '<option value="' + x.v + '"' + (tab === x.v ? " selected" : "") + '>' + x.t + "</option>"; }).join("") +
-          "</select></label></div>";
+          '</select></label><input class="x-input" type="search" data-mwsearch aria-label="搜索中间件实例" placeholder="搜索名称、类型、环境或地址" value="' + E(searchText) + '" />' +
+          '<span class="x-frac" style="margin-left:auto">' + (searching ? "正在从服务端搜索…   " : "") + items.length + (authoritative ? " 个实例" : " 个当前页匹配") + "</span></div>";
         var rows = items.map(function (it) {
           var types = it.type, isMQ = mwIsMQ(types), isDB = mwIsDB(types), isRedis = types === "redis";
           return [E(it.name || "—"), tag(mwTypeLabel(types), "x-blue"), E(it.env || "*"), code((it.endpoints || []).join(", "), 60),
@@ -3274,17 +3548,29 @@
             (isMQ ? '<button class="x-btn" type="button" data-mwov="' + E(it.id) + '">概览</button>' : "") +
             (isDB || isRedis ? '<button class="x-btn" type="button" data-mwcon="' + E(it.id) + '">控制台</button>' : "") +
             '<button class="x-btn" type="button" data-mwdet="' + E(it.id) + '">详情</button>' +
-            '<button class="x-btn" type="button" data-mwdel="' + E(it.id) + '">删除</button></span>'];
+            '<button class="x-btn" type="button" data-mwedit="' + E(it.id) + '"' + (manage ? "" : " disabled") + '>编辑</button>' +
+            '<button class="x-btn" type="button" data-mwdel="' + E(it.id) + '"' + (manage ? "" : " disabled") + '>删除</button></span>'];
         });
-        var html = panelHTML("实例", typeFilter + (items.length ? tbl(["名称", "类型", "环境", "地址", "用户", "库/主库", "操作"], rows) : emptyHTML("暂无中间件实例。点击右上角「+ 新建实例」接入 Kafka / RabbitMQ / RocketMQ / MySQL / PostgreSQL / Redis。")));
-        if (!p.paint(t, html)) return;
+        var emptyMessage = searching && searchText.trim()
+          ? "正在从服务端搜索全部实例，请稍候…"
+          : (searchText.trim() ? "服务端未返回匹配实例。" : "暂无中间件实例。点击右上角「+ 新建实例」接入 Kafka / RabbitMQ / RocketMQ / MySQL / PostgreSQL / Redis。");
+        var html = panelHTML("实例", typeFilter + (items.length ? tbl(["名称", "类型", "环境", "地址", "用户", "库/主库", "操作"], rows) : emptyHTML(emptyMessage)));
+        if (!p.paint(token, html)) return;
         bind(items);
-      }).catch(function (err) { p.error(t, err); });
     }
     p.retry = load;
     function byId(items, id) { for (var i = 0; i < items.length; i++) if (String(items[i].id) === String(id)) return items[i]; return null; }
     function bind(items) {
-      var typeSelect = p.box.querySelector("[data-mwtype]");
+      var typeSelect = p.box.querySelector("[data-mwtype]"), search = p.box.querySelector("[data-mwsearch]");
+      if (search) search.oninput = function () {
+        searchText = search.value;
+        var cursor = search.selectionStart;
+        paint(null, true);
+        var next = p.box.querySelector("[data-mwsearch]");
+        if (next) { next.focus(); try { next.setSelectionRange(cursor, cursor); } catch (e) {} }
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(load, 150);
+      };
       if (typeSelect) typeSelect.onchange = function () {
         var value = typeSelect.value;
         try { window.navGo(value ? "#/middleware/" + value : "#/middleware"); }
@@ -3309,8 +3595,16 @@
       [].slice.call(p.box.querySelectorAll("[data-mwdet]")).forEach(function (b) {
         b.onclick = function () { var it = byId(items, b.getAttribute("data-mwdet")); if (it) infoModal("实例详情   " + (it.name || it.id), preBlock(it)); };
       });
+      [].slice.call(p.box.querySelectorAll("[data-mwedit]")).forEach(function (b) {
+        b.onclick = function () {
+          if (!manage) { toast("权限不足：需要 middleware:manage"); return; }
+          var it = byId(items, b.getAttribute("data-mwedit"));
+          if (it) mwModal(function () { load(); }, it);
+        };
+      });
       [].slice.call(p.box.querySelectorAll("[data-mwdel]")).forEach(function (b) {
         b.onclick = function () {
+          if (!manage) { toast("权限不足：需要 middleware:manage"); return; }
           var it = byId(items, b.getAttribute("data-mwdel"));
           confirmDo("删除实例", "确定删除中间件实例 <b>" + E(it ? it.name : b.getAttribute("data-mwdel")) + "</b>？", "删除", function () {
             write(DEL("/middleware/instances/" + encodeURIComponent(b.getAttribute("data-mwdel"))), "实例已删除").then(function (r) { if (r) renderMiddlewareLive(el); });
@@ -3330,26 +3624,49 @@
         infoModal("MQ 概览", sum + preBlock(data));
       }).catch(function (err) { toast(errMsg(err)); });
     }
-    function mwModal(done) {
-      formModal("新建中间件实例", [
-        { k: "name", label: "名称", required: true, placeholder: "kafka-prod-01" },
-        { k: "type", label: "类型", kind: "select", required: true, options: MW_TYPES.map(function (x) { return { v: x.v, t: x.t }; }) },
-        { k: "env", label: "环境", placeholder: "prod / test / dev" },
-        { k: "endpoints", label: "地址（每行一个；Kafka bootstrap / RabbitMQ 管理地址 / RocketMQ dashboard / DB host:port / Redis）", kind: "textarea", rows: 3, required: true, placeholder: "10.0.0.1:9092" },
-        { k: "username", label: "用户名" },
-        { k: "password", label: "密码", kind: "password" },
-        { k: "tls", label: "启用 TLS", kind: "checkbox", value: false, hint: "TLS" },
-        { k: "tls_skip_verify", label: "跳过 TLS 校验", kind: "checkbox", value: false, hint: "跳过校验" },
-        { k: "options", label: "连接选项（DB: database；Redis: db/master_name；Postgres: sslmode）", kind: "structured", structuredKind: "keyValue", value: {}, options: { typed: false } },
-        { k: "description", label: "描述", kind: "textarea", rows: 2 }
-      ], "创建", function (v) {
-        var endpoints = String(v.endpoints).split(/[\n,]+/).map(function (s) { return s.trim(); }).filter(Boolean);
-        var body = {
-          name: v.name, type: v.type, env: v.env, endpoints: endpoints, description: v.description,
-          auth: { username: v.username, password: v.password, tls: v.tls, tls_skip_verify: v.tls_skip_verify }, options: v.options || {}
-        };
-        write(POST("/middleware/instances", body), "实例已创建").then(function (r) { if (r) { closeAll(); if (done) done(); } });
-      }, "密码会加密存储；接口只返回掩码。");
+    function mwModal(done, existing) {
+      if (!canManageMiddleware()) { toast("权限不足：需要 middleware:manage"); return null; }
+      var editing = !!(existing && existing.id != null), auth = existing && existing.auth || {};
+      var form = formModal(editing ? "编辑中间件实例" : "新建中间件实例", [
+        { k: "name", label: "名称", required: true, placeholder: "kafka-prod-01", value: existing && existing.name || "" },
+        { k: "type", label: "类型", kind: "select", required: true, value: existing && existing.type || "kafka", options: MW_TYPES.map(function (x) { return { v: x.v, t: x.t }; }) },
+        { k: "env", label: "环境", placeholder: "prod / test / dev", value: existing && existing.env || "" },
+        { k: "endpoints", label: "地址", kind: "textarea", rows: 3, required: true, value: existing && (existing.endpoints || []).join("\n") || "", placeholder: middlewareTypeDefaults(existing && existing.type || "kafka", {}).endpointPlaceholder },
+        { kind: "details", label: "高级设置", fields: [
+          { k: "username", label: "用户名", value: auth.username || "" },
+          { k: "password", label: "密码", kind: "password", value: "", placeholder: editing ? "已配置时留空保留原密码" : "" },
+          { k: "tls", label: "启用 TLS", kind: "checkbox", value: !!auth.tls, hint: "TLS" },
+          { k: "tls_skip_verify", label: "跳过 TLS 校验", kind: "checkbox", value: !!auth.tls_skip_verify, hint: "跳过校验（不建议）" },
+          { k: "sasl_mechanism", label: "Kafka SASL 机制", kind: "select", value: auth.sasl_mechanism || "", options: [
+            { v: "", t: "none" }, { v: "PLAIN", t: "PLAIN" }, { v: "SCRAM-SHA-256", t: "SCRAM-SHA-256" }, { v: "SCRAM-SHA-512", t: "SCRAM-SHA-512" }
+          ] },
+          { k: "options", label: "连接选项（DB: database；Redis: db/master_name；Postgres: sslmode）", kind: "structured", structuredKind: "keyValue", value: existing && existing.options || {}, options: { typed: false } },
+          { k: "description", label: "描述", kind: "textarea", rows: 2, value: existing && existing.description || "" }
+        ] }
+      ], editing ? "保存" : "创建", function (v) {
+        var body = middlewareInstancePayload(v);
+        var request = editing
+          ? PUT("/middleware/instances/" + encodeURIComponent(existing.id), body)
+          : POST("/middleware/instances", body);
+        write(request, editing ? "实例已保存" : "实例已创建").then(function (r) {
+          if (r && !r.__approval) { closeAll(); if (done) done(); }
+        });
+      }, editing
+        ? "密码永不回显；留空会保留原密码。其他连接字段会按当前表单保存。"
+        : "基本信息仅包含名称、类型、环境和地址。高级设置默认折叠；密码会加密存储且不回显。");
+      if (!form) return null;
+      var type = form.elements.type, endpoints = form.elements.endpoints;
+      function updateTypeHints() {
+        var defaults = middlewareTypeDefaults(type && type.value, {
+          endpoints: endpoints && endpoints.value,
+          tls: form.elements.tls && form.elements.tls.checked,
+          tls_skip_verify: form.elements.tls_skip_verify && form.elements.tls_skip_verify.checked
+        });
+        if (endpoints && !String(endpoints.value || "").trim()) endpoints.placeholder = defaults.endpointPlaceholder;
+      }
+      if (type) type.onchange = updateTypeHints;
+      updateTypeHints();
+      return form;
     }
     load();
   }
@@ -4807,7 +5124,7 @@
   }
   window.XSLiveOpsAutomation = renderAutomationLive;
   window.XSLiveOpsClusterConfig = renderClusterConfig;
-  window.XSLiveOpsCICD = { argoConnectionsHTML: argoConnectionsHTML, bindArgoConnections: bindArgoConnections };
+  window.XSLiveOpsCICD = { argoConnectionsHTML: argoConnectionsHTML, bindArgoConnections: bindArgoConnections, targetModal: targetModal };
   window.XSLiveOpsRules = obsRules;
   window.XSLiveOpsLogs = renderLogsLive;
   window.XSLiveOps = {
@@ -4830,10 +5147,17 @@
       legacyDatasourceCandidate: legacyDatasourceCandidate, hasDatasource: hasDatasource, integrationCandidates: integrationCandidates,
       sqlRisk: sqlRisk, redisRisk: redisRisk, cellHTML: cellHTML,
       parseJenkinsParameters: parseJenkinsParameters, buildPipelineStages: buildPipelineStages, pipelineRunStages: pipelineRunStages,
+      promTemplates: PROM_TEMPLATES, promTemplateSelection: promTemplateSelection, parseDeliveryHash: parseDeliveryHash,
+      appEnvRowHTML: appEnvRowHTML, normalizeAppEnvValues: normalizeAppEnvValues,
+      applicationPayload: applicationPayload, isMaskedSecret: isMaskedSecret, middlewareTypeDefaults: middlewareTypeDefaults,
+      middlewareListQuery: middlewareListQuery, middlewareInstancePayload: middlewareInstancePayload,
+      filterMiddlewareInstances: filterMiddlewareInstances, filterReleaseRecords: filterReleaseRecords, filterBuildRecords: filterBuildRecords,
       systemConfigSchema: systemConfigSchema, systemConfigPanels: systemConfigPanels,
       systemConfigPanelResult: systemConfigPanelResult,
       toISO: toISO, dtLocal: dtLocal, memberList: memberList,
       stTag: stTag, sevTag: sevTag, fieldHTML: fieldHTML,
+      targetClusterOptions: targetClusterOptions, targetFormFields: targetFormFields, targetPayload: targetPayload,
+      targetRowCells: targetRowCells, targetModal: targetModal,
       routes: ROUTE_KEYS, renderers: RENDERERS
     }
   };

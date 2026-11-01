@@ -21,9 +21,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
+	"k8s.io/client-go/rest"
 
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/ai"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/approval"
@@ -72,7 +74,49 @@ type Deps struct {
 	Metrics prometheus.Registerer
 	// Redis is the shared cache/lock client; nil when redis.addr is not configured.
 	Redis *redis.Client
+
+	// Clusters is set by the cluster module during Register. Other modules must
+	// read it lazily (at request or job time), never during their own Register.
+	Clusters ClusterAccess
+	// ClusterRenameHooks run inside the cluster rename transaction, so stored
+	// references to a cluster name stay consistent with the registry.
+	ClusterRenameHooks []ClusterRenameHook
 }
+
+// ConnectMode values for registered clusters.
+const (
+	ClusterConnectKubeconfig = "kubeconfig"
+	ClusterConnectAgent      = "agent"
+)
+
+// ClusterRef identifies a registered cluster. Name may change; ID never does.
+type ClusterRef struct {
+	ID          int64
+	Name        string
+	Env         string
+	ConnectMode string
+}
+
+// ErrClusterNotFound, ErrClusterOffline and ErrNoKubeconfig are returned by ClusterAccess.
+var (
+	ErrClusterNotFound = fmt.Errorf("cluster not found")
+	ErrClusterOffline  = fmt.Errorf("cluster agent is not connected")
+	ErrNoKubeconfig    = fmt.Errorf("cluster has no stored kubeconfig")
+)
+
+// ClusterAccess lets modules reach registered clusters without handling stored
+// credentials. Callers enforce their own RBAC and environment checks.
+type ClusterAccess interface {
+	Cluster(ctx context.Context, id int64) (ClusterRef, error)
+	// RESTConfig returns a fresh copy the caller may mutate. For agent clusters it
+	// points at the tunnel; it returns ErrClusterOffline when no agent is connected.
+	RESTConfig(ctx context.Context, id int64) (*rest.Config, error)
+	// Kubeconfig returns stored kubeconfig bytes, or ErrNoKubeconfig for agent clusters.
+	Kubeconfig(ctx context.Context, id int64) ([]byte, error)
+}
+
+// ClusterRenameHook updates a module's stored references to a renamed cluster.
+type ClusterRenameHook func(ctx context.Context, tx pgx.Tx, id int64, oldName, newName string) error
 
 // HostDiagnosticProvider maps Kubernetes node addresses to enrolled agents and
 // returns their latest bounded telemetry. Implementations must not run commands.

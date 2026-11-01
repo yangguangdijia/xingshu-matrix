@@ -404,8 +404,84 @@
 
   function approvalScopeDefault(canReadAll) { return canReadAll ? "all" : "todo"; }
 
+  function overviewClusterFromState(state, clusters) {
+    if (!state || state.mode === "all" || state.mode === "unselected" || (state.kind && state.kind !== "cluster")) return null;
+    var embedded = state.cluster || {};
+    var id = embedded.id != null ? embedded.id : (state.cluster_id != null ? state.cluster_id : state.clusterId);
+    if (id == null || String(id) === "") return null;
+    for (var i = 0; i < (clusters || []).length; i++) {
+      if (String((clusters[i] || {}).id) === String(id)) return clusters[i];
+    }
+    return null;
+  }
+
+  function prometheusValues(res) {
+    var result = res && res.data && Array.isArray(res.data.result) ? res.data.result : [];
+    if (!result.length) return [];
+    var row = result[0] || {};
+    var values = Array.isArray(row.values) ? row.values : (Array.isArray(row.value) ? [row.value] : []);
+    return values.map(function (sample) {
+      var time = Number(sample && sample[0]);
+      var rawValue = sample && sample[1];
+      var value = rawValue == null || rawValue === "" ? NaN : Number(rawValue);
+      return [time, isFinite(value) ? value : null];
+    }).filter(function (sample) { return isFinite(sample[0]); });
+  }
+
+  function prometheusLatest(res) {
+    var values = prometheusValues(res);
+    for (var i = values.length - 1; i >= 0; i--) {
+      if (values[i][1] != null) return values[i][1];
+    }
+    return null;
+  }
+
+  function nodeUsagePercent(node, key) {
+    var rawValue = node && node.usage ? node.usage[key] : null;
+    var value = rawValue == null || rawValue === "" ? NaN : Number(rawValue);
+    return isFinite(value) ? value : null;
+  }
+
+  function topNodesByCpu(nodes, limit) {
+    return (nodes || []).map(function (node, index) {
+      return { node: node, index: index, cpu: nodeUsagePercent(node, "cpu_percent") };
+    }).sort(function (a, b) {
+      if (a.cpu == null && b.cpu == null) return a.index - b.index;
+      if (a.cpu == null) return 1;
+      if (b.cpu == null) return -1;
+      return b.cpu - a.cpu || a.index - b.index;
+    }).slice(0, limit == null ? 5 : limit).map(function (item) { return item.node; });
+  }
+
+  function podCountsByNode(pods) {
+    var counts = Object.create(null);
+    (pods || []).forEach(function (pod) {
+      var node = pod && pod.node == null ? "" : String(pod.node);
+      if (node) counts[node] = (counts[node] || 0) + 1;
+    });
+    return counts;
+  }
+
+  function listIsIncomplete(data, items) {
+    var total = data && typeof data.total === "number" && isFinite(data.total) ? data.total : null;
+    return !!(data && data.truncated === true) || (total != null && total > (items || []).length);
+  }
+
+  function countLabel(count, available, incomplete) {
+    if (!available) return "—";
+    return String(Math.max(0, Number(count) || 0)) + (incomplete ? "+" : "");
+  }
+
+  function alertIdOf(alert) {
+    if (!alert) return "";
+    if (alert.id != null && String(alert.id) !== "") return String(alert.id);
+    return String(alert.fingerprint || alert.key || "");
+  }
+
   var PURE = {
     esc: escLocal,
+    clusterEditPayload: clusterEditPayload,
+    clusterAgentStatus: clusterAgentStatus,
     parseHash: parseHash,
     clusterResourceHash: clusterResourceHash,
     networkResourcePlan: networkResourcePlan,
@@ -435,6 +511,15 @@
     sanitizeAIDraft: sanitizeAIDraft,
     envMatchLocal: envMatchLocal,
     approvalScopeDefault: approvalScopeDefault,
+    overviewClusterFromState: overviewClusterFromState,
+    prometheusValues: prometheusValues,
+    prometheusLatest: prometheusLatest,
+    nodeUsagePercent: nodeUsagePercent,
+    topNodesByCpu: topNodesByCpu,
+    podCountsByNode: podCountsByNode,
+    listIsIncomplete: listIsIncomplete,
+    countLabel: countLabel,
+    alertIdOf: alertIdOf,
     prettyJSON: prettyJSON
   };
 
@@ -838,10 +923,10 @@
   }
 
   // 统一请求：返回 data；401 -> 回登录；202 审批 -> 抛 XS ApiError（阻止渲染）
-  function apiGet(path, query) {
+  function apiGet(path, query, opts) {
     var x = xs();
     if (!x) return Promise.reject(new Error("xs-api.js 未加载，无法访问后端"));
-    return x.get(path, query);
+    return x.get(path, query, opts);
   }
   function apiPost(path, body) {
     var x = xs();
@@ -1150,134 +1235,311 @@
   // 数据全部取自后端；取不到的区块保留完整卡片与操作入口，只标注"未接入"。
   function renderSreLive(el) {
     var seq = bump();
-    mount(el, shell("总览", "集群容量、节点负载、变更与告警", refreshButton("刷新")) + loadingPanel("正在加载总览…"));
+    var context = window.XSClusterContext;
+    var contextSnapshot = null;
+    try {
+      contextSnapshot = context && typeof context.get === "function" ? context.get() :
+        context && typeof context.snapshot === "function" ? context.snapshot() :
+        context && typeof context.current === "function" ? context.current() : null;
+    } catch (err) {
+      console.error("[xs-live-core] cluster context", err);
+    }
+    function isCurrent() {
+      return alive(seq, el) && (!context || typeof context.isCurrent !== "function" || context.isCurrent(contextSnapshot));
+    }
+    mount(el, shell("总览", "当前集群容量、节点负载、变更与告警", "") + loadingPanel("正在加载总览…"));
     Promise.all([
-      wrap(apiGet("/clusters", { page_size: 200 }).then(function (d) { window.XS_CLUSTERS = itemsOf(d); return d; })),
-      wrap(apiGet("/hosts", { page_size: 200 })),
-      wrap((function () {
-        var state = window.XSClusterContext && typeof window.XSClusterContext.snapshot === "function" ? window.XSClusterContext.snapshot() : null;
-        var cluster = state && state.cluster, id = cluster && cluster.id != null ? cluster.id : state && state.cluster_id;
-        return id != null ? apiGet("/observability/alerts", { page_size: 200, status: "firing", cluster_id: id }) : Promise.reject(new Error("请选择目标集群以读取告警"));
-      })()),
-      wrap(apiGet("/platform/env")),
+      wrap(apiGet("/clusters", { page_size: 200 }).then(function (data) {
+        if (isCurrent()) window.XS_CLUSTERS = itemsOf(data);
+        return data;
+      })),
       wrap(apiGet("/platform/notices"))
-    ]).then(function (rs) {
-      if (!alive(seq, el)) return;
-      if (rs.some(function (r) { return r.err && isAuthErr(r.err); })) { kickLogin(); return; }
-      var clusters = rs[0].ok ? itemsOf(rs[0].data) : [];
-      var hosts = rs[1].ok ? itemsOf(rs[1].data) : [];
-      var alerts = rs[2].ok ? itemsOf(rs[2].data) : [];
-      var envInfo = rs[3].ok ? (rs[3].data || {}) : {};
-      var notices = rs[4].ok ? itemsOf(rs[4].data) : [];
-      var metricsOK = !!(envInfo && envInfo.metrics_available) || (envInfo && envInfo.cpu ? false : false);
+    ]).then(function (initial) {
+      if (!isCurrent()) return;
+      var clusterResult = initial[0], noticeResult = initial[1];
+      if (!clusterResult.ok) {
+        if (isAuthErr(clusterResult.err)) return kickLogin();
+        mount(el, shell("总览", "当前集群容量、节点负载、变更与告警", "") + errorPanel(clusterResult.err));
+        return;
+      }
+      var clusters = itemsOf(clusterResult.data);
+      var cluster = overviewClusterFromState(contextSnapshot, clusters);
+      var scopedRequests = cluster ? [
+        wrap(apiGet("/clusters/" + cluster.id + "/nodes", null, { scope: "cluster" })),
+        wrap(apiGet("/clusters/" + cluster.id + "/workloads/pods", { page_size: 200 }, { scope: "cluster" })),
+        wrap(apiGet("/observability/alerts", { page_size: 200, status: "firing", cluster_id: cluster.id }, { scope: "cluster" }))
+      ] : [Promise.resolve(null), Promise.resolve(null), Promise.resolve(null)];
 
-      // 逐集群取节点与 Pod 总数（集群不多，并发即可）
-      var perCluster = clusters.map(function (c) {
-        return Promise.all([
-          wrap(apiGet("/clusters/" + c.id + "/nodes")),
-          wrap(apiGet("/clusters/" + c.id + "/workloads/pods", { page_size: 1 }))
-        ]).then(function (r2) { return { c: c, nodes: r2[0], pods: r2[1] }; });
-      });
-      Promise.all(perCluster).then(function (list) {
-        if (!alive(seq, el)) return;
-        var nodesAll = [], podsRun = 0, podsTotal = 0, podsKnown = false;
-        list.forEach(function (x) {
-          if (x.nodes.ok) itemsOf(x.nodes.data).forEach(function (n) { nodesAll.push({ node: n, cluster: x.c }); });
-          if (x.pods.ok) { podsKnown = true; var d = x.pods.data || {}; podsTotal += (d.total || 0); }
-        });
-        var ready = nodesAll.filter(function (x) { return x.node.ready; }).length;
+      Promise.all(scopedRequests).then(function (scoped) {
+        if (!isCurrent()) return;
+        var nodesResult = scoped[0], podsResult = scoped[1], alertsResult = scoped[2];
+        if ([nodesResult, podsResult, alertsResult].some(function (result) {
+          return result && result.err && isAuthErr(result.err);
+        })) return kickLogin();
+        var nodes = nodesResult && nodesResult.ok ? itemsOf(nodesResult.data) : [];
+        var pods = podsResult && podsResult.ok ? itemsOf(podsResult.data) : [];
+        var alerts = alertsResult && alertsResult.ok ? itemsOf(alertsResult.data) : [];
+        var notices = noticeResult.ok ? itemsOf(noticeResult.data) : [];
+        var ready = nodes.filter(function (node) { return !!node.ready; }).length;
+        var podsIncomplete = !!(podsResult && podsResult.ok && listIsIncomplete(podsResult.data, pods));
+        var podsByNode = podCountsByNode(pods);
+        var podsTotal = podsResult && podsResult.ok ? countLabel(pods.length, true, podsIncomplete) : "--";
+        var clusterLabel = cluster ? (cluster.name || "#" + cluster.id) : "未选择当前集群";
 
-        var kpi = function (label, value, sub, go) {
-          return '<div class="x-card x-kpi x-go" data-go="' + go + '" tabindex="0" role="link" aria-label="' + gEsc(label + " " + value) + '">' +
-            "<p>" + gEsc(label) + "</p><strong>" + gEsc(value) + "</strong>" +
-            '<span class="x-frac">' + gEsc(sub) + "</span></div>";
-        };
-        var html = shell("总览", "集群容量、节点负载、变更与告警", refreshButton("刷新"));
+        function kpi(label, value, sub, go, metric) {
+          return '<div class="x-card x-kpi x-go" data-go="' + gEsc(go) + '"' +
+            (metric ? ' data-sre-metric="' + gEsc(metric) + '"' : "") +
+            ' tabindex="0" role="link" aria-label="' + gEsc(label + " " + value) + '">' +
+            '<p>' + gEsc(label) + '</p><strong>' + gEsc(value) + '</strong>' +
+            '<span class="x-frac">' + gEsc(sub) + '</span></div>';
+        }
+
+        var nodesSub = !cluster ? "请选择当前集群" : !nodesResult.ok ? "加载失败：" + errText(nodesResult.err) : clusterLabel;
+        var podsSub = !cluster ? "请选择当前集群" : !podsResult.ok ? "加载失败：" + errText(podsResult.err) :
+          clusterLabel + (podsIncomplete ? " · Pod 清单不完整" : "");
+        var metricSub = cluster ? "节点物理容量口径 · 等待 Prometheus 返回" : "请选择当前集群";
+        var html = shell("总览", "当前集群容量、节点负载、变更与告警", "");
         html += '<div class="x-cards x-cards5">' +
-          kpi("集群数", String(clusters.length), clusters.length ? clusters.map(function (c) { return c.env || "—"; }).join("   ") : "尚未接入", "#/cluster/list") +
-          kpi("节点 Ready / 总数", nodesAll.length ? ready + " / " + nodesAll.length : "—", nodesAll.length ? (nodesAll.length - ready) + " 个 NotReady" : "未接入集群", "#/cluster/nodes") +
-          kpi("Pod 运行 / 总数", podsKnown ? String(podsTotal) : "—", podsKnown ? "已统计 Pod 清单" : "未接入", "#/cluster/workloads") +
-          kpi("CPU 使用率", "—", metricsOK ? "metrics-server 已就绪" : "metrics-server 未安装", "#/observe") +
-          kpi("内存使用率", "—", metricsOK ? "metrics-server 已就绪" : "metrics-server 未安装", "#/observe") +
-          "</div>";
+          kpi("集群数", String(clusters.length), clusters.length ? "已接入集群" : "尚未接入", "#/cluster/list") +
+          kpi("节点 Ready / 总数", nodesResult && nodesResult.ok ? ready + " / " + nodes.length : "—", nodesSub,
+            cluster ? clusterResourceHash("cluster", "nodes", cluster.id) : "#/cluster/nodes") +
+          kpi("Pod 总数", podsTotal, podsSub,
+            cluster ? clusterResourceHash("cluster", "workloads", cluster.id) : "#/cluster/workloads") +
+          kpi("CPU（物理容量）", "—", metricSub, "#/observe", "cpu") +
+          kpi("内存（物理容量）", "—", metricSub, "#/observe", "mem") +
+          '</div>';
 
-        // 24h 曲线：没有 Prometheus 时保留卡片与图例，内部显示未接入
-        html += '<section class="x-panel x-setform"><div class="x-sethead"><h2 class="x-h2">集群资源使用   24h</h2>' +
-          '<span class="x-frac">CPU / 内存   全部集群均值</span></div>' +
-          '<div class="x-tbar" style="margin:0 0 8px"><span class="x-tag x-blue">CPU</span><span class="x-tag x-green">内存</span>' +
-          '<span class="x-grow"></span><button class="x-btn" type="button" data-goto="#/settings">配置数据源</button></div>' +
-          '<div class="x-ochart" style="display:grid;place-items:center">' +
-          '<div style="text-align:center"><strong>尚未接入 Prometheus</strong><p class="x-frac" style="margin:6px 0 0">在「系统设置」配置 Prometheus 地址后，这里显示 24h CPU/内存曲线。</p></div>' +
-          "</div></section>";
+        html += '<section class="x-panel x-setform"><div class="x-sethead"><h2 class="x-h2">CPU / 内存（物理容量）· 24h</h2>' +
+          '<span class="x-frac">' + gEsc(clusterLabel) + '</span></div>' +
+          '<div class="x-tbar" style="margin:0 0 8px"><span class="x-tag x-blue">CPU（物理容量）</span>' +
+          '<span class="x-tag x-green">内存（物理容量）</span><span class="x-grow"></span>' +
+          '<button class="x-btn" type="button" data-goto="#/settings">系统设置</button></div>' +
+          '<div class="x-ochart" data-sre-chart style="height:240px">' +
+          '<p class="x-frac" style="text-align:center;padding-top:100px">' +
+          gEsc(cluster ? "正在加载当前集群 24h 资源曲线…" : "请选择当前集群后查看真实资源曲线") +
+          '</p></div></section>';
 
-        var topRows = nodesAll.slice(0, 5).map(function (x) {
-          var n = x.node;
+        var top = topNodesByCpu(nodes, 5);
+        var topRows = top.map(function (node) {
+          var cpu = nodeUsagePercent(node, "cpu_percent");
+          var mem = nodeUsagePercent(node, "memory_percent");
           return [
-            '<span class="x-name">' + gEsc(n.name) + "</span>",
-            '<span class="x-tag x-grey">' + gEsc(x.cluster.name) + "</span>",
-            '<span class="x-frac">—</span>', '<span class="x-frac">—</span>',
-            gEsc(n.pods || "—"),
-            n.ready ? tagHtml("Ready", "ok") : tagHtml(n.status || "NotReady", "bad")
+            '<span class="x-name">' + gEsc(node.name || "—") + '</span>',
+            '<span class="x-tag x-grey">' + gEsc(clusterLabel) + '</span>',
+            barHtml(cpu, cpu == null ? "—" : cpu + "%"),
+            barHtml(mem, mem == null ? "—" : mem + "%"),
+            gEsc(countLabel(podsByNode[String(node.name || "")] || 0, !!(podsResult && podsResult.ok), podsIncomplete)),
+            node.ready ? tagHtml("Ready", "ok") : tagHtml(node.status || "NotReady", "bad")
           ];
         });
-        var noticeRows = notices.map(function (n) {
-          return '<div class="x-listitem" style="padding:8px 0;border-bottom:1px solid var(--x-line)">' +
-            '<div style="display:flex;gap:8px;align-items:center">' + (n.pinned ? '<span class="x-tag x-blue">置顶</span>' : "") +
-            '<strong>' + gEsc(n.title) + "</strong><span class=\"x-grow\"></span>" +
-            '<span class="x-frac">' + gEsc((n.created_by || "") + "   " + fmtTime(n.created_at)) + "</span>" +
-            '<button class="x-btn" type="button" data-ndel="' + gEsc(n.id) + '">删除</button></div>' +
-            (n.body ? '<p class="x-frac" style="margin:4px 0 0">' + gEsc(n.body) + "</p>" : "") + "</div>";
-        }).join("");
+        var topBody;
+        if (!cluster) topBody = '<p class="x-empty">请选择当前集群后查看节点负载。</p>';
+        else if (!nodesResult.ok) topBody = '<p class="x-aerr" role="alert">节点加载失败：' + gEsc(errText(nodesResult.err)) + '</p>';
+        else if (!topRows.length) topBody = '<p class="x-empty">当前集群没有节点数据。</p>';
+        else topBody = tableHtml(["节点", "集群", "CPU", "内存", "Pods", "状态"], topRows);
 
-        html += '<div class="x-wide" style="display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:16px">' +
-          '<section class="x-panel"><div class="x-sethead"><h2 class="x-h2">节点 TOP5 负载</h2><span class="x-frac">' +
-          (metricsOK ? "按 CPU 排序" : "CPU/内存未上报（metrics-server 未安装）") + "</span></div>" +
-          (topRows.length ? tableHtml(["节点", "集群", "CPU", "内存", "Pods", "状态"], topRows) : '<p class="x-empty">尚无节点数据</p>') + "</section>" +
-          '<section class="x-panel"><div class="x-sethead"><h2 class="x-h2">平台公告</h2><button class="x-btn" type="button" data-nadd>+ 发布公告</button></div>' +
-          (noticeRows || '<p class="x-empty">暂无公告</p>') + "</section></div>";
+        var noticeBody;
+        if (!noticeResult.ok) {
+          noticeBody = '<p class="x-aerr" role="alert">公告加载失败：' + gEsc(errText(noticeResult.err)) + '</p>';
+        } else {
+          noticeBody = notices.map(function (notice) {
+            return '<div class="x-listitem" style="padding:8px 0;border-bottom:1px solid var(--x-line)">' +
+              '<div style="display:flex;gap:8px;align-items:center">' +
+              (notice.pinned ? '<span class="x-tag x-blue">置顶</span>' : "") +
+              '<strong>' + gEsc(notice.title) + '</strong><span class="x-grow"></span>' +
+              '<span class="x-frac">' + gEsc((notice.created_by || "") + "   " + fmtTime(notice.created_at)) + '</span>' +
+              '<button class="x-btn" type="button" data-ndel="' + gEsc(notice.id) + '">删除</button></div>' +
+              (notice.body ? '<p class="x-frac" style="margin:4px 0 0">' + gEsc(notice.body) + '</p>' : "") + '</div>';
+          }).join("") || '<p class="x-empty">暂无公告</p>';
+        }
 
-        // 环境筛选 + 变更/告警
-        var ENVS = ["全部", "生产", "预发", "测试", "开发"];
-        html += '<div class="x-tbar" role="group" aria-label="按环境筛选">' +
-          ENVS.map(function (e) { return '<button class="x-seg" type="button" data-senv="' + e + '">' + e + "</button>"; }).join("") + "</div>";
+        html += '<div class="x-wide">' +
+          '<section class="x-panel" style="min-width:0"><div class="x-sethead"><h2 class="x-h2">节点 TOP5 负载</h2>' +
+          '<span class="x-frac">CPU / 内存占 Kubernetes Allocatable；按 CPU 降序，无 usage 的节点排后' +
+          (podsIncomplete ? '；Pods 为已读取下限（+）' : '') + '</span></div>' + topBody + '</section>' +
+          '<section class="x-panel" style="min-width:0"><div class="x-sethead"><h2 class="x-h2">平台公告</h2>' +
+          '<button class="x-btn" type="button" data-nadd>+ 发布公告</button></div>' + noticeBody + '</section></div>';
 
-        var alertRows = alerts.slice(0, 6).map(function (a) {
-          return '<li><span class="x-tag x-red">' + gEsc(a.severity || "P?") + "</span><span class=\"x-name\">" + gEsc(a.summary || a.name || a.alertname || "告警") +
-            '</span><span class="x-frac">' + gEsc(a.status || "firing") + "   " + gEsc(fmtAgo(a.starts_at || a.created_at)) + "</span></li>";
-        }).join("");
-        html += '<div class="x-two" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">' +
+        var alertBody;
+        if (!cluster) {
+          alertBody = '<p class="x-empty">请选择当前集群后查看活跃告警。</p>';
+        } else if (!alertsResult.ok) {
+          alertBody = '<p class="x-aerr" role="alert">告警加载失败：' + gEsc(errText(alertsResult.err)) + '</p>';
+        } else if (!alerts.length) {
+          alertBody = '<p class="x-empty">当前集群没有触发中的告警。</p>';
+        } else {
+          alertBody = '<ul class="x-list">' + alerts.slice(0, 6).map(function (alert) {
+            var alertId = alertIdOf(alert);
+            var labels = alert.labels || {}, annotations = alert.annotations || {};
+            var severity = alert.severity || labels.severity || "P?";
+            var title = alert.summary || annotations.summary || annotations.description ||
+              alert.name || alert.alertname || labels.alertname || "告警";
+            var location = [labels.namespace,
+              labels.pod || labels.deployment || labels.statefulset || labels.service || labels.instance]
+              .filter(Boolean).join(" / ");
+            return '<li><span class="x-tag x-red">' + gEsc(severity) + '</span>' +
+              '<button type="button" class="x-tlink x-alert-open" data-sre-alert-open="' + gEsc(alertId) + '">' +
+              gEsc(title) + '</button>' +
+              '<span class="x-frac">' + (location ? gEsc(location) + " · " : "") +
+              gEsc(alert.status || "firing") + " · " + gEsc(fmtAgo(alert.starts_at || alert.created_at)) + '</span></li>';
+          }).join("") + '</ul>';
+        }
+        html += '<div class="x-two">' +
           '<section class="x-panel"><div class="x-sethead"><h2 class="x-h2">最近变更</h2>' +
           '<a class="x-btn" href="#/release">查看发布单</a></div>' +
           '<p class="x-empty">尚未接入发布记录：在「CI/CD › 发布单」创建发布后显示。</p></section>' +
-          '<section class="x-panel"><div class="x-sethead"><h2 class="x-h2">活跃告警 <span class="x-frac">' + alerts.length + " 条</span></h2>" +
-          '<a class="x-btn" href="#/observe">查看监控告警</a></div>' +
-          (alertRows ? '<ul class="x-list">' + alertRows + "</ul>" : '<p class="x-empty">当前没有触发中的告警</p>') + "</section></div>";
+          '<section class="x-panel"><div class="x-sethead"><h2 class="x-h2">活跃告警 <span class="x-frac">' +
+          (alertsResult && alertsResult.ok ? alerts.length : "—") + ' 条</span></h2>' +
+          '<a class="x-btn" href="#/observe/events">查看监控告警</a></div>' + alertBody + '</section></div>';
 
         mount(el, html);
-        // 交互
-        [].slice.call(el.querySelectorAll(".x-go")).forEach(function (t) {
-          t.onclick = function (e) { if (e.target.closest("a,button")) return; var h = t.getAttribute("data-go"); if (h) goHash(h); };
+        if (cluster) loadSreMetrics(cluster, clusters, nodes, el, seq, context, contextSnapshot);
+
+        [].slice.call(el.querySelectorAll(".x-go")).forEach(function (target) {
+          var open = function () { var hash = target.getAttribute("data-go"); if (hash) goHash(hash); };
+          target.onclick = function (event) { if (!event.target.closest("a,button")) open(); };
+          target.onkeydown = function (event) {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
+          };
         });
-        [].slice.call(el.querySelectorAll("[data-goto]")).forEach(function (b) { b.onclick = function () { goHash(b.getAttribute("data-goto")); }; });
-        [].slice.call(el.querySelectorAll("[data-senv]")).forEach(function (b) {
-          b.onclick = function () { goHash("#/cluster/list"); };
+        [].slice.call(el.querySelectorAll("[data-goto]")).forEach(function (button) {
+          button.onclick = function () { goHash(button.getAttribute("data-goto")); };
+        });
+        [].slice.call(el.querySelectorAll("[data-sre-alert-open]")).forEach(function (button) {
+          button.onclick = function () {
+            var id = button.getAttribute("data-sre-alert-open");
+            if (id && typeof window.XSOpenAlertDetail === "function") window.XSOpenAlertDetail(id);
+            else if (id) goHash("#/observe/events/" + encodeURIComponent(id));
+            else goHash("#/observe/events");
+          };
         });
         var add = el.querySelector("[data-nadd]");
         if (add) add.onclick = function () { noticeDialog(renderSreLive.bind(null, el)); };
-        [].slice.call(el.querySelectorAll("[data-ndel]")).forEach(function (b) {
-          b.onclick = function () {
+        [].slice.call(el.querySelectorAll("[data-ndel]")).forEach(function (button) {
+          button.onclick = function () {
             if (!confirm("删除这条公告？")) return;
-            doAction(apiDel("/platform/notices/" + encodeURIComponent(b.getAttribute("data-ndel"))), "已删除公告", function () { renderSreLive(el); });
+            doAction(apiDel("/platform/notices/" + encodeURIComponent(button.getAttribute("data-ndel"))),
+              "已删除公告", function () { renderSreLive(el); });
           };
         });
+      }).catch(function (err) {
+        if (!isCurrent()) return;
+        if (isAuthErr(err)) return kickLogin();
+        mount(el, shell("总览", "当前集群容量、节点负载、变更与告警", "") + errorPanel(err));
       });
-    }, function (err) {
-      if (!alive(seq, el)) return;
+    }).catch(function (err) {
+      if (!isCurrent()) return;
       if (isAuthErr(err)) return kickLogin();
-      mount(el, shell("总览", "", refreshButton("刷新")) + errorPanel(err));
+      mount(el, shell("总览", "当前集群容量、节点负载、变更与告警", "") + errorPanel(err));
     });
   }
 
+  function sreMetricError(err) {
+    if (Number(err && err.status) === 403) return "无权读取 Prometheus 指标（HTTP 403）";
+    if (Number(err && err.status) === 404) return "未配置可用于当前集群的 Prometheus 数据源（HTTP 404）";
+    return errText(err);
+  }
+
+  function setSreMetric(el, key, value, status) {
+    var card = el.querySelector('[data-sre-metric="' + key + '"]');
+    if (!card) return;
+    var strong = card.querySelector("strong"), detail = card.querySelector(".x-frac");
+    if (strong) strong.textContent = value == null ? "—" : Number(value).toFixed(1) + "%";
+    if (detail) detail.textContent = status;
+  }
+
+  function sreChartLine(points, xScale, yScale, className) {
+    var path = "", started = false;
+    points.forEach(function (point) {
+      if (point[1] == null) { started = false; return; }
+      path += (started ? " L" : " M") + xScale(point[0] * 1000).toFixed(1) + "," + yScale(point[1]).toFixed(1);
+      started = true;
+    });
+    return path ? '<path class="' + className + '" d="' + path.slice(1) + '" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"></path>' : "";
+  }
+
+  function renderSreChart(cpuPoints, memPoints, notes) {
+    var valid = cpuPoints.concat(memPoints).filter(function (point) { return point[1] != null; });
+    var noteHtml = notes.length ? '<p class="x-frac" role="status" style="margin:8px 0 0">' + gEsc(notes.join("；")) + '</p>' : "";
+    if (!valid.length) {
+      return '<p class="x-frac" style="text-align:center;padding-top:82px">24h 内没有可绘制的 CPU 或内存数据。</p>' + noteHtml;
+    }
+    var width = 800, height = 210, margin = { top: 12, right: 18, bottom: 28, left: 48 };
+    var times = valid.map(function (point) { return point[0] * 1000; });
+    var minTime = Math.min.apply(null, times), maxTime = Math.max.apply(null, times);
+    var xScale = function (time) {
+      return margin.left + (time - minTime) / (maxTime - minTime || 1) * (width - margin.left - margin.right);
+    };
+    var yScale = function (value) {
+      var bounded = Math.max(0, Math.min(100, value));
+      return margin.top + (100 - bounded) / 100 * (height - margin.top - margin.bottom);
+    };
+    var grid = [0, 25, 50, 75, 100].map(function (value) {
+      var y = yScale(value);
+      return '<line x1="' + margin.left + '" y1="' + y + '" x2="' + (width - margin.right) + '" y2="' + y + '" stroke="currentColor" opacity=".14"></line>' +
+        '<text x="' + (margin.left - 6) + '" y="' + (y + 4) + '" text-anchor="end" fill="currentColor">' + value + '%</text>';
+    }).join("");
+    var labels = [];
+    for (var i = 0; i <= 4; i++) {
+      var time = minTime + (maxTime - minTime) * i / 4;
+      labels.push('<text x="' + xScale(time) + '" y="' + (height - 5) + '" text-anchor="middle" fill="currentColor">' +
+        gEsc(new Date(time).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })) + '</text>');
+    }
+    return '<svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="节点物理容量 CPU 与内存使用率 24 小时曲线" style="width:100%;height:210px">' +
+      '<g class="x-frac">' + grid + labels.join("") + '</g>' +
+      '<g style="color:var(--x-blue)">' + sreChartLine(cpuPoints, xScale, yScale, "x-sre-line x-sre-line--cpu") + '</g>' +
+      '<g style="color:var(--x-green)">' + sreChartLine(memPoints, xScale, yScale, "x-sre-line x-sre-line--memory") + '</g></svg>' + noteHtml;
+  }
+
+  function loadSreMetrics(cluster, clusters, nodes, el, seq, context, contextSnapshot) {
+    var chart = el.querySelector("[data-sre-chart]");
+    var observe = window.XSObserve;
+    function isCurrent() {
+      return alive(seq, el) && (!context || typeof context.isCurrent !== "function" || context.isCurrent(contextSnapshot));
+    }
+    function failAll(err) {
+      if (!isCurrent()) return;
+      var message = sreMetricError(err);
+      setSreMetric(el, "cpu", null, message);
+      setSreMetric(el, "mem", null, message);
+      if (chart && chart.isConnected) chart.innerHTML = '<p class="x-aerr" role="alert" style="text-align:center;padding-top:82px">' + gEsc(message) + '</p>';
+    }
+    if (!observe || typeof observe.resolvedDatasource !== "function" || typeof observe.metricQueries !== "function") {
+      failAll(new Error("Prometheus 数据源归属校验器不可用"));
+      return Promise.resolve();
+    }
+    return apiGet("/observability/datasources/resolve", { type: "prometheus", cluster_id: cluster.id }, { scope: "cluster" }).then(function (result) {
+      if (!isCurrent()) return null;
+      var scope = observe.resolvedDatasource(result, clusters, cluster, "prometheus");
+      var queries = observe.metricQueries(nodes, [], "", "", scope);
+      var datasourceId = scope.ds.id;
+      var base = "/observability/prometheus/" + encodeURIComponent(datasourceId);
+      return Promise.all([
+        wrap(apiGet(base + "/query", { cluster_id: cluster.id, query: queries.cpu }, { scope: "cluster" })),
+        wrap(apiGet(base + "/query", { cluster_id: cluster.id, query: queries.mem }, { scope: "cluster" })),
+        wrap(apiGet(base + "/query_range", { cluster_id: cluster.id, query: queries.cpu, start: "now-24h", end: "now", step: "5m" }, { scope: "cluster" })),
+        wrap(apiGet(base + "/query_range", { cluster_id: cluster.id, query: queries.mem, start: "now-24h", end: "now", step: "5m" }, { scope: "cluster" }))
+      ]);
+    }).then(function (results) {
+      if (!isCurrent() || !results) return;
+      var cpuValue = results[0].ok ? prometheusLatest(results[0].data) : null;
+      var memValue = results[1].ok ? prometheusLatest(results[1].data) : null;
+      setSreMetric(el, "cpu", cpuValue, !results[0].ok ? "查询失败：" + sreMetricError(results[0].err) :
+        cpuValue == null ? "Prometheus 返回空结果" : "节点物理容量口径 · 当前采样");
+      setSreMetric(el, "mem", memValue, !results[1].ok ? "查询失败：" + sreMetricError(results[1].err) :
+        memValue == null ? "Prometheus 返回空结果" : "节点物理容量口径 · 当前采样");
+      var cpuPoints = results[2].ok ? prometheusValues(results[2].data) : [];
+      var memPoints = results[3].ok ? prometheusValues(results[3].data) : [];
+      var notes = [];
+      if (!results[2].ok) notes.push("CPU 曲线查询失败：" + sreMetricError(results[2].err));
+      else if (!cpuPoints.length) notes.push("CPU 曲线为空");
+      if (!results[3].ok) notes.push("内存曲线查询失败：" + sreMetricError(results[3].err));
+      else if (!memPoints.length) notes.push("内存曲线为空");
+      if (chart && chart.isConnected) chart.innerHTML = renderSreChart(cpuPoints, memPoints, notes);
+    }).catch(function (err) {
+      failAll(err);
+    });
+  }
   // 发布公告弹窗（真实写库：POST /platform/notices）
   function noticeDialog(after) {
     var body = '<form class="x-form" id="ntf" novalidate>' +
@@ -2128,6 +2390,76 @@
     return route && typeof route.__xsLiveOrig === "function" ? route.__xsLiveOrig(el) : undefined;
   }
 
+  function clusterAgentStatus(cluster) {
+    if (cluster.agent_online === true) return ["agent 已连接", "ok"];
+    if (!cluster.agent_bound && !cluster.agent_connected_at) return ["等待 agent 接入", "warn"];
+    return ["agent 未连接", "bad"];
+  }
+
+  function clusterAgentLabel(cluster) {
+    return "Agent 接入" + (cluster.agent_version ? " · " + cluster.agent_version : "");
+  }
+
+  function clusterEditPayload(cluster, values) {
+    var name = String(values.name || "").trim();
+    if (!name) throw new Error("集群名称必填");
+    if (Array.from(name).length > 128) throw new Error("集群名称不能超过 128 个字符");
+    if (/[\u0000-\u001f\u007f\/\\]/.test(name)) throw new Error("集群名称不能包含控制字符或斜杠");
+    var payload = { name: name, env: cluster.env || "", description: String(values.description || "").trim() };
+    var kubeconfig = String(values.kubeconfig || "").trim();
+    if (kubeconfig) payload.kubeconfig = kubeconfig;
+    return payload;
+  }
+
+  function syncRenamedClusterContext(cluster, updated) {
+    var context = window.XSClusterContext;
+    if (!updated || !context || typeof context.get !== "function" || typeof context.set !== "function") return;
+    var current = context.get();
+    if (!current || current.kind !== "cluster" || String(current.cluster_id) !== String(cluster.id) || current.name === updated.name) return;
+    context.set({ kind: "cluster", cluster_id: cluster.id, name: updated.name, env: updated.env || cluster.env || "" });
+  }
+
+  function clusterEditDialog(cluster, done) {
+    var agent = cluster.connect_mode === "agent";
+    var body = '<form class="x-form" id="clusteredit" novalidate>' +
+      '<label><span class="x-req">集群名称</span><input class="x-input" name="name" maxlength="128" required value="' + gEsc(cluster.name || "") + '" /></label>' +
+      '<label><span>环境</span><input class="x-input" value="' + gEsc(cluster.env || "—") + '" disabled /></label>' +
+      '<p class="x-frac x-full" style="margin:0">环境决定权限范围和审批策略，接入后不能修改；需要换环境请重新接入集群。</p>' +
+      '<label class="x-full"><span>描述</span><textarea class="x-input" name="description" rows="2">' + gEsc(cluster.description || "") + '</textarea></label>' +
+      (agent ? "" : '<label class="x-full"><span>更换 kubeconfig（留空保持不变）</span><textarea class="x-input x-mono" name="kubeconfig" rows="4" spellcheck="false" autocomplete="off" placeholder="粘贴新的 kubeconfig 才会替换现有凭据"></textarea></label>') +
+      '<p class="x-frac x-full" style="margin:0">改名后，平台内数据源的集群归属会同步更新。若 Prometheus / Loki 的外部标签使用的是旧集群名，需要同步修改，否则按集群过滤时会被拒绝。</p>' +
+      '<p class="x-aerr x-full" role="alert" data-clusteredit-err hidden></p></form>';
+    var foot = '<button class="x-btn" data-close type="button">取消</button><button class="x-btn x-btn--pri" type="submit" form="clusteredit">保存</button>';
+    var title = "编辑集群   " + gEsc(cluster.name || "");
+    if (typeof dlg === "function") dlg(title, body, foot); else openModal(title, body, foot);
+    var form = $id("clusteredit");
+    if (!form) return;
+    form.onsubmit = function (event) {
+      event.preventDefault();
+      var err = form.querySelector("[data-clusteredit-err]"), payload;
+      try {
+        payload = clusterEditPayload(cluster, {
+          name: form.elements.name.value,
+          description: form.elements.description.value,
+          kubeconfig: form.elements.kubeconfig ? form.elements.kubeconfig.value : ""
+        });
+      } catch (e) {
+        if (err) { err.textContent = e.message; err.hidden = false; }
+        return;
+      }
+      if (err) err.hidden = true;
+      var renamed = payload.name !== cluster.name;
+      doAction(apiPut("/clusters/" + encodeURIComponent(cluster.id), payload), null, function (updated) {
+        try { if (typeof closeAll === "function") closeAll(); } catch (e) {}
+        if (updated) {
+          toastMsg(renamed ? "已将集群 " + cluster.name + " 重命名为 " + updated.name : "集群信息已保存");
+          syncRenamedClusterContext(cluster, updated);
+        }
+        if (done) done();
+      });
+    };
+  }
+
   function clListPage(el) {
     var seq = bump();
     mount(el, shell("集群列表", "已接入的 Kubernetes 集群", "") + loadingPanel("正在加载集群列表…"));
@@ -2141,15 +2473,19 @@
         return;
       }
       var rows = CLUSTERS.map(function (c) {
+        var agent = c.connect_mode === "agent";
         return [
-          '<span class="x-name">' + gEsc(c.name) + '</span><br /><span class="x-mono">' + gEsc(c.api_server || "—") + "</span>",
+          '<span class="x-name">' + gEsc(c.name) + '</span><br />' + (agent
+            ? '<span class="x-frac">' + gEsc(clusterAgentLabel(c)) + "</span>"
+            : '<span class="x-mono">' + gEsc(c.api_server || "—") + "</span>"),
           gEsc(c.env || "—"),
           mono(c.version || "—"),
-          statusTag(clusterStatus(c.status)) +
+          statusTag(agent ? clusterAgentStatus(c) : clusterStatus(c.status)) +
             (c.last_error ? '<br /><span class="x-frac" title="' + gEsc(c.last_error) + '">' + gEsc(truncate(c.last_error, 40)) + "</span>" : ""),
-          '<span class="x-frac">' + gEsc(fmtTime(c.checked_at)) + "</span>",
+          '<span class="x-frac">' + gEsc(fmtTime(agent ? c.agent_seen_at || c.checked_at : c.checked_at)) + "</span>",
           gEsc(c.created_by || "—"),
-          '<span class="x-kacts">' + actBtn("节点", "cl-enter", c.id) + actBtn("改环境", "cl-env", c.id, { title: "调整集群的环境标签" }) +
+          '<span class="x-kacts">' + actBtn("节点", "cl-enter", c.id) + actBtn("编辑", "cl-edit", c.id, { title: "修改集群名称、描述或更换 kubeconfig" }) +
+            (agent ? actBtn("接入清单", "cl-agent", c.id, { title: "生成 agent 接入清单（会使旧令牌失效）" }) : "") +
             actBtn("测试连接", "cl-test", c.id) + actBtn("删除", "cl-del", c.id) + "</span>"
         ];
       });
@@ -2159,26 +2495,10 @@
       bindActs(el, function (act, id) {
         var c = byId(CLUSTERS, id);
         if (!c) return;
-        if (act === "cl-env") {
-          var tags = (typeof ENV_TAGS !== "undefined" ? ENV_TAGS : [["生产"], ["预发"], ["测试"], ["开发"]]).map(function (t) { return t[0]; });
-          var curEnv = c.env === "dev" ? "开发" : (c.env || "");
-          var body = '<form class="x-form" id="cef" novalidate><label><span>环境标签</span><select class="x-select" name="env">' +
-            tags.map(function (t) { return '<option value="' + gEsc(t) + '"' + (t === curEnv ? " selected" : "") + ">" + gEsc(t) + "</option>"; }).join("") +
-            '</select></label><p class="x-frac" style="margin:8px 0 0">环境决定权限范围与生产审批策略（生产环境默认需要审批）。</p></form>';
-          var foot = '<button class="x-btn" data-close type="button">取消</button><button class="x-btn x-btn--pri" id="ceok" type="button">保存</button>';
-          if (typeof dlg === "function") dlg("调整集群环境   " + gEsc(c.name), body, foot);
-          else openModal("调整集群环境   " + gEsc(c.name), body, foot);
-          var ok = $id("ceok");
-          if (ok) ok.onclick = function () {
-            var sel = $id("cef").querySelector("select[name=env]");
-            var next = sel ? sel.value : "";
-            if (!next) return;
-            doAction(apiPut("/clusters/" + c.id, { name: c.name, env: next }), "已将 " + c.name + " 的环境调整为「" + next + "」", function () {
-              try { if (typeof closeAll === "function") closeAll(); } catch (e) {}
-              repaint();
-            });
-          };
-          return;
+        if (act === "cl-edit") return clusterEditDialog(c, repaint);
+        if (act === "cl-agent") {
+          if (window.XSClusterAgent && typeof window.XSClusterAgent.openManifest === "function") return window.XSClusterAgent.openManifest(c, { onGenerated: repaint });
+          return toastMsg("Agent 接入组件未加载");
         }
         if (act === "cl-enter") return goHash("#/cluster/nodes/" + c.id);
         if (act === "cl-test") {
@@ -2356,7 +2676,9 @@
           ];
         })
       ) : '<p class="x-frac" style="margin:0">该集群没有节点数据。</p>';
-      box.innerHTML = panelHtml("节点", items.length + " 个" + (metricsOk ? "" : "   metrics-server 不可用（无 CPU/内存使用率）"), body);
+      box.innerHTML = panelHtml("节点", items.length + " 个" + (metricsOk ? "" : "   metrics-server 不可用（无 CPU/内存使用率）"),
+        toolbarHtml(searchInput("搜索节点名称 / IP / 角色") + '<span class="x-frac" data-live-none hidden>无匹配节点</span>') + body);
+      filterTable(box);
       [].slice.call(el.querySelectorAll("[data-node]")).forEach(function (a) {
         a.onclick = function () { clNodeDetail(cur, a.getAttribute("data-node")); };
       });
@@ -4186,8 +4508,9 @@
    * 11. 安装：仅 live 模式覆盖 routes.<key>.render；demo 不覆盖
    * ================================================================ */
 
-  var OWN_KEYS = { iam: 1, approvals: 1, cluster: 1, traffic: 1, team: 1 };
+  var OWN_KEYS = { sre: 1, iam: 1, approvals: 1, cluster: 1, traffic: 1, team: 1 };
   var INSTALLED = false;
+  var SRE_CONTEXT_SUBSCRIBED = false;
 
   function routesRef() {
     try {
@@ -4239,6 +4562,19 @@
     }
   }
 
+  function subscribeSreContext() {
+    if (SRE_CONTEXT_SUBSCRIBED) return;
+    var handler = function () {
+      if (isLive() && routeOf().key === "sre") repaint();
+    };
+    try {
+      if (typeof window.addEventListener === "function") {
+        window.addEventListener("xs:cluster-context", handler);
+        SRE_CONTEXT_SUBSCRIBED = true;
+      }
+    } catch (e) { console.error("[xs-live-core] cluster context subscription", e); }
+  }
+
   function installLive() {
     if (INSTALLED || !isLive()) return;
     var R = routesRef();
@@ -4246,12 +4582,15 @@
     INSTALLED = true;
     connectClusterExtensions();
     LIVE.routes = LIVE.routes || {};
+    subscribeSreContext();
+    patchRoute(R, "sre", renderSreLive, false);
     patchRoute(R, "iam", renderIamLive, false);
     patchRoute(R, "approvals", renderApprovalsLive, false);
     patchRoute(R, "cluster", renderClusterLive, true);
     patchRoute(R, "traffic", renderTrafficLiveRoute, false);
     if (!R.team) R.team = { label: "团队协作", icon: "users" };
     patchRoute(R, "team", renderTeamLive, true);
+    LIVE.routes.sre = renderSreLive;
     LIVE.routes.iam = renderIamLive;
     LIVE.routes.approvals = renderApprovalsLive;
     LIVE.routes.cluster = renderClusterLive;

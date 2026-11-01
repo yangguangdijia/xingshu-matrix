@@ -63,6 +63,24 @@ func (c *clientCache) get(cl *Cluster, kubeconfig func() (string, error)) (*kube
 	return kc, nil
 }
 
+// getKeyed caches clients built by build under an explicit key (e.g. a tunnel session ID).
+func (c *clientCache) getKeyed(id int64, key string, build func() (*kubeClients, error)) (*kubeClients, error) {
+	c.mu.Lock()
+	if e, ok := c.m[id]; ok && e.key == key {
+		c.mu.Unlock()
+		return e.kc, nil
+	}
+	c.mu.Unlock()
+	kc, err := build()
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.m[id] = cacheEntry{key: key, kc: kc}
+	c.mu.Unlock()
+	return kc, nil
+}
+
 func (c *clientCache) drop(id int64) {
 	c.mu.Lock()
 	delete(c.m, id)

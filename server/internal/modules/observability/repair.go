@@ -36,8 +36,8 @@ type repairTarget struct {
 
 func (m *Module) repairCluster(ctx context.Context, id int64) (healthCluster, error) {
 	var cl healthCluster
-	err := m.d.DB.QueryRow(ctx, "SELECT id,name,env,api_server,kubeconfig FROM cluster_clusters WHERE id=$1", id).
-		Scan(&cl.ID, &cl.Name, &cl.Env, &cl.API, &cl.EncryptedConfig)
+	err := m.d.DB.QueryRow(ctx, "SELECT id,name,env,api_server FROM cluster_clusters WHERE id=$1", id).
+		Scan(&cl.ID, &cl.Name, &cl.Env, &cl.API)
 	return cl, err
 }
 

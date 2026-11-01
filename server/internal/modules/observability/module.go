@@ -75,6 +75,7 @@ func (m *Module) Permissions() []rbac.Permission {
 
 func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	m.d = d
+	d.ClusterRenameHooks = append(d.ClusterRenameHooks, renameClusterReferences)
 	g := r.Group("/observability")
 
 	ds := g.Group("/datasources")

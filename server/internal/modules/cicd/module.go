@@ -2,8 +2,9 @@
 // (git-clone initContainer + Kaniko build / test / deploy), releases with
 // rollback, approval-gated deploys, Git webhooks and optional Jenkins stages.
 //
-// The module keeps its own "runner targets" (kubeconfig encrypted with
-// Deps.Crypto) and does not depend on the cluster module.
+// Execution targets reference clusters registered in the cluster module by id
+// and reach them only through Deps.Clusters. Legacy targets that still store
+// their own encrypted kubeconfig keep working until they are linked.
 package cicd
 
 import (
@@ -27,7 +28,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/rest"
 
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/ai"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/app"
@@ -55,28 +56,24 @@ type Module struct {
 	wake    chan struct{}
 	wg      sync.WaitGroup
 
-	// kube builds a clientset from kubeconfig bytes (overridden in tests).
+	// kube builds a clientset from legacy kubeconfig bytes (overridden in tests).
 	kube func(kubeconfig []byte) (kubernetes.Interface, error)
+	// restKube builds a clientset for a cluster-linked target (overridden in tests).
+	restKube func(cfg *rest.Config) (kubernetes.Interface, error)
+	// loadTargetRow replaces the database lookup of a target (tests only).
+	loadTargetRow func(ctx context.Context, id int64) (*targetRow, error)
 }
 
 // New returns the cicd module.
 func New() *Module {
 	return &Module{
-		cancels: map[int64]context.CancelFunc{},
-		wake:    make(chan struct{}, 1),
-		http:    &http.Client{Timeout: 60 * time.Second},
-		kube:    defaultKube,
-		log:     slog.Default(),
+		cancels:  map[int64]context.CancelFunc{},
+		wake:     make(chan struct{}, 1),
+		http:     &http.Client{Timeout: 60 * time.Second},
+		kube:     defaultKube,
+		restKube: defaultRESTKube,
+		log:      slog.Default(),
 	}
-}
-
-func defaultKube(kc []byte) (kubernetes.Interface, error) {
-	cfg, err := clientcmd.RESTConfigFromKubeConfig(kc)
-	if err != nil {
-		return nil, fmt.Errorf("parse kubeconfig: %w", err)
-	}
-	cfg.Timeout = 0 // log streams are long-lived
-	return kubernetes.NewForConfig(cfg)
 }
 
 func (m *Module) Name() string { return "cicd" }
@@ -123,6 +120,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 
 	g.GET("/targets", read, m.listTargets)
 	g.POST("/targets", manage, m.createTarget)
+	g.PUT("/targets/:id", manage, m.updateTarget)
 	g.DELETE("/targets/:id", manage, m.deleteRow("cicd_targets", "target"))
 	g.GET("/helm/repos", read, m.listHelmRepos)
 	g.POST("/helm/repos", manage, m.createHelmRepo)
@@ -486,86 +484,6 @@ func notFound(err error) error {
 }
 
 // ---------------------------------------------------------------- targets
-
-type targetIn struct {
-	Name       string `json:"name" binding:"required,max=64"`
-	Kubeconfig string `json:"kubeconfig" binding:"required"`
-	Namespace  string `json:"namespace"`
-	Env        string `json:"env" binding:"max=64"`
-}
-
-func (m *Module) listTargets(c *gin.Context) {
-	rows, err := m.db.Query(c, `SELECT id,name,namespace,env,kubeconfig_enc,created_at FROM cicd_targets ORDER BY id`)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	defer rows.Close()
-	out := []gin.H{}
-	for rows.Next() {
-		var id int64
-		var name, ns, env, enc string
-		var at time.Time
-		if err := rows.Scan(&id, &name, &ns, &env, &enc, &at); err != nil {
-			httpx.Fail(c, err)
-			return
-		}
-		out = append(out, gin.H{"id": id, "name": name, "namespace": ns, "env": env, "kubeconfig": "********", "created_at": at})
-	}
-	httpx.OK(c, out)
-}
-
-func (m *Module) createTarget(c *gin.Context) {
-	var in targetIn
-	if !httpx.Bind(c, &in) {
-		return
-	}
-	if inlineSecretText(in.Name) || inlineSecretText(in.Namespace) {
-		httpx.Fail(c, httpx.Validation("target configuration must not contain inline secrets"))
-		return
-	}
-	if in.Namespace == "" {
-		in.Namespace = "matrix-cicd"
-	}
-	in.Env = strings.TrimSpace(in.Env)
-	if in.Env != "" && !validArgoEnv(in.Env) {
-		httpx.Fail(c, httpx.Validation("env must use up to 64 letters, digits, dots, hyphens or underscores"))
-		return
-	}
-	if in.Env != "" && !rbac.PrincipalFrom(c).CanEnv(in.Env) {
-		httpx.Fail(c, httpx.Forbidden("environment not in your scope: "+in.Env))
-		return
-	}
-	if _, err := clientcmd.RESTConfigFromKubeConfig([]byte(in.Kubeconfig)); err != nil {
-		httpx.Fail(c, httpx.Validation("invalid kubeconfig"))
-		return
-	}
-	change := cicdConfigMutation{Kind: "target.create", Target: &in, Envs: []string{in.Env}}
-	if m.gateConfigMutation(c, change, nil) {
-		return
-	}
-	id, err := m.applyCICDConfigMutation(c, change)
-	if err != nil {
-		httpx.Fail(c, httpx.Conflict("target name exists").Wrap(errors.New("configuration write failed")))
-		return
-	}
-	audit.SetResource(c, "cicd_target", fmt.Sprint(id))
-	httpx.Created(c, gin.H{"id": id, "name": in.Name, "namespace": in.Namespace, "env": in.Env})
-}
-
-// targetClient returns a clientset and runner namespace for target id.
-func (m *Module) targetClient(ctx context.Context, id int64) (kubernetes.Interface, string, []byte, error) {
-	var enc, ns string
-	if err := m.db.QueryRow(ctx, `SELECT kubeconfig_enc, namespace FROM cicd_targets WHERE id=$1`, id).Scan(&enc, &ns); err != nil {
-		return nil, "", nil, fmt.Errorf("target %d: %w", id, notFound(err))
-	}
-	kc, err := m.d.Crypto.Decrypt(enc)
-	if err != nil {
-		return nil, "", nil, err
-	}
-	cs, err := m.kube([]byte(kc))
-	return cs, ns, []byte(kc), err
-}
 
 func (m *Module) targetConfigEnv(ctx context.Context, id int64) (string, error) {
 	var env string

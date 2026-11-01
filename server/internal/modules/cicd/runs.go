@@ -530,10 +530,11 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 		needsRunner = needsRunner || s.Type == "build" || s.Type == "test" || s.Type == "script"
 	}
 	if needsRunner {
-		cs, ns, _, err := m.targetClient(ctx, pl.RunnerTargetID)
+		conn, err := m.targetClient(ctx, pl.RunnerTargetID)
 		if err != nil {
 			return err
 		}
+		cs, ns := conn.cs, conn.namespace
 		rt = &runnerCtx{cs: cs, ns: ns, secret: fmt.Sprintf("cicd-run-%d", runID)}
 		gitURL, err := m.cloneURL(a)
 		if err != nil {

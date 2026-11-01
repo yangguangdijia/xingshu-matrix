@@ -2,6 +2,7 @@ package cicd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -96,12 +97,17 @@ func (m *Module) applicationInventory(c *gin.Context) {
 		httpx.Fail(c, httpx.Forbidden("environment not in your scope: "+env.Name))
 		return
 	}
-	cs, _, _, err := m.targetClient(c, env.TargetID)
+	conn, err := m.targetClient(c, env.TargetID)
 	if err != nil {
+		var typed *httpx.Error
+		if errors.As(err, &typed) {
+			httpx.Fail(c, err)
+			return
+		}
 		httpx.Fail(c, httpx.BadRequest("application target: "+err.Error()))
 		return
 	}
-	result, err := collectApplicationInventory(c.Request.Context(), cs, a.Name, *env)
+	result, err := collectApplicationInventory(c.Request.Context(), conn.cs, a.Name, *env)
 	if err != nil {
 		httpx.Fail(c, err)
 		return

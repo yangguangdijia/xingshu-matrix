@@ -1868,6 +1868,7 @@
     <script src="xs-structured-forms.js"></script>
     <script src="xs-traffic-topology.js"></script>
     <script src="xs-provision.js"></script>
+    <script src="xs-cluster-agent.js"></script>
     <script src="xs-aiops.js"></script>
     <script src="xs-network-config.js"></script>
     <script src="xs-certificates.js"></script>
@@ -5201,13 +5202,13 @@
         const liveMode = window.XS && XS.mode === "live";
         dlg("接入集群", `<form class="x-form" id="claf" novalidate>
           ${liveMode ? "" : `<div style="display:flex;gap:8px;align-items:flex-end"><label style="flex:1"><span>✦ 用一句话描述</span><input class="x-input" name="aiq" placeholder="如：接入一个生产环境的集群，名字 prod-sh" autocomplete="off" /></label><button class="x-btn" type="button" data-aifill-cl>生成</button></div>`}
-          <fieldset class="x-radios"><legend>接入方式</legend>${(liveMode ? ["kubeconfig"] : ["kubeconfig", "Agent", "云托管"]).map((m) => `<label><input type="radio" name="mode" value="${m}"${m === "kubeconfig" ? " checked" : ""} />${m}</label>`).join("")}</fieldset>
+          <fieldset class="x-radios"><legend>接入方式</legend>${(liveMode ? ["kubeconfig", "Agent"] : ["kubeconfig", "Agent", "云托管"]).map((m) => `<label><input type="radio" name="mode" value="${m}"${m === "kubeconfig" ? " checked" : ""} />${m}</label>`).join("")}</fieldset>
           <div class="x-msec" data-m="kubeconfig">
             <label><span>上传 kubeconfig 文件</span><input class="x-input" type="file" name="kf" accept=".yaml,.yml,.conf,.config,.txt" /></label>
             <label><span>或粘贴 kubeconfig 内容</span><textarea class="x-input x-mono" name="kc" rows="5" spellcheck="false" placeholder="apiVersion: v1&#10;kind: Config&#10;clusters: …&#10;contexts: …"></textarea></label>
             <div id="kcl" aria-live="polite"></div></div>
           <div class="x-msec" data-m="Agent 云托管" hidden><label><span class="x-req">集群名称</span><input class="x-input" name="n" placeholder="如 prod-sh" autocomplete="off" /></label></div>
-          <div class="x-msec" data-m="Agent" hidden><label><span class="x-req">API Server 地址</span><input class="x-input" name="api" type="url" placeholder="https://10.0.0.1:6443" autocomplete="off" /></label></div>
+          <div class="x-msec" data-m="${liveMode ? "" : "Agent"}" hidden><label><span class="x-req">API Server 地址</span><input class="x-input" name="api" type="url" placeholder="https://10.0.0.1:6443" autocomplete="off" /></label></div>
           <div class="x-msec" data-m="云托管" hidden>
             <label><span>云厂商</span><select class="x-select" name="cp">${opt(Object.keys(CLOUD), "ACK", (k) => CLOUD[k][0])}</select></label>
             <label><span class="x-req">AccessKey ID</span><input class="x-input x-mono" name="ak" type="password" autocomplete="off" spellcheck="false" /></label>
@@ -5327,6 +5328,11 @@
               const ok = KC.filter((c) => c.tested && c.testOk).length, failed = KC.filter((c) => c.tested && !c.testOk).length;
               rows.push([ok ? "ok" : "warn", `连接测试：${ok} 个通过${failed ? `，${failed} 个失败` : ""}；仅通过测试的 context 会被接入`]);
             } else rows.push(["warn", "演示模式只解析 context，不会连接目标集群"]);
+          } else if (m === "Agent" && liveMode) {
+            const n = f.elements.n.value.trim();
+            rows.push([/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(n) ? "ok" : "bad", n ? `集群名称：${n}` : "填写集群名称"]);
+            rows.push(["info", "平台不需要访问目标集群的 API Server；接入后生成清单，在目标集群 kubectl apply，agent 主动回连平台"]);
+            rows.push(["warn", "目标集群需能访问平台地址，并能拉取 matrix-cluster-agent 镜像"]);
           } else if (m === "Agent") {
             const api = f.elements.api.value.trim();
             rows.push([/^https?:\/\/\S+$/.test(api) ? "ok" : "bad", api ? `API Server：${api}` : "填写 API Server 地址"]);
@@ -5394,8 +5400,32 @@
           if (submitting) return;
           const m = mode(), lr = lblParse(f.elements.lbl.value); if (lr.err) return bad(lr.err, f.elements.lbl);
           const nameOk = (n) => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(n), add = [];
+          if (liveMode && m === "Agent") {
+            if (!window.XSClusterAgent) return bad("Agent 接入组件未加载");
+            const env = envRead(f, bad); if (!env) return;
+            submitting = true;
+            const submit = document.querySelector('button[form="claf"][type="submit"]');
+            if (submit) { submit.disabled = true; submit.textContent = "接入中…"; }
+            try {
+              const res = await XSClusterAgent.create({ name: f.elements.n.value, env });
+              if (Object.keys(lr.o).length && res.cluster) { CL_LBL[res.cluster.name] = { ...lr.o }; clKeep("xingshu-cl-labels", CL_LBL); }
+              try {
+                const data = await apiRequest("/clusters?page_size=200");
+                window.XS_CLUSTERS = Array.isArray(data) ? data : (data && data.items) || [];
+              } catch (err) { /* the list refreshes on the next visit */ }
+              drawTop(); clDraw(); closeAll();
+              if (res.pending) toast("已提交审批" + (res.ticket ? `（审批单 #${res.ticket}）` : "") + "，通过后在集群列表生成接入清单");
+              else XSClusterAgent.openManifest(res.cluster, { onGenerated: () => clDraw() });
+            } catch (err) {
+              bad(err.message || "接入失败", f.elements.n);
+            } finally {
+              submitting = false;
+              if (submit && document.body.contains(submit)) { submit.disabled = false; submit.textContent = "接入"; }
+            }
+            return;
+          }
           if (liveMode) {
-            if (m !== "kubeconfig") return bad("当前实时模式仅支持 kubeconfig 接入");
+            if (m !== "kubeconfig") return bad("当前实时模式仅支持 kubeconfig 或 Agent 接入");
             if (!KC.length) return bad("请上传或粘贴包含 contexts 的 kubeconfig", f.elements.kc);
             const picks = kcSelected();
             if (!picks.length) return bad("请至少勾选一个 context");

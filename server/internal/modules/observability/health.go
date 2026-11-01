@@ -13,39 +13,63 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/app"
 )
 
 type healthCluster struct {
-	ID              int64
-	Name, Env, API  string
-	EncryptedConfig string
+	ID             int64
+	Name, Env, API string
 }
 
 func (m *Module) healthClient(ctx context.Context, cl healthCluster) (kubernetes.Interface, error) {
-	raw, err := m.d.Crypto.Decrypt(cl.EncryptedConfig)
-	if err != nil {
-		return nil, errors.New("cluster credentials unavailable")
+	if m.d == nil || m.d.Clusters == nil {
+		return nil, errors.New("cluster access is unavailable")
 	}
-	kc, err := clientcmd.Load([]byte(raw))
+	ref, err := m.d.Clusters.Cluster(ctx, cl.ID)
 	if err != nil {
-		return nil, errors.New("invalid cluster credentials")
+		return nil, errors.New("cluster is no longer registered")
 	}
-	for _, a := range kc.AuthInfos {
-		if a.Exec != nil || a.AuthProvider != nil || a.TokenFile != "" || a.ClientCertificate != "" || a.ClientKey != "" {
-			return nil, errors.New("health checks require embedded credentials without exec plugins or local files")
+	if ref.Env != cl.Env {
+		return nil, errors.New("cluster environment changed during the check")
+	}
+	if ref.ConnectMode != app.ClusterConnectAgent {
+		raw, err := m.d.Clusters.Kubeconfig(ctx, cl.ID)
+		if err != nil {
+			return nil, errors.New("cluster credentials unavailable")
+		}
+		if err := requireEmbeddedCredentials(raw); err != nil {
+			return nil, err
 		}
 	}
-	for _, c := range kc.Clusters {
-		if c.CertificateAuthority != "" {
-			return nil, errors.New("health checks require embedded CA data")
-		}
+	cfg, err := m.d.Clusters.RESTConfig(ctx, cl.ID)
+	if errors.Is(err, app.ErrClusterOffline) {
+		return nil, errors.New("cluster agent is not connected")
 	}
-	cfg, err := clientcmd.NewDefaultClientConfig(*kc, &clientcmd.ConfigOverrides{}).ClientConfig()
 	if err != nil {
 		return nil, errors.New("invalid cluster config")
 	}
 	cfg.Timeout = 12 * time.Second
 	return kubernetes.NewForConfig(cfg)
+}
+
+// requireEmbeddedCredentials keeps background checks from running exec plugins or reading local files.
+func requireEmbeddedCredentials(raw []byte) error {
+	kc, err := clientcmd.Load(raw)
+	if err != nil {
+		return errors.New("invalid cluster credentials")
+	}
+	for _, a := range kc.AuthInfos {
+		if a.Exec != nil || a.AuthProvider != nil || a.TokenFile != "" || a.ClientCertificate != "" || a.ClientKey != "" {
+			return errors.New("health checks require embedded credentials without exec plugins or local files")
+		}
+	}
+	for _, c := range kc.Clusters {
+		if c.CertificateAuthority != "" {
+			return errors.New("health checks require embedded CA data")
+		}
+	}
+	return nil
 }
 
 type healthFinding struct {
@@ -195,14 +219,14 @@ func (m *Module) scanHealth(ctx context.Context, policy aiopsPolicy) {
 		defer cancel()
 		_, _ = conn.Exec(unlockCtx, "SELECT pg_advisory_unlock(82178065)")
 	}()
-	rows, err := m.d.DB.Query(ctx, "SELECT id,name,env,api_server,kubeconfig FROM cluster_clusters ORDER BY id")
+	rows, err := m.d.DB.Query(ctx, "SELECT id,name,env,api_server FROM cluster_clusters ORDER BY id")
 	if err != nil {
 		return
 	}
 	clusters := []healthCluster{}
 	for rows.Next() {
 		var cl healthCluster
-		if rows.Scan(&cl.ID, &cl.Name, &cl.Env, &cl.API, &cl.EncryptedConfig) == nil {
+		if rows.Scan(&cl.ID, &cl.Name, &cl.Env, &cl.API) == nil {
 			clusters = append(clusters, cl)
 		}
 	}

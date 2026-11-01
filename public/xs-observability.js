@@ -99,10 +99,13 @@
     return result;
   }
   function metricQueries(nodes, pods, ns, app, scope) {
+    nodes = nodes || [];
+    pods = pods || [];
     const ips = nodes.map((n) => n.internal_ip).filter(Boolean).map((ip) => regex((ip.includes(":") ? "[" + ip + "]" : ip) + ":9100"));
-    if (!ips.length) throw new Error("集群没有可用于关联 node-exporter 的节点地址");
-    const selector = 'instance=~' + quote(ips.join("|"));
-    const node = nodes.map((n) => regex(n.name)).join("|");
+    const instanceSelector = ips.length ? 'instance=~' + quote(ips.join("|")) : "";
+    const withInstance = (selector) => selector + (selector && instanceSelector ? "," : "") + instanceSelector;
+    const nodeNames = nodes.map((n) => n.name).filter(Boolean).map((name) => regex(name));
+    const node = nodeNames.length ? nodeNames.join("|") : "a^";
     const names = pods.filter((p) => (!ns || p.namespace === ns) && (!app || (p.labels || {}).app === app || (p.labels || {})["app.kubernetes.io/name"] === app)).map((p) => regex(p.name));
     const workload = !!(ns || app);
     const ps = 'namespace=~' + quote(ns ? regex(ns) : ".+") + ',pod=~' + quote(names.length ? names.join("|") : "a^");
@@ -110,11 +113,11 @@
     const join = ' * on(namespace,pod) group_left() max by(namespace,pod) (kube_pod_info{' + match + '})';
     const container = ps + ',container!="",container!="POD",image!=""';
     const queries = {
-      cpu: workload ? '100 * sum(rate(container_cpu_usage_seconds_total{' + container + '}[5m])' + join + ') / sum(kube_node_status_allocatable{resource="cpu",node=~' + quote(node) + '})' : '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle",' + selector + '}[5m])))',
-      mem: workload ? '100 * sum(container_memory_working_set_bytes{' + container + '}' + join + ') / sum(kube_node_status_allocatable{resource="memory",node=~' + quote(node) + '})' : '100 * (1 - sum(node_memory_MemAvailable_bytes{' + selector + '}) / sum(node_memory_MemTotal_bytes{' + selector + '}))',
-      rx: 'sum(rate(node_network_receive_bytes_total{device!="lo",' + selector + '}[5m])) / 1000000',
-      tx: 'sum(rate(node_network_transmit_bytes_total{device!="lo",' + selector + '}[5m])) / 1000000',
-      disk: '100 * (1 - sum(node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay",' + selector + '}) / sum(node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay",' + selector + '}))',
+      cpu: workload ? '100 * sum(rate(container_cpu_usage_seconds_total{' + container + '}[5m])' + join + ') / sum(kube_node_status_allocatable{resource="cpu",node=~' + quote(node) + '})' : '100 * (1 - avg(rate(node_cpu_seconds_total{' + withInstance('mode="idle"') + '}[5m])))',
+      mem: workload ? '100 * sum(container_memory_working_set_bytes{' + container + '}' + join + ') / sum(kube_node_status_allocatable{resource="memory",node=~' + quote(node) + '})' : '100 * (1 - sum(node_memory_MemAvailable_bytes{' + withInstance("") + '}) / sum(node_memory_MemTotal_bytes{' + withInstance("") + '}))',
+      rx: 'sum(rate(node_network_receive_bytes_total{' + withInstance('device!="lo"') + '}[5m])) / 1000000',
+      tx: 'sum(rate(node_network_transmit_bytes_total{' + withInstance('device!="lo"') + '}[5m])) / 1000000',
+      disk: '100 * (1 - sum(node_filesystem_avail_bytes{' + withInstance('mountpoint="/",fstype!~"tmpfs|overlay"') + '}) / sum(node_filesystem_size_bytes{' + withInstance('mountpoint="/",fstype!~"tmpfs|overlay"') + '}))',
       rst: 'sum(kube_pod_container_status_restarts_total{' + ps + '}' + join + ')'
     };
     return Object.fromEntries(Object.entries(queries).map(([key, value]) => [key, scopedPromQuery(value, scope, true)]));
@@ -195,10 +198,48 @@
   // A node-exporter Pod is the collector, not the affected Pod of a node alert.
   function alertLocation(alert, clusters, datasources, inventories = []) {
     const l = alert.labels || {}, ds = datasources.find((d) => String(d.id) === String(alert.datasource_id)), options = ds && ds.options || {};
-    const clusterName = l.cluster || l.cluster_name || l["k8s.cluster.name"], clusterId = l.cluster_id || l["k8s.cluster.uid"];
-    let candidates = clusters.filter((c) => !alert.env || env(c.env) === env(alert.env)), basis = "同环境唯一集群";
-    if (clusterName || clusterId) { candidates = candidates.filter((c) => (!clusterName || c.name === clusterName || String(c.id) === String(clusterName)) && (!clusterId || String(c.id) === String(clusterId))); basis = "告警集群标签"; }
-    else if (options.cluster_id || options.cluster_name) { candidates = candidates.filter((c) => (!options.cluster_id || String(c.id) === String(options.cluster_id)) && (!options.cluster_name || c.name === options.cluster_name)); basis = "数据源集群归属"; }
+    const explicitClusterValues = [l.cluster, l.cluster_name, l.cluster_id, l["k8s.cluster.name"], l["k8s.cluster.uid"]]
+      .filter((value) => value !== undefined && value !== null && String(value).trim() !== "").map(String);
+    const mappedValues = options.cluster_values;
+    const matchesClusterValue = (cluster, value) => String(cluster.id) === value || String(cluster.name) === value ||
+      !!(mappedValues && typeof mappedValues === "object" && !Array.isArray(mappedValues) &&
+        Object.prototype.hasOwnProperty.call(mappedValues, String(cluster.id)) && String(mappedValues[String(cluster.id)]) === value);
+    let candidates = clusters.filter((c) => !alert.env || env(c.env) === env(alert.env)), basis = "同环境唯一集群", ownershipFailure = "";
+    if (options.scope === "central") {
+      const label = options.cluster_label;
+      const mappedValue = validLabel(label) ? l[label] : undefined;
+      if (!validLabel(label) || !mappedValues || typeof mappedValues !== "object" || Array.isArray(mappedValues) ||
+        typeof mappedValue !== "string" || !mappedValue.trim()) {
+        candidates = [];
+        ownershipFailure = "中央数据源告警缺少有效的集群标签映射，无法确认集群。";
+      } else {
+        const reverse = clusters.filter((c) => Object.prototype.hasOwnProperty.call(mappedValues, String(c.id)) &&
+          typeof mappedValues[String(c.id)] === "string" && mappedValues[String(c.id)] === mappedValue);
+        if (reverse.length !== 1) {
+          candidates = [];
+          ownershipFailure = reverse.length > 1 ? "中央数据源集群标签匹配多个集群，已拒绝推断。" : "中央数据源集群标签未匹配已接入集群，已拒绝推断。";
+        } else if (alert.env && env(reverse[0].env) !== env(alert.env)) {
+          candidates = [];
+          ownershipFailure = "中央数据源集群标签与告警环境冲突，已拒绝推断。";
+        } else if (explicitClusterValues.some((value) => !matchesClusterValue(reverse[0], value))) {
+          candidates = [];
+          ownershipFailure = "中央数据源集群标签与显式 cluster 标签冲突，已拒绝推断。";
+        } else {
+          candidates = reverse;
+          basis = "中央数据源 " + label + " 标签映射";
+        }
+      }
+    } else {
+      if (options.cluster_id || options.cluster_name) {
+        candidates = candidates.filter((c) => (!options.cluster_id || String(c.id) === String(options.cluster_id)) &&
+          (!options.cluster_name || c.name === options.cluster_name));
+        basis = "数据源集群归属";
+      }
+      if (explicitClusterValues.length) {
+        candidates = candidates.filter((c) => explicitClusterValues.every((value) => matchesClusterValue(c, value)));
+        basis = options.cluster_id || options.cluster_name ? "数据源归属与告警集群标签" : "告警集群标签";
+      }
+    }
     const namespace = l.namespace || l.exported_namespace || l["k8s.namespace.name"] || "", podName = l.pod || l.pod_name || l["k8s.pod.name"] || "";
     const nodeName = l.node || l.nodename || l["k8s.node.name"] || "", instance = l.instance || "";
     const ip = instance.startsWith("[") ? instance.slice(1, instance.indexOf("]")) : instance.replace(/:\d+$/, "");
@@ -223,7 +264,7 @@
       if (l.service) { type = "Service"; name = l.service; }
       const target = kinds.find(([key]) => l[key]); if (target) { type = target[1]; name = l[target[0]]; }
     }
-    return { cluster, candidates, basis, namespace, type, name, pod, node, podName, nodeName: node && node.name || pod && pod.node || nodeName, instance, nodeAlert, inventoryError: match.error || "", note: !cluster ? "无法唯一确认集群，请为数据源配置 cluster_id 或为告警增加 cluster 标签。" : type === "Namespace" ? "此事件仅定位到命名空间，原始告警未提供 Pod 或其他具体资源；不能据此认定某个 Pod 故障。" : podName && !pod ? "原始标签中的 Pod 当前未在清单中找到，可能已删除或重建；保留事件触发时的资源名称。" : "" };
+    return { cluster, candidates, basis, namespace, type, name, pod, node, podName, nodeName: node && node.name || pod && pod.node || nodeName, instance, nodeAlert, inventoryError: match.error || "", note: !cluster ? ownershipFailure || "无法唯一确认集群，请为数据源配置 cluster_id 或为告警增加 cluster 标签。" : type === "Namespace" ? "此事件仅定位到命名空间，原始告警未提供 Pod 或其他具体资源；不能据此认定某个 Pod 故障。" : podName && !pod ? "原始标签中的 Pod 当前未在清单中找到，可能已删除或重建；保留事件触发时的资源名称。" : "" };
   }
   const alertWorkloadLabels = [
     ["deployment", "deployments", "Deployment"],

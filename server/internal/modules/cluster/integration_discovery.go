@@ -95,6 +95,9 @@ func (m *Module) Start(ctx context.Context, d *app.Deps) error {
 }
 
 func (m *Module) Stop(ctx context.Context) error {
+	if m.tunnelHub != nil {
+		_ = m.tunnelHub.Close()
+	}
 	done := make(chan struct{})
 	go func() { m.discoveryWG.Wait(); close(done) }()
 	select {

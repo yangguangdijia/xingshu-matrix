@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"k8s.io/client-go/tools/clientcmd"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/approval"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
@@ -230,17 +230,32 @@ func (m *Module) reauthorizeConfigChange(ctx context.Context, ticket *approval.T
 func (m *Module) applyCICDConfigMutation(ctx context.Context, change cicdConfigMutation) (int64, error) {
 	switch change.Kind {
 	case "target.create":
-		if change.Target == nil || m.d.Crypto == nil {
+		// New targets reference a registered cluster and never store a kubeconfig.
+		if change.Target == nil || change.Target.ClusterID <= 0 || strings.TrimSpace(change.Target.Kubeconfig) != "" {
 			return 0, errors.New("invalid target configuration")
 		}
-		encrypted, err := m.d.Crypto.Encrypt(change.Target.Kubeconfig)
-		if err != nil {
-			return 0, err
-		}
 		var id int64
-		err = m.db.QueryRow(ctx, `INSERT INTO cicd_targets(name,kubeconfig_enc,namespace,env) VALUES($1,$2,$3,$4) RETURNING id`,
-			change.Target.Name, encrypted, change.Target.Namespace, change.Target.Env).Scan(&id)
+		err := m.db.QueryRow(ctx, `INSERT INTO cicd_targets(name,cluster_id,kubeconfig_enc,namespace,env) VALUES($1,$2,NULL,$3,$4) RETURNING id`,
+			change.Target.Name, change.Target.ClusterID, change.Target.Namespace, change.Target.Env).Scan(&id)
 		return id, err
+	case "target.update":
+		if change.Target == nil || change.ID < 1 || change.ExpectedUpdatedAt == nil || strings.TrimSpace(change.Target.Kubeconfig) != "" {
+			return 0, errors.New("invalid target update")
+		}
+		var tag pgconn.CommandTag
+		var err error
+		if change.Target.ClusterID > 0 {
+			// Linking (or re-linking) clears any legacy kubeconfig.
+			tag, err = m.db.Exec(ctx, `UPDATE cicd_targets SET cluster_id=$2,kubeconfig_enc=NULL,namespace=$3,env=$4,updated_at=now()
+				WHERE id=$1 AND updated_at=$5`, change.ID, change.Target.ClusterID, change.Target.Namespace, change.Target.Env, *change.ExpectedUpdatedAt)
+		} else {
+			tag, err = m.db.Exec(ctx, `UPDATE cicd_targets SET namespace=$2,updated_at=now()
+				WHERE id=$1 AND cluster_id IS NULL AND updated_at=$3`, change.ID, change.Target.Namespace, *change.ExpectedUpdatedAt)
+		}
+		if err != nil || tag.RowsAffected() == 0 {
+			return 0, httpx.Conflict("target changed while approval was pending")
+		}
+		return change.ID, nil
 	case "jenkins.create":
 		if change.Jenkins == nil || m.d.Crypto == nil {
 			return 0, errors.New("invalid Jenkins configuration")
@@ -492,15 +507,9 @@ func (m *Module) deleteConfigEnvs(ctx context.Context, table string, id int64) (
 
 func (m *Module) validateConfigChange(ctx context.Context, change cicdConfigMutation) error {
 	switch change.Kind {
-	case "target.create":
-		if change.Target == nil {
-			return httpx.Validation("invalid target configuration")
-		}
-		if inlineSecretText(change.Target.Name) || inlineSecretText(change.Target.Namespace) {
-			return httpx.Validation("target configuration must not contain inline secrets")
-		}
-		if _, err := clientcmd.RESTConfigFromKubeConfig([]byte(change.Target.Kubeconfig)); err != nil {
-			return httpx.Validation("invalid kubeconfig")
+	case "target.create", "target.update":
+		if err := m.validateStagedTarget(ctx, change); err != nil {
+			return err
 		}
 	case "application.create", "application.update":
 		if change.Application == nil {

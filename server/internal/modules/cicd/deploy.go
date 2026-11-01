@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -279,12 +280,18 @@ func (m *Module) validateDeploymentTarget(ctx context.Context, env *EnvTarget) e
 	if env == nil || env.TargetID <= 0 || strings.TrimSpace(env.Name) == "" {
 		return httpx.Conflict("deployment target is incomplete")
 	}
-	var targetEnv string
-	if err := m.db.QueryRow(ctx, `SELECT env FROM cicd_targets WHERE id=$1`, env.TargetID).Scan(&targetEnv); err != nil {
-		return fmt.Errorf("deployment target %d: %w", env.TargetID, notFound(err))
+	row, err := m.loadTarget(ctx, env.TargetID)
+	if err != nil {
+		return fmt.Errorf("deployment target %d: %w", env.TargetID, err)
 	}
-	if !targetEnvMatches(targetEnv, env.Name) {
+	if !targetEnvMatches(row.Env, env.Name) {
 		return httpx.Conflict("deployment target environment does not match application environment")
+	}
+	if row.linked() {
+		// The registered cluster must still belong to the same environment.
+		if _, err := m.linkedCluster(ctx, row); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -319,21 +326,26 @@ func (m *Module) execRelease(ctx context.Context, id int64, a *Application, env 
 
 // applyImage rolls image out to env and returns the image it replaced.
 func (m *Module) applyImage(ctx context.Context, a *Application, env *EnvTarget, image string, releaseID int64, logf func(string, ...any)) (string, error) {
-	cs, runnerNS, kc, err := m.targetClient(ctx, env.TargetID)
+	conn, err := m.targetClient(ctx, env.TargetID)
 	if err != nil {
 		return "", err
 	}
+	cs := conn.cs
 	timeout := time.Duration(env.RolloutTimeoutSec) * time.Second
 	if timeout <= 0 {
 		timeout = 10 * time.Minute
 	}
 	if env.Helm != nil {
+		auth, err := m.helmAuthFor(ctx, conn)
+		if err != nil {
+			return "", err
+		}
 		var prev string
 		rels, _ := m.queryReleases(ctx, `app_id=$1 AND env=$2 AND status='succeeded' ORDER BY id DESC LIMIT 1`, a.ID, env.Name)
 		if len(rels) > 0 {
 			prev = rels[0].Image
 		}
-		return prev, helmDeploy(ctx, cs, runnerNS, kc, env, image, releaseID, timeout, logf)
+		return prev, helmDeploy(ctx, cs, conn.namespace, auth, env, image, releaseID, timeout, logf)
 	}
 	prev, err := patchImage(ctx, cs, env.Namespace, env.Deployment, env.Container, image)
 	if err != nil {
@@ -429,20 +441,44 @@ func splitImage(img string) (repo, tag string) {
 	return img, "latest"
 }
 
-// helmDeploy runs `helm upgrade --install` as a Job on the target cluster
-// (in the target's runner namespace) using the target kubeconfig.
-func helmDeploy(ctx context.Context, cs kubeIface, runnerNS string, kubeconfig []byte, env *EnvTarget, image string, releaseID int64, timeout time.Duration, logf func(string, ...any)) error {
+// helmDeploy runs `helm upgrade --install` as a Job on the target cluster (in
+// the target's runner namespace). With a kubeconfig, it is mounted from a
+// short-lived Secret; without one (agent clusters) the Job runs as
+// DeployerServiceAccount and helm uses the in-cluster token.
+func helmDeploy(ctx context.Context, cs kubeIface, runnerNS string, auth helmAuth, env *EnvTarget, image string, releaseID int64, timeout time.Duration, logf func(string, ...any)) error {
 	h := env.Helm
 	if err := validateHelmSet([]EnvTarget{*env}); err != nil {
 		return err
 	}
-	rc := &runnerCtx{cs: cs, ns: runnerNS, secret: fmt.Sprintf("cicd-helm-%d", releaseID)}
-	if err := rc.createSecret(ctx, map[string]string{"config": string(kubeconfig)}, 0); err != nil {
-		return fmt.Errorf("create kubeconfig secret: %w", err)
+	secret := ""
+	switch {
+	case len(auth.kubeconfig) > 0:
+		rc := &runnerCtx{cs: cs, ns: runnerNS, secret: fmt.Sprintf("cicd-helm-%d", releaseID)}
+		if err := rc.createSecret(ctx, map[string]string{"config": string(auth.kubeconfig)}, 0); err != nil {
+			return fmt.Errorf("create kubeconfig secret: %w", err)
+		}
+		defer func() {
+			_ = cs.CoreV1().Secrets(runnerNS).Delete(context.Background(), rc.secret, metav1.DeleteOptions{})
+		}()
+		secret = rc.secret
+	case auth.serviceAccount != "":
+		if _, err := cs.CoreV1().ServiceAccounts(runnerNS).Get(ctx, auth.serviceAccount, metav1.GetOptions{}); err != nil {
+			if apierrors.IsNotFound(err) {
+				return httpx.Conflict(msgDeployerSAMissing)
+			}
+			return fmt.Errorf("check ServiceAccount %s/%s: %w", runnerNS, auth.serviceAccount, err)
+		}
+	default:
+		return httpx.Conflict("执行集群没有可用于 Helm 部署的凭据")
 	}
-	defer func() {
-		_ = cs.CoreV1().Secrets(runnerNS).Delete(context.Background(), rc.secret, metav1.DeleteOptions{})
-	}()
+	spec := helmJobSpec(helmArgs(env, image, timeout), secret, auth.serviceAccount)
+	logf("helm deployment release=%s namespace=%s version=%s extra_values=%d",
+		h.Release, env.Namespace, h.Version, len(h.Set))
+	return runJob(ctx, cs, runnerNS, fmt.Sprintf("cicd-helm-%d", releaseID), 0, spec, int(timeout.Seconds())+300, logf)
+}
+
+func helmArgs(env *EnvTarget, image string, timeout time.Duration) []string {
+	h := env.Helm
 	repo, tag := splitImage(image)
 	rk, tk := h.ImageRepoKey, h.ImageTagKey
 	if rk == "" {
@@ -462,16 +498,25 @@ func helmDeploy(ctx context.Context, cs kubeIface, runnerNS string, kubeconfig [
 	for _, s := range h.Set {
 		args = append(args, "--set", s)
 	}
-	spec := corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
-		Volumes:       []corev1.Volume{{Name: "kube", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: rc.secret}}}},
-		Containers: []corev1.Container{{Name: stepContainer, Image: HelmImage, Args: args,
-			Env:          []corev1.EnvVar{{Name: "KUBECONFIG", Value: "/kube/config"}},
-			VolumeMounts: []corev1.VolumeMount{{Name: "kube", MountPath: "/kube", ReadOnly: true}}}},
+	return args
+}
+
+// helmJobSpec builds the helm Job pod: kubeconfig mounted from secret, or (when
+// secret is empty) the in-cluster token of serviceAccount with no KUBECONFIG.
+func helmJobSpec(args []string, secret, serviceAccount string) corev1.PodSpec {
+	step := corev1.Container{Name: stepContainer, Image: HelmImage, Args: args}
+	spec := corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever}
+	if secret != "" {
+		spec.Volumes = []corev1.Volume{{Name: "kube", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: secret}}}}
+		step.Env = []corev1.EnvVar{{Name: "KUBECONFIG", Value: "/kube/config"}}
+		step.VolumeMounts = []corev1.VolumeMount{{Name: "kube", MountPath: "/kube", ReadOnly: true}}
+	} else {
+		automount := true
+		spec.ServiceAccountName = serviceAccount
+		spec.AutomountServiceAccountToken = &automount
 	}
-	logf("helm deployment release=%s namespace=%s version=%s extra_values=%d",
-		h.Release, env.Namespace, h.Version, len(h.Set))
-	return runJob(ctx, cs, runnerNS, fmt.Sprintf("cicd-helm-%d", releaseID), 0, spec, int(timeout.Seconds())+300, logf)
+	spec.Containers = []corev1.Container{step}
+	return spec
 }
 
 // ---------------------------------------------------------------- HTTP

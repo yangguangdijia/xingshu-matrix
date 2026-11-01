@@ -32,12 +32,18 @@ test("legacy explicit cluster ownership remains readable while unbound sources s
   assert.equal(O.datasource([legacy], [cluster], cluster, ["loki"]).ds.id, 6);
   assert.equal(O.datasource([unbound], [cluster], cluster, ["loki"]), null);
 });
-test("node and workload selectors escape identifiers and exclude unmatched pods", () => {
+test("node and workload selectors escape identifiers without requiring node IPs", () => {
   const q = O.metricQueries([{ name: "node.1", internal_ip: "10.0.0.1" }], [], "prod", "missing");
   assert.match(q.cpu, /pod=~"a\^"/);
   assert.ok(q.rx.includes('instance=~"10\\\\.0\\\\.0\\\\.1:9100"'));
   assert.match(q.rst, /node=~/);
-  assert.throws(() => O.metricQueries([], [], "", ""), /节点地址/);
+  const clusterOnly = O.metricQueries([], [], "", "");
+  assert.match(clusterOnly.cpu, /node_cpu_seconds_total\{mode="idle"\}/);
+  assert.match(clusterOnly.mem, /node_memory_MemAvailable_bytes\{\}/);
+  assert.doesNotMatch(clusterOnly.rx, /instance=~/);
+  const workload = O.metricQueries([], [{ namespace: "prod", name: "api-1", labels: { app: "api" } }], "prod", "api");
+  assert.match(workload.cpu, /pod=~"api-1"/);
+  assert.match(workload.cpu, /node=~"a\^"/);
 });
 test("central PromQL, Loki and trace selectors use the mapped label value", () => {
   const scope = O.datasource([{ type: "prometheus", env: "", options: { scope: "central", cluster_label: "cluster", cluster_values: { 1: "cluster-uid-a" } } }], [cluster], cluster, ["prometheus"]);
@@ -46,6 +52,9 @@ test("central PromQL, Loki and trace selectors use the mapped label value", () =
     assert.match(value, /cluster="cluster-uid-a"/);
     assert.doesNotMatch(value, /cluster="dev-a"/);
   });
+  const noIp = O.metricQueries([], [], "", "", scope);
+  Object.values(noIp).forEach((value) => assert.match(value, /cluster="cluster-uid-a"/));
+  assert.doesNotMatch(noIp.cpu, /instance=~/);
   assert.equal(O.scopedPromQuery("up", scope), 'up{cluster="cluster-uid-a"}');
   assert.throws(() => O.scopedPromQuery('up{cluster="cluster-uid-b"}', scope), /冲突/);
   assert.match(O.scopedPromQuery('up{job="a,cluster=\\"cluster-uid-a\\""}', scope), /,cluster="cluster-uid-a"\}$/);
@@ -135,4 +144,33 @@ test("application alerts require exact workload and cluster ownership", () => {
   const central = { ...scope, datasources: [{ id: 9, env: "", options: { scope: "central", cluster_label: "cluster", cluster_values: { 1: "uid-a" } } }] };
   assert.equal(O.alertBelongsToScope({ datasource_id: 9, labels: { namespace: "shop", app: "checkout", cluster: "uid-a" } }, central), true);
   assert.equal(O.alertBelongsToScope({ datasource_id: 9, labels: { namespace: "shop", app: "checkout" } }, central), false);
+});
+
+
+test("central alert location reverse-maps any valid configured cluster label and fails closed", () => {
+  const clusters = [cluster, { id: 2, name: "dev-b", env: "dev" }];
+  const central = {
+    id: 9, type: "alertmanager", env: "dev",
+    options: { scope: "central", cluster_label: "tenant_cluster", cluster_values: { 1: "uid-a", 2: "uid-b" } }
+  };
+  const mapped = O.alertLocation({ datasource_id: 9, env: "dev", labels: { tenant_cluster: "uid-b", namespace: "shop" } }, clusters, [central]);
+  assert.equal(mapped.cluster.name, "dev-b");
+  assert.match(mapped.basis, /tenant_cluster/);
+
+  const conflict = O.alertLocation({ datasource_id: 9, env: "dev", labels: { tenant_cluster: "uid-a", cluster_id: "2" } }, clusters, [central]);
+  assert.equal(conflict.cluster, null);
+  assert.match(conflict.note, /冲突/);
+
+  const duplicate = { ...central, options: { ...central.options, cluster_values: { 1: "same", 2: "same" } } };
+  const ambiguous = O.alertLocation({ datasource_id: 9, env: "dev", labels: { tenant_cluster: "same" } }, clusters, [duplicate]);
+  assert.equal(ambiguous.cluster, null);
+  assert.match(ambiguous.note, /多个/);
+
+  const missing = O.alertLocation({ datasource_id: 9, env: "dev", labels: { tenant_cluster: "unknown" } }, clusters, [central]);
+  assert.equal(missing.cluster, null);
+  assert.match(missing.note, /未匹配/);
+
+  const absent = O.alertLocation({ datasource_id: 9, env: "dev", labels: {} }, clusters, [central]);
+  assert.equal(absent.cluster, null);
+  assert.match(absent.note, /缺少/);
 });

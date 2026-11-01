@@ -35,6 +35,8 @@
     var inventory = inventoryFor(s, item), status = inventory ? state(inventory) : s.inventoryComplete ? 'missing' : 'unknown';
     return s.inventoryOK && /^(missing|not_installed)$/.test(status) && !installed(inventory) && (item.installable === true || item.supported === true) && can(item.install_permission || "workload:write");
   }
+  function catalogExpanded(s) { return !!s.search || (s.inventoryOK && s.inventory.length === 0); }
+  function updateCatalogDisclosure(s) { var detail = s.el.querySelector('[data-xcc-available]'); if (detail) detail.open = catalogExpanded(s); }
   function draw(s) {
     var inv = s.el.querySelector("[data-xcc-inventory]"), catalog = s.el.querySelector("[data-xcc-catalog]");
     inv.innerHTML = !s.inventoryOK ? '<p class="xcc-error" role="alert">' + esc(failure(s.inventoryError)) + '</p>' : !s.inventory.length ? '<p class="xcc-state">未发现组件库存</p>' : '<div class="xcc-scroll"><table class="x-table xcc-table"><thead><tr><th>组件</th><th>类型 / 安装来源</th><th>Namespace / Release</th><th>版本</th><th>发现状态</th><th>操作</th></tr></thead><tbody>' + s.inventory.filter(function (r) { return [key(r), r.name, r.kind, r.type, r.namespace].join(" ").toLowerCase().includes(s.search.toLowerCase()); }).map(function (r) {
@@ -45,6 +47,7 @@
       var found = inventoryFor(s, r), available = installable(s, r), label = found && installed(found) ? '已安装' : !s.inventoryOK ? '发现失败' : !found && !s.inventoryComplete ? '库存未确认' : found && /^(forbidden|error|unavailable|unknown)$/.test(state(found)) ? states[state(found)] : r.installable !== true && r.supported !== true ? '不支持安装' : !can(r.install_permission || "workload:write") ? '无安装权限' : '安装';
       return '<tr><td><strong>' + val(r.name || key(r)) + '</strong></td><td>' + val(r.kind || r.category || r.type) + '</td><td>' + val(r.description || r.notes) + (r.kube_version ? '<small>Kubernetes ' + esc(r.kube_version) + '</small>' : '') + '</td><td>' + val((r.versions || []).map(function (v) { return typeof v === "object" ? v.version || v.name : v; }).join(' / ')) + '</td><td><button class="x-btn" type="button" data-xcc-install="' + s.catalog.indexOf(r) + '"' + (available ? '' : ' disabled') + '>' + esc(label) + '</button></td></tr>';
     }).join("") + '</tbody></table></div>';
+    updateCatalogDisclosure(s);
   }
   function choices(rows, selected, empty) { return (empty ? '<option value="">' + esc(empty) + '</option>' : '') + rows.map(function (r) { var v = typeof r === "object" ? r.value || r.name || r.version : r; return '<option value="' + esc(v) + '"' + (String(v) === String(selected) ? ' selected' : '') + '>' + esc(typeof r === "object" ? r.label || r.name || v : v) + '</option>'; }).join(""); }
   function field(label, name, value, attrs) { return '<label>' + esc(label) + '<input class="x-input" name="' + name + '" value="' + esc(value) + '" ' + (attrs || '') + '></label>'; }
@@ -250,7 +253,7 @@
     var s = { el: el, ctx: ctx || {}, context: context, snapshot: context.get(), controller: new AbortController(), inventory: [], catalog: [], search: '' }; mounts.set(el, s);
     s.unsubscribe = context.subscribe(function () { if (mounts.get(el) === s) render(el, ctx); });
     if (s.snapshot.kind !== 'cluster' || !s.snapshot.cluster_id) { el.innerHTML = '<p class="xcc-state">请选择单个集群</p>'; return Promise.resolve(); }
-    el.innerHTML = '<section class="xcc-root" aria-label="组件中心"><div class="xcc-toolbar"><h2>组件中心</h2><input class="x-input" type="search" data-xcc-search aria-label="搜索组件" placeholder="名称 / 类型"><button class="x-btn" type="button" data-xcc-refresh>刷新</button></div><section class="xcc-section"><h3>集群组件</h3><div data-xcc-inventory><p class="xcc-state" role="status">正在发现组件…</p></div></section><section class="xcc-section"><h3>组件目录</h3><div data-xcc-catalog><p class="xcc-state" role="status">正在读取目录…</p></div></section><section class="xcc-detail" data-xcc-detail hidden></section></section>';
+    el.innerHTML = '<section class="xcc-root" aria-label="组件中心"><div class="xcc-toolbar"><h2>组件中心</h2><input class="x-input" type="search" data-xcc-search aria-label="搜索组件" placeholder="名称 / 类型"><button class="x-btn" type="button" data-xcc-refresh>刷新</button></div><section class="xcc-section"><h3>集群组件库存</h3><div data-xcc-inventory><p class="xcc-state" role="status">正在发现组件…</p></div></section><details class="xcc-section" data-xcc-available><summary>可安装组件</summary><div data-xcc-catalog><p class="xcc-state" role="status">正在读取目录…</p></div></details><section class="xcc-detail" data-xcc-detail hidden></section></section>';
     s.click = function (event) {
       var b = event.target.closest('button'); if (!b || !el.contains(b) || !live(s)) return;
       if (b.hasAttribute('data-xcc-refresh') && !(s.edit && s.edit.busy)) return render(el, ctx);

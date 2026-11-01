@@ -1,0 +1,25 @@
+# matrix-cluster-agent: runs inside a member cluster and opens a reverse
+# tunnel to the Matrix platform (see server/cmd/matrix-cluster-agent).
+#
+#   docker build -f Dockerfile.cluster-agent --build-arg VERSION=v1.2.3 -t matrix-cluster-agent .
+
+# ---- build ----
+FROM golang:1.23-alpine AS build
+WORKDIR /src
+RUN apk add --no-cache git
+COPY server/go.mod server/go.sum ./server/
+RUN cd server && go mod download
+COPY server/ ./server/
+ARG VERSION=dev
+ARG COMMIT=unknown
+RUN cd server && CGO_ENABLED=0 go build -trimpath \
+    -ldflags "-s -w -X github.com/yangguangdijia/xingshu-matrix/server/internal/version.Version=${VERSION} -X github.com/yangguangdijia/xingshu-matrix/server/internal/version.Commit=${COMMIT} -X github.com/yangguangdijia/xingshu-matrix/server/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    -o /out/matrix-cluster-agent ./cmd/matrix-cluster-agent
+
+# ---- runtime ----
+# distroless/static ships CA certificates and runs as UID 65532 (nonroot).
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/matrix-cluster-agent /matrix-cluster-agent
+USER nonroot:nonroot
+EXPOSE 8081
+ENTRYPOINT ["/matrix-cluster-agent"]

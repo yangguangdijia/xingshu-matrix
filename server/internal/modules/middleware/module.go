@@ -281,9 +281,14 @@ func (m *Module) listInstances(c *gin.Context) {
 		args = append(args, e)
 		where = append(where, fmt.Sprintf("env=$%d", len(args)))
 	}
-	if kw := c.Query("keyword"); kw != "" {
+	if kw := strings.TrimSpace(c.Query("keyword")); kw != "" {
+		if len([]rune(kw)) > 128 {
+			httpx.Fail(c, httpx.Validation("search keyword is too long"))
+			return
+		}
 		args = append(args, "%"+kw+"%")
-		where = append(where, fmt.Sprintf("name ILIKE $%d", len(args)))
+		position := len(args)
+		where = append(where, fmt.Sprintf("(name ILIKE $%d OR type ILIKE $%d OR env ILIKE $%d OR endpoints::text ILIKE $%d)", position, position, position, position))
 	}
 	if pr.EnvScope != nil && !contains(pr.EnvScope, "*") {
 		args = append(args, pr.EnvScope)
