@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,10 +23,42 @@ import (
 
 const maxBody = 32 << 20 // 32 MiB upstream response cap
 
+type flexibleClusterID string
+
+func (id *flexibleClusterID) UnmarshalJSON(raw []byte) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		*id = ""
+		return nil
+	}
+	value := ""
+	if raw[0] == '"' {
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		value = strings.TrimSpace(value)
+	} else {
+		var number json.Number
+		if err := json.Unmarshal(raw, &number); err != nil {
+			return err
+		}
+		value = number.String()
+	}
+	if value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed <= 0 {
+			return errors.New("cluster_id must be a positive integer or numeric string")
+		}
+	}
+	*id = flexibleClusterID(value)
+	return nil
+}
+
 // client is an authenticated HTTP client bound to one data source.
 type client struct {
-	ds   *DataSource
-	http *http.Client
+	ds    *DataSource
+	http  *http.Client
+	scope sourceScope
 }
 
 func newClient(ds *DataSource) *client {
@@ -151,6 +184,25 @@ type promEnvelope struct {
 }
 
 func (c *client) prom(ctx context.Context, path string, q url.Values) (*promEnvelope, error) {
+	if c.scope.Central {
+		if path == "/api/v1/rules" {
+			return nil, httpx.Validation("central Prometheus rules cannot be safely restricted to one cluster")
+		}
+		if path == "/api/v1/query" || path == "/api/v1/query_range" {
+			if err := scopedPromQL(q.Get("query"), c.scope, false); err != nil {
+				return nil, err
+			}
+		} else {
+			if len(q["match[]"]) == 0 {
+				return nil, httpx.Validation("central Prometheus metadata requires scoped match[] selectors")
+			}
+			for _, match := range q["match[]"] {
+				if err := scopedPromQL(match, c.scope, true); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
 	var env promEnvelope
 	if err := c.getJSON(ctx, path, q, &env); err != nil {
 		return nil, err
@@ -307,12 +359,13 @@ func (c *client) PromMeta(ctx context.Context, path string, match []string, star
 
 // LogQuery is the unified log query request.
 type LogQuery struct {
-	Datasource int64  `json:"datasource" binding:"required"`
-	Query      string `json:"query"`
-	From       string `json:"from"`
-	To         string `json:"to"`
-	Limit      int    `json:"limit"`
-	Index      string `json:"index,omitempty"` // elasticsearch override
+	Datasource int64             `json:"datasource" binding:"required"`
+	ClusterID  flexibleClusterID `json:"cluster_id,omitempty"`
+	Query      string            `json:"query"`
+	From       string            `json:"from"`
+	To         string            `json:"to"`
+	Limit      int               `json:"limit"`
+	Index      string            `json:"index,omitempty"` // elasticsearch override
 }
 
 // LogRow is a normalized log line.
@@ -410,6 +463,11 @@ func firstN(s string, n int) string {
 
 // QueryLogs dispatches to Loki or Elasticsearch.
 func (c *client) QueryLogs(ctx context.Context, q *LogQuery) (*LogResult, error) {
+	if c.scope.Central && c.ds.Type == "loki" {
+		if err := scopedLogQL(q.Query, c.scope); err != nil {
+			return nil, err
+		}
+	}
 	from, to, err := q.bounds()
 	if err != nil {
 		return nil, err
@@ -529,6 +587,14 @@ func (c *client) esQuery(ctx context.Context, q *LogQuery, from, to time.Time) (
 				"format": "strict_date_optional_time"}}}},
 		}},
 	}
+	if c.scope.Central {
+		if !clusterLabelName.MatchString(c.scope.Label) {
+			return nil, httpx.Validation("invalid central Elasticsearch cluster field")
+		}
+		filters := body["query"].(map[string]any)["bool"].(map[string]any)["filter"].([]any)
+		body["query"].(map[string]any)["bool"].(map[string]any)["filter"] = append(filters,
+			map[string]any{"term": map[string]any{c.scope.Label: c.scope.Value}})
+	}
 	raw, err := c.do(ctx, http.MethodPost, "/"+url.PathEscape(index)+"/_search", nil, body)
 	if err != nil {
 		return nil, err
@@ -632,6 +698,18 @@ type Trace struct {
 	Spans   []Span `json:"spans"`
 }
 
+func (c *client) traceMatches(trace *Trace) bool {
+	if trace == nil || len(trace.Spans) == 0 {
+		return false
+	}
+	for _, span := range trace.Spans {
+		if span.Tags["__matrix_scope_conflict"] != "" || !c.scope.checkLabels(span.Tags) {
+			return false
+		}
+	}
+	return true
+}
+
 // TraceSearch are the search parameters (service/operation/tags apply to both backends).
 type TraceSearch struct {
 	Service, Operation, Tags, Query, MinDuration, MaxDuration, From, To string
@@ -682,6 +760,9 @@ func (jt *jaegerTrace) normalize() Trace {
 		}
 		for _, tg := range s.Tags {
 			value := fmt.Sprint(tg.Value)
+			if prior, ok := sp.Tags[tg.Key]; ok && prior != value {
+				sp.Tags["__matrix_scope_conflict"] = "true"
+			}
 			sp.Tags[tg.Key] = value
 			if (tg.Key == "error" && value == "true") || (tg.Key == "otel.status_code" && strings.EqualFold(value, "ERROR")) || (tg.Key == "http.status_code" && strings.HasPrefix(value, "5")) {
 				sp.Error = true
@@ -721,13 +802,16 @@ func summarize(t Trace) TraceSummary {
 
 // TraceServices lists services known to the tracing backend.
 func (c *client) TraceServices(ctx context.Context) ([]string, error) {
+	var services []string
 	switch c.ds.Type {
 	case "jaeger":
 		var r struct {
 			Data []string `json:"data"`
 		}
-		err := c.getJSON(ctx, "/api/services", nil, &r)
-		return r.Data, err
+		if err := c.getJSON(ctx, "/api/services", nil, &r); err != nil {
+			return nil, err
+		}
+		services = r.Data
 	case "tempo":
 		var r struct {
 			TagValues []any `json:"tagValues"`
@@ -743,9 +827,27 @@ func (c *client) TraceServices(ctx context.Context) ([]string, error) {
 				out = append(out, fmt.Sprint(v))
 			}
 		}
-		return out, nil
+		services = out
+	default:
+		return nil, httpx.BadRequest("not a tracing datasource")
 	}
-	return nil, httpx.BadRequest("not a tracing datasource")
+	if !c.scope.Central {
+		return services, nil
+	}
+	if len(services) > 32 {
+		return nil, httpx.Validation("central trace service listing exceeds verification limit; narrow by service search")
+	}
+	visible := []string{}
+	for _, service := range services {
+		matches, err := c.SearchTraces(ctx, TraceSearch{Service: service, From: "now-24h", Limit: 20})
+		if err != nil {
+			return nil, err
+		}
+		if len(matches) > 0 {
+			visible = append(visible, service)
+		}
+	}
+	return visible, nil
 }
 
 // SearchTraces searches Jaeger /api/traces or Tempo /api/search.
@@ -761,6 +863,11 @@ func (c *client) SearchTraces(ctx context.Context, s TraceSearch) ([]TraceSummar
 	}
 	if s.Limit <= 0 || s.Limit > 1000 {
 		s.Limit = 20
+	}
+	if c.scope.Central {
+		if s.Query != "" || s.Limit > 50 {
+			return nil, httpx.Validation("central trace search requires bounded service search without raw query")
+		}
 	}
 	out := []TraceSummary{}
 	switch c.ds.Type {
@@ -782,7 +889,10 @@ func (c *client) SearchTraces(ctx context.Context, s TraceSearch) ([]TraceSummar
 			return nil, err
 		}
 		for i := range r.Data {
-			out = append(out, summarize(r.Data[i].normalize()))
+			trace := r.Data[i].normalize()
+			if !c.scope.Central || c.traceMatches(&trace) {
+				out = append(out, summarize(trace))
+			}
 		}
 	case "tempo":
 		q := url.Values{"start": {strconv.FormatInt(start.Unix(), 10)}, "end": {strconv.FormatInt(end.Unix(), 10)},
@@ -830,6 +940,19 @@ func (c *client) SearchTraces(ctx context.Context, s TraceSearch) ([]TraceSummar
 			return nil, err
 		}
 		for _, t := range r.Traces {
+			if c.scope.Central {
+				trace, getErr := c.GetTrace(ctx, t.TraceID)
+				if getErr != nil {
+					var apiErr *httpx.Error
+					if errors.As(getErr, &apiErr) && apiErr.Status == http.StatusNotFound {
+						continue
+					}
+					return nil, getErr
+				}
+				if !c.traceMatches(trace) {
+					continue
+				}
+			}
 			ns, _ := strconv.ParseInt(t.StartTimeUnixNano, 10, 64)
 			out = append(out, TraceSummary{TraceID: t.TraceID, RootService: t.RootServiceName, RootOperation: t.RootTraceName,
 				Start: time.Unix(0, ns).UTC(), DurationMs: float64(t.DurationMs)})
@@ -859,13 +982,23 @@ func (c *client) GetTrace(ctx context.Context, id string) (*Trace, error) {
 			return nil, httpx.NotFound("trace not found")
 		}
 		t := r.Data[0].normalize()
+		if c.scope.Central && !c.traceMatches(&t) {
+			return nil, httpx.NotFound("trace not found for current cluster")
+		}
 		return &t, nil
 	case "tempo":
 		raw, err := c.do(ctx, http.MethodGet, "/api/traces/"+id, nil, nil)
 		if err != nil {
 			return nil, err
 		}
-		return parseOTLPTrace(id, raw)
+		t, err := parseOTLPTrace(id, raw)
+		if err != nil {
+			return nil, err
+		}
+		if c.scope.Central && !c.traceMatches(t) {
+			return nil, httpx.NotFound("trace not found for current cluster")
+		}
+		return t, nil
 	}
 	return nil, httpx.BadRequest("not a tracing datasource")
 }
@@ -940,7 +1073,9 @@ func parseOTLPTrace(id string, raw []byte) (*Trace, error) {
 	t := &Trace{TraceID: strings.ToLower(id), Spans: []Span{}}
 	for _, b := range batches {
 		svc := ""
+		resourceTags := map[string]string{}
 		for _, a := range b.Resource.Attributes {
+			resourceTags[a.Key] = attrVal(a.Value)
 			if a.Key == "service.name" {
 				svc = attrVal(a.Value)
 			}
@@ -951,8 +1086,15 @@ func parseOTLPTrace(id string, raw []byte) (*Trace, error) {
 				en, _ := strconv.ParseInt(s.EndTimeUnixNano, 10, 64)
 				sp := Span{SpanID: otlpID(s.SpanID), ParentID: otlpID(s.ParentSpanID), Service: svc, Operation: s.Name,
 					Start: time.Unix(0, st).UTC(), DurationUs: (en - st) / 1000, Tags: map[string]string{}}
+				for k, v := range resourceTags {
+					sp.Tags[k] = v
+				}
 				for _, a := range s.Attributes {
-					sp.Tags[a.Key] = attrVal(a.Value)
+					value := attrVal(a.Value)
+					if prior, ok := sp.Tags[a.Key]; ok && prior != value {
+						sp.Tags["__matrix_scope_conflict"] = "true"
+					}
+					sp.Tags[a.Key] = value
 				}
 				code := fmt.Sprint(s.Status.Code)
 				sp.Error = code == "2" || code == "STATUS_CODE_ERROR"
@@ -970,7 +1112,8 @@ func parseOTLPTrace(id string, raw []byte) (*Trace, error) {
 
 // SilenceInput is the create-silence payload (Alertmanager v2 schema).
 type SilenceInput struct {
-	Datasource int64 `json:"datasource" binding:"required"`
+	Datasource int64             `json:"datasource" binding:"required"`
+	ClusterID  flexibleClusterID `json:"cluster_id,omitempty"`
 	Matchers   []struct {
 		Name    string `json:"name"`
 		Value   string `json:"value"`
@@ -990,10 +1133,72 @@ func (c *client) ListSilences(ctx context.Context, filter []string) (any, error)
 	}
 	var out any
 	err := c.getJSON(ctx, "/api/v2/silences", q, &out)
-	return out, err
+	if err != nil || !c.scope.Central {
+		return out, err
+	}
+	items, ok := out.([]any)
+	if !ok {
+		return nil, upstreamErr("alertmanager: unexpected silence list")
+	}
+	visible := make([]any, 0, len(items))
+	for _, item := range items {
+		if c.silenceOwned(item) {
+			visible = append(visible, item)
+		}
+	}
+	return visible, nil
+}
+
+func (c *client) silenceOwned(item any) bool {
+	if !c.scope.Central {
+		return true
+	}
+	obj, ok := item.(map[string]any)
+	if !ok {
+		return false
+	}
+	matchers, ok := obj["matchers"].([]any)
+	if !ok {
+		return false
+	}
+	count := 0
+	for _, item := range matchers {
+		matcher, ok := item.(map[string]any)
+		if !ok {
+			return false
+		}
+		if matcher["name"] != c.scope.Label {
+			continue
+		}
+		if matcher["value"] != c.scope.Value || matcher["isRegex"] == true || matcher["isEqual"] == false {
+			return false
+		}
+		count++
+	}
+	return count == 1
 }
 
 func (c *client) CreateSilence(ctx context.Context, in *SilenceInput, createdBy string) (string, error) {
+	if c.scope.Central {
+		found := false
+		for _, matcher := range in.Matchers {
+			if matcher.Name != c.scope.Label {
+				continue
+			}
+			if found || matcher.Value != c.scope.Value || matcher.IsRegex || (matcher.IsEqual != nil && !*matcher.IsEqual) {
+				return "", httpx.Validation("silence cluster matcher conflicts with current cluster")
+			}
+			found = true
+		}
+		if !found {
+			in.Matchers = append(in.Matchers, struct {
+				Name    string `json:"name"`
+				Value   string `json:"value"`
+				IsRegex bool   `json:"isRegex"`
+				IsEqual *bool  `json:"isEqual,omitempty"`
+			}{Name: c.scope.Label, Value: c.scope.Value})
+		}
+	}
 	now := time.Now()
 	start, err := parseTime(in.StartsAt, now)
 	if err != nil {
@@ -1039,6 +1244,15 @@ var silenceIDRe = regexp.MustCompile(`^[0-9a-fA-F-]{8,64}$`)
 func (c *client) DeleteSilence(ctx context.Context, id string) error {
 	if !silenceIDRe.MatchString(id) {
 		return httpx.Validation("invalid silence id")
+	}
+	if c.scope.Central {
+		var silence any
+		if err := c.getJSON(ctx, "/api/v2/silence/"+id, nil, &silence); err != nil {
+			return err
+		}
+		if !c.silenceOwned(silence) {
+			return httpx.NotFound("silence not found for current cluster")
+		}
 	}
 	_, err := c.do(ctx, http.MethodDelete, "/api/v2/silence/"+id, nil, nil)
 	return err

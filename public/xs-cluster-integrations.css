@@ -1,0 +1,21 @@
+.xi-root { min-width: 0; }
+.xi-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.xi-toolbar h2, .xi-toolbar h3 { margin: 0 auto 0 0; font-size: 15px; }
+.xi-scroll { overflow-x: auto; border: 1px solid var(--x-line, #ddd); border-radius: 6px; }
+.xi-table { min-width: 800px; width: 100%; margin: 0; }
+.xi-table td { vertical-align: top; overflow-wrap: anywhere; max-width: 300px; }
+.xi-table small { display: block; margin-top: 5px; }
+.xi-table .x-btn { margin: 0 4px 6px 0; }
+.xi-state { color: var(--x-sub, #666); padding: 14px 0; }
+.xi-error { color: var(--x-red, #b42318); overflow-wrap: anywhere; }
+.xi-detail, .xi-components { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--x-line, #ddd); }
+.xi-root [hidden] { display: none; }
+.xi-form { max-width: 900px; }
+.xi-form fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; border: 0; padding: 0; margin: 0; }
+.xi-form label { display: grid; gap: 5px; font-size: 12px; min-width: 0; }
+.xi-form input, .xi-form select { width: 100%; min-width: 0; }
+.xi-form .xi-check { display: flex; align-items: center; gap: 6px; }
+.xi-check input { width: auto; }
+.xi-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+.xi-root :focus-visible { outline: 2px solid var(--x-blue, #1677ff); outline-offset: 2px; }
+@media (max-width: 640px) { .xi-toolbar h2 { flex: 1 0 100%; } .xi-form fieldset { grid-template-columns: minmax(0, 1fr); } }

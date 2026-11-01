@@ -22,8 +22,8 @@ spec:
           image: ghcr.io/yangguangdijia/xingshu-matrix:latest
           ports: [{ containerPort: 80 }]
           resources:
-            requests: { cpu: 50m, memory: 64Mi }
-            limits: { cpu: 200m, memory: 128Mi }
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 768Mi }
           readinessProbe: { httpGet: { path: /healthz, port: 80 }, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: /healthz, port: 80 }, periodSeconds: 20 }
 ---

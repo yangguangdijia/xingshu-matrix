@@ -7,18 +7,30 @@ vm.runInContext(fs.readFileSync(new URL("../../public/xs-observability.js", impo
 const O = context.XSObserve;
 const cluster = { id: 1, name: "dev-a", env: "dev" };
 
-test("datasources belong to selected cluster/environment; shared env requires labels", () => {
+test("datasource resolution never infers sharing from same environment", () => {
+  const other = { id: 2, name: "dev-b", env: "dev" };
   const ds = [{ id: 1, type: "loki", env: "dev" }, { id: 2, type: "loki", env: "prod" }];
-  assert.equal(O.datasource(ds, [cluster], cluster, ["loki"]).ds.id, 1);
+  assert.equal(O.datasource(ds, [cluster], cluster, ["loki"]), null);
   assert.equal(O.datasource(ds, [cluster], null, ["loki"]), null);
-  const s = O.datasource(ds, [cluster, { id: 2, name: "dev-b", env: "dev" }], cluster, ["loki"]);
-  assert.equal(s.dedicated, false);
-  assert.equal(O.logQuery({ ...s, cluster }), '{job="fluent-bit",cluster="dev-a"}');
+  const central = { id: 3, type: "loki", env: "", options: { scope: "central", cluster_label: "k8s_cluster", cluster_values: { 1: "a-label" } } };
+  const s = O.datasource([central], [cluster, other], cluster, ["loki"]);
+  assert.equal(s.clusterValue, "a-label"); assert.equal(s.dedicated, false);
+  assert.equal(O.logQuery(s), '{job="fluent-bit",k8s_cluster="a-label"}');
+  assert.equal(O.datasource([central], [cluster, other], other, ["loki"]), null);
 });
 test("explicit ownership wins and ambiguous datasources are rejected", () => {
-  const ds = [{ type: "loki", env: "dev", options: { cluster_id: 1 }, id: 3 }, { type: "loki", env: "dev", id: 4 }];
+  const ds = [{ type: "loki", env: "dev", options: { scope: "cluster", cluster_id: 1, cluster_name: "dev-a" }, id: 3 }, { type: "loki", env: "", options: { scope: "central", cluster_label: "cluster", cluster_values: { 1: "dev-a" } }, id: 4 }];
   assert.equal(O.datasource(ds, [cluster], cluster, ["loki"]).ds.id, 3);
+  assert.throws(() => O.datasource([ds[0], { ...ds[0], id: 5 }], [cluster], cluster, ["loki"]), /多个/);
   assert.throws(() => O.datasource([ds[1], { ...ds[1], id: 5 }], [cluster], cluster, ["loki"]), /多个/);
+  assert.throws(() => O.datasource([{ ...ds[0], options: { ...ds[0].options, cluster_name: "dev-b" } }], [cluster], cluster, ["loki"]), /不一致/);
+  assert.throws(() => O.datasource([{ ...ds[1], options: { ...ds[1].options, cluster_values: null } }], [cluster], cluster, ["loki"]), /缺少/);
+});
+test("legacy explicit cluster ownership remains readable while unbound sources stay unresolved", () => {
+  const legacy = { id: 6, type: "loki", env: "dev", options: { cluster_id: 1, cluster_name: "dev-a" } };
+  const unbound = { id: 7, type: "loki", env: "dev", options: {} };
+  assert.equal(O.datasource([legacy], [cluster], cluster, ["loki"]).ds.id, 6);
+  assert.equal(O.datasource([unbound], [cluster], cluster, ["loki"]), null);
 });
 test("node and workload selectors escape identifiers and exclude unmatched pods", () => {
   const q = O.metricQueries([{ name: "node.1", internal_ip: "10.0.0.1" }], [], "prod", "missing");
@@ -26,6 +38,27 @@ test("node and workload selectors escape identifiers and exclude unmatched pods"
   assert.ok(q.rx.includes('instance=~"10\\\\.0\\\\.0\\\\.1:9100"'));
   assert.match(q.rst, /node=~/);
   assert.throws(() => O.metricQueries([], [], "", ""), /节点地址/);
+});
+test("central PromQL, Loki and trace selectors use the mapped label value", () => {
+  const scope = O.datasource([{ type: "prometheus", env: "", options: { scope: "central", cluster_label: "cluster", cluster_values: { 1: "cluster-uid-a" } } }], [cluster], cluster, ["prometheus"]);
+  const q = O.metricQueries([{ name: "node", internal_ip: "10.0.0.1" }], [{ namespace: "ns", name: "pod" }], "ns", "", scope);
+  Object.values(q).forEach((value) => {
+    assert.match(value, /cluster="cluster-uid-a"/);
+    assert.doesNotMatch(value, /cluster="dev-a"/);
+  });
+  assert.equal(O.scopedPromQuery("up", scope), 'up{cluster="cluster-uid-a"}');
+  assert.throws(() => O.scopedPromQuery('up{cluster="cluster-uid-b"}', scope), /冲突/);
+  assert.match(O.scopedPromQuery('up{job="a,cluster=\\"cluster-uid-a\\""}', scope), /,cluster="cluster-uid-a"\}$/);
+  assert.throws(() => O.scopedPromQuery('up{job="a",cluster=~"cluster-uid-a"}', scope), /冲突/);
+  assert.throws(() => O.scopedPromQuery('sum(rate(up[5m]))', scope), /仅支持/);
+  assert.equal(O.traceTags(scope).cluster, "cluster-uid-a");
+  assert.throws(() => O.traceTags(scope, { cluster: "cluster-uid-b" }), /冲突/);
+  assert.throws(() => O.logQuery({ ...scope, ds: { options: { log_selector: '{cluster="cluster-uid-b"}' } } }), /冲突/);
+  assert.equal(O.scopedLogQuery('{app="api"} |= "failed"', scope), '{app="api",cluster="cluster-uid-a"} |= "failed"');
+  assert.throws(() => O.scopedLogQuery('{app="api",cluster="cluster-uid-b"}', scope), /冲突/);
+  assert.throws(() => O.scopedLogQuery('sum(rate(foo[5m]))', scope), /仅支持/);
+  const trace = { type: "tempo", env: "", options: { scope: "central", cluster_label: "k8s.cluster.name", cluster_values: { 1: "local-a" } } };
+  assert.equal(O.traceTags(O.datasource([trace], [cluster], cluster, ["tempo"]))["k8s.cluster.name"], "local-a");
 });
 test("Prometheus NaN remains missing, never converted to a healthy zero", () => {
   const r = O.matrix({ data: { result: [{ metric: {}, values: [[1, "NaN"], [2, "26.3"]] }] } });
@@ -91,12 +124,15 @@ test("diagnostic input redacts common credential forms and bounds length", () =>
 test("application alerts require exact workload and cluster ownership", () => {
   const scope = {
     appName: "checkout", namespace: "shop", targetId: 1, targetCluster: cluster, environmentClusterCount: 2,
-    datasources: [{ id: 7, options: { cluster_id: 1 } }], pods: ["checkout-abc"], services: ["checkout"], workloads: ["checkout"]
+    clusters: [cluster], datasources: [{ id: 7, env: "dev", options: { scope: "cluster", cluster_id: 1 } }], pods: ["checkout-abc"], services: ["checkout"], workloads: ["checkout"]
   };
   assert.equal(O.alertBelongsToScope({ datasource_id: 7, labels: { namespace: "shop", pod: "checkout-abc" } }, scope), true);
   assert.equal(O.alertBelongsToScope({ datasource_id: 8, labels: { namespace: "shop", pod: "checkout-abc" } }, scope), false);
   assert.equal(O.alertBelongsToScope({ datasource_id: 7, labels: { namespace: "other", pod: "checkout-abc" } }, scope), false);
   assert.equal(O.alertBelongsToScope({ labels: { namespace: "shop", pod: "checkout-abc" } }, { ...scope, datasources: [] }), false);
   assert.equal(O.alertBelongsToScope({ labels: { namespace: "shop", pod: "checkout-ab" } }, { ...scope, datasources: [], environmentClusterCount: 1 }), false);
-  assert.equal(O.alertBelongsToScope({ labels: { namespace: "shop", app: "checkout" } }, { ...scope, datasources: [], environmentClusterCount: 1 }), true);
+  assert.equal(O.alertBelongsToScope({ labels: { namespace: "shop", app: "checkout" } }, { ...scope, datasources: [], environmentClusterCount: 1 }), false);
+  const central = { ...scope, datasources: [{ id: 9, env: "", options: { scope: "central", cluster_label: "cluster", cluster_values: { 1: "uid-a" } } }] };
+  assert.equal(O.alertBelongsToScope({ datasource_id: 9, labels: { namespace: "shop", app: "checkout", cluster: "uid-a" } }, central), true);
+  assert.equal(O.alertBelongsToScope({ datasource_id: 9, labels: { namespace: "shop", app: "checkout" } }, central), false);
 });

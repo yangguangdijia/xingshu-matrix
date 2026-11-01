@@ -191,11 +191,8 @@ spec:
         runAsNonRoot: true
       containers:
         - name: web
-          # 与集群实际运行的镜像保持一致：v1.63 由 commit f9cd41e 构建（GET /api/v1/version 返回 version=v1.17）。
-          # 注意：v1.6x 是构建序号，不等于应用版本号 v1.17；升级镜像时同步修改此处，避免 Argo CD 回滚。
-          # 历史坑：v1.61 虽显示 commit=1c2f62b，但构建时工作区含未提交的 oncall/SSO 代码（见 docs/fix-stale-image-uncommitted-code.md）。
-          # 构建方式：.build/mk_oci_v163.py（基础层复用 v1.62，追加应用层，USTAR 格式），三节点 ctr -n k8s.io 导入。
-          image: docker.io/xingshu/matrix-server:v1.63
+          # Offline OCI image built from the current workspace for the 2026-10-28 rollout.
+          image: docker.io/xingshu/matrix-server:v1.74.2-platform-ux-20261028
           imagePullPolicy: IfNotPresent
           ports: [{ name: http, containerPort: 8080 }]
           env:
@@ -243,8 +240,8 @@ spec:
             periodSeconds: 20
             failureThreshold: 3
           resources:
-            requests: { cpu: 100m, memory: 128Mi }
-            limits: { cpu: 500m, memory: 384Mi }
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 768Mi }
           volumeMounts:
             - { name: data, mountPath: /data }
       volumes:

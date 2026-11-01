@@ -1,0 +1,28 @@
+/* Loaded when the global cluster selector is attached to the existing topbar. */
+.x-top .x-topbar-cluster-select {
+  box-sizing: border-box;
+  flex: 0 1 180px;
+  min-width: 110px;
+  max-width: 220px;
+  height: 32px;
+  padding: 0 10px;
+  color: var(--x-text, #1d2129);
+  background: #fff;
+  border: 1px solid #dcdfe4;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.x-top .x-topbar-cluster-select:hover { border-color: var(--x-blue-h, #4096ff); }
+.x-top .x-topbar-cluster-select:focus-visible {
+  border-color: var(--x-blue, #1677ff);
+  box-shadow: 0 0 0 3px #1677ff26;
+}
+
+@media (max-width: 640px) {
+  .x-top .x-topbar-cluster-select {
+    min-width: 0;
+    width: min(36vw, 160px);
+    max-width: min(36vw, 160px);
+  }
+}

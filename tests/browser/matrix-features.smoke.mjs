@@ -13,7 +13,10 @@ assert.doesNotMatch(appHtml, /Tokyo|demo-test|test-sh|prod-bj|staging-bj|dev-gz|
 const chromePath = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const now = new Date().toISOString();
+const pipelineStartedAt = new Date(Date.now() - 120000).toISOString();
+const pipelineStageStartedAt = new Date(Date.now() - 60000).toISOString();
 const commit = "0123456789abcdef0123456789abcdef01234567";
+let pipelineRunStatus = "running";
 const user = { id: 1, user_id: 1, username: "smoke", display_name: "Smoke", roles: ["admin"], permissions: ["*"], env_scope: null };
 let clusters = [
   { id: 1, name: "prod-cluster", env: "prod", status: "connected", api_server: "https://10.0.0.1:6443", version: "v1.31.4", updated_at: now },
@@ -21,6 +24,7 @@ let clusters = [
 ];
 const pod = { name: "web-abc-123", namespace: "prod", uid: "pod-uid", status: "CrashLoopBackOff", node: "node-1", owner: "ReplicaSet/web-abc", labels: { app: "web" }, ready: "0/1", restarts: 5 };
 const readyPods = [
+  { name: "web-ready-0", namespace: "prod", uid: "web-ready-uid", phase: "Running", status: "Running", containers: ["web"], labels: { app: "web" }, ready: "1/1", restarts: 0 },
   { name: "api-0", namespace: "prod", uid: "api-uid", phase: "Running", status: "Running", containers: ["api"], labels: { app: "api" }, ready: "1/1", restarts: 0 },
   { name: "orders-0", namespace: "prod", uid: "orders-uid", phase: "Running", status: "Running", containers: ["orders"], labels: { app: "orders" }, ready: "1/1", restarts: 0 },
   { name: "db-0", namespace: "prod", uid: "db-uid", phase: "Running", status: "Running", containers: ["db"], labels: { app: "db" }, ready: "1/1", restarts: 0 }
@@ -85,7 +89,10 @@ const bastionSessions = [
 const bastionCommands = [{ id: 91, session_id: 71, command: "systemctl status nginx", action: "allow", created_at: now }];
 let accessApprovals = [];
 const ingress = { apiVersion: "networking.k8s.io/v1", kind: "Ingress", metadata: { name: "web", namespace: "prod", uid: "ing-uid", resourceVersion: "1" },
-  spec: { ingressClassName: "nginx", rules: [{ host: "web.example", http: { paths: [{ path: "/", pathType: "Prefix", backend: { service: { name: "web", port: { number: 80 } } } }] } }] } };
+  spec: { ingressClassName: "nginx", rules: [{ host: "web.example", http: { paths: [
+    { path: "/", pathType: "Prefix", backend: { service: { name: "web", port: { number: 80 } } } },
+    { path: "/api", pathType: "Prefix", backend: { service: { name: "api", port: { number: 80 } } } }
+  ] } }] } };
 let snapshotSupported = false;
 let storagePending = false;
 let storageClasses = [
@@ -147,6 +154,9 @@ async function api(req, res, u) {
     { key: "obs.log", value: "https://loki.example.com", secret: false, updated_at: now }
   ] });
   if (p === "/settings/public") return reply({ "public.notices": [] });
+  if (p === "/env-policies") return reply({ items: [
+    { env: "prod", name: "生产", require_approval: true, approver_permission: "approval:approve" }
+  ] });
   if (p === "/provision/registry-mirror" && method === "GET") return reply(registryMirror);
   if (p === "/provision/registry-mirror" && method === "PUT") {
     registryMirror = input;
@@ -244,12 +254,37 @@ async function api(req, res, u) {
   }
   if (p === "/observability/alerts/42/diagnose") { diagnosis.status = "queued"; return reply(diagnosis); }
   if (p === "/observability/alerts/42") return reply(alert);
-  if (p === "/observability/alerts") return reply({ items: [alert], total: 1 });
-  if (p === "/observability/datasources" || p === "/observability/data-sources") return reply(u.searchParams.get("type") === "prometheus" ? [] : [
-    { id: 1, name: "native health", type: "kubernetes", env: "prod", options: { cluster_id: "1", managed_by: "aiops" } },
-    { id: 2, name: "traces", type: "jaeger", env: "prod", options: { cluster_id: "1" } },
-    { id: 3, name: "logs", type: "loki", env: "prod", options: { cluster_id: "1" } }
-  ]);
+  if (p === "/observability/alerts") {
+    const items = !u.searchParams.get("cluster_id") || u.searchParams.get("cluster_id") === "1" ? [alert] : [];
+    return reply({ items, total: items.length });
+  }
+  if (p === "/observability/datasources/resolve") {
+    const type = u.searchParams.get("type");
+    const clusterId = u.searchParams.get("cluster_id") || "1";
+    const resolved = [
+      { id: 2, name: "traces", type: "jaeger", env: "prod", url: "http://jaeger.observability.svc:16686", options: { scope: "cluster", cluster_id: "1", cluster_name: "prod-cluster" } },
+      { id: 3, name: "logs", type: "loki", env: "prod", url: "http://loki.observability.svc:3100", options: { scope: "cluster", cluster_id: "1", cluster_name: "prod-cluster" } },
+      { id: 4, name: "prom-prod-a", type: "prometheus", env: "prod", url: "http://prometheus.monitoring.svc:9090", options: { scope: "cluster", cluster_id: "1", cluster_name: "prod-cluster" } },
+      { id: 5, name: "prom-prod-b", type: "prometheus", env: "prod", url: "http://prometheus-b.monitoring.svc:9090", options: { scope: "cluster", cluster_id: "2", cluster_name: "dev-cluster" } },
+      { id: 6, name: "alertmanager-a", type: "alertmanager", env: "prod", url: "http://alertmanager.monitoring.svc:9093", options: { scope: "cluster", cluster_id: "1", cluster_name: "prod-cluster" } }
+    ].find((source) => source.type === type && String(source.options.cluster_id) === String(clusterId));
+    return resolved ? reply({ datasource: resolved, cluster_id: Number(clusterId), scope: "cluster" }) : reply({ error: "no datasource is bound to this cluster" }, 404);
+  }
+  if (p === "/observability/datasources" || p === "/observability/data-sources") {
+    if (u.searchParams.get("type") === "prometheus") return reply([
+      { id: 4, name: "prom-prod-a", type: "prometheus", env: "prod", url: "http://prometheus.monitoring.svc:9090", options: { scope: "cluster", cluster_id: "1", cluster_name: "prod-cluster" } },
+      { id: 5, name: "prom-prod-b", type: "prometheus", env: "prod", url: "http://prometheus-b.monitoring.svc:9090", options: { scope: "cluster", cluster_id: "2", cluster_name: "dev-cluster" } }
+    ]);
+    return reply([
+      { id: 1, name: "native health", type: "kubernetes", env: "prod", options: { cluster_id: "1", managed_by: "aiops" } },
+      { id: 2, name: "traces", type: "jaeger", env: "prod", options: { scope: "cluster", cluster_id: "1" } },
+      { id: 3, name: "logs", type: "loki", env: "prod", options: { scope: "cluster", cluster_id: "1" } },
+      { id: 6, name: "alertmanager-a", type: "alertmanager", env: "prod", url: "http://alertmanager.monitoring.svc:9093", options: { scope: "cluster", cluster_id: "1", cluster_name: "prod-cluster" } },
+      { id: 7, name: "alertmanager-b", type: "alertmanager", env: "prod", url: "http://alertmanager-b.monitoring.svc:9093", options: { scope: "cluster", cluster_id: "2", cluster_name: "dev-cluster" } },
+      { id: 4, name: "prom-prod-a", type: "prometheus", env: "prod", url: "http://prometheus.monitoring.svc:9090", options: { scope: "cluster", cluster_id: "1", cluster_name: "prod-cluster" } },
+      { id: 5, name: "prom-prod-b", type: "prometheus", env: "prod", url: "http://prometheus-b.monitoring.svc:9090", options: { scope: "cluster", cluster_id: "2", cluster_name: "dev-cluster" } }
+    ]);
+  }
   if (p === "/observability/traces/services") return reply({ items: ["web", "api", "orders"] });
   if (p === "/observability/traces/search") return reply({ items: traceSamplesAvailable ? [{ trace_id: "trace-1" }] : [] });
   if (p === "/observability/traces/trace-1") return reply({ trace_id: "trace-1", spans: [
@@ -455,12 +490,54 @@ async function api(req, res, u) {
       return reply({ namespace, name, deleted: true });
     }
   }
-  if (/\/network\/configuration$/.test(p)) return reply({ resources: [
-    { kind: "Ingress", api_version: "networking.k8s.io/v1", available: true, items: [ingress] },
-    { kind: "ApisixRoute", api_version: "apisix.apache.org/v2", available: false, state: "not_installed", items: [] }
+  if (/\/network\/endpoints$/.test(p)) {
+    return reply({
+      available: true, state: "available", cluster_id: 1,
+      items: services.map((service) => ({
+        name: service.name + "-slice", namespace: service.namespace, uid: service.uid + "-slice",
+        service: service.name, address_type: "IPv4", ports: [{ name: null, protocol: "TCP", port: 80 }],
+        endpoints: readyPods.filter((candidate) => candidate.namespace === service.namespace &&
+          Object.entries(service.selector || {}).every(([key, value]) => (candidate.labels || {})[key] === value))
+          .map((candidate) => ({ addresses: ["10.44.0." + (readyPods.indexOf(candidate) + 10)], ready: true, serving: true, terminating: false,
+            pod: { namespace: candidate.namespace, name: candidate.name, uid: candidate.uid } }))
+      }))
+    });
+  }
+  if (/\/network\/configuration$/.test(p)) {
+    const view = u.searchParams.get("view");
+    if (view === "policy") return reply({ resources: [
+      { kind: "NetworkPolicy", api_version: "networking.k8s.io/v1", available: true, items: networkPolicies.map((policy) => ({
+        ...policy, kind: "NetworkPolicy", apiVersion: "networking.k8s.io/v1",
+        metadata: { name: policy.name, namespace: policy.namespace, labels: policy.labels || {} },
+        spec: { podSelector: policy.pod_selector || {}, policyTypes: policy.policy_types || [], ingress: policy.ingress || [], egress: policy.egress || [] }
+      })) },
+      { kind: "CiliumNetworkPolicy", api_version: "cilium.io/v2", available: false, state: "not_installed", items: [] }
+    ] });
+    return reply({ resources: [
+      { kind: "Ingress", api_version: "networking.k8s.io/v1", available: true, items: [ingress] },
+      { kind: "IngressClass", api_version: "networking.k8s.io/v1", available: true, items: [
+        { kind: "IngressClass", metadata: { name: "nginx" }, spec: { controller: "k8s.io/ingress-nginx" } }
+      ] },
+      { kind: "ApisixRoute", api_version: "apisix.apache.org/v2", available: false, state: "not_installed", items: [] }
+    ] });
+  }
+  if (/\/integration-candidates$/.test(p)) return reply({ cluster_id: 1, items: [
+    { type: "prometheus", name: "prometheus", namespace: "monitoring", service: "prometheus-server", url_candidates: ["http://prometheus-server.monitoring.svc:9090"], state: "available", evidence: ["Service/prometheus-server"] },
+    { type: "loki", name: "loki", namespace: "monitoring", service: "loki-gateway", url_candidates: ["http://loki-gateway.monitoring.svc:3100"], state: "available", evidence: ["Service/loki-gateway"] },
+    { type: "fluent-bit", name: "fluent-bit", namespace: "monitoring", state: "available", evidence: ["DaemonSet/fluent-bit"] }
   ] });
+  if (/\/integration-discovery$/.test(p)) return reply({
+    cluster_id: 1, status: "ready", discovered_at: now, next_refresh_at: now, truncated: false,
+    result: { cluster_id: 1, items: [
+      { type: "prometheus", key: "monitoring/prometheus-server", name: "prometheus", namespace: "monitoring", service: "prometheus-server", url_candidates: ["http://prometheus-server.monitoring.svc:9090"], state: "available", evidence: ["Service/prometheus-server"], connection_verified: false, reachability: "not_tested" },
+      { type: "loki", key: "monitoring/loki-gateway", name: "loki", namespace: "monitoring", service: "loki-gateway", url_candidates: ["http://loki-gateway.monitoring.svc:3100"], state: "available", evidence: ["Service/loki-gateway"], connection_verified: false, reachability: "not_tested" },
+      { type: "alertmanager", key: "monitoring/alertmanager", name: "alertmanager", namespace: "monitoring", service: "alertmanager", url_candidates: ["http://alertmanager.monitoring.svc:9093"], state: "available", evidence: ["Service/alertmanager"], connection_verified: false, reachability: "not_tested" },
+      { type: "fluent-bit", name: "fluent-bit", namespace: "monitoring", state: "available", evidence: ["DaemonSet/fluent-bit"], connection_verified: false, reachability: "not_tested" }
+    ], components: {}, sources: {} }
+  });
   if (/\/apply$/.test(p)) return reply({ objects: [{ status: "applied", name: "web" }], failed: 0 });
   if (p === "/cicd/applications") return reply([app]);
+  if (p === "/cicd/applications/1") return reply(app);
   if (p === "/cicd/targets") return reply([{ id: 1, name: "runner", namespace: "matrix-cicd" }]);
   if (p === "/cicd/helm/repos") return reply([{ id: 10, name: "charts-internal", url: "https://charts.internal", env: "dev",
     auth: "not_supported", last_sync_status: "succeeded", last_sync_at: now, updated_at: now }]);
@@ -474,8 +551,40 @@ async function api(req, res, u) {
   ] });
   if (p === "/cicd/argocd") return reply([argo]);
   if (p === "/cicd/argocd/3/applications") return reply({ items: [{ metadata: { name: "web" }, spec: { project: "team", destination: { namespace: "prod" } }, status: { sync: { status: "OutOfSync", revision: commit }, health: { status: "Healthy" } } }] });
-  if (p === "/cicd/pipelines") return reply([{ id: 1, name: "web-pipeline", app_id: 1, runner_target_id: 1, stages: [{ name: "test", type: "test", image: "alpine", commands: ["true"] }] }]);
-  if (p === "/cicd/runs") return reply({ items: [{ id: 55, pipeline_id: 1, app_id: 1, status: "succeeded", branch: "main", triggered_by: "smoke", created_at: now }], total: 1 });
+  if (p === "/cicd/pipelines") return reply([{ id: 1, name: "web-pipeline", app_id: 1, runner_target_id: 1, branch: "main",
+    stages: [{ name: "test", type: "test", image: "alpine", commands: ["true"] }, { name: "compile", type: "build" }] }]);
+  if (p === "/cicd/runs") return reply({ items: [
+    { id: 55, pipeline_id: 1, app_id: 1, status: pipelineRunStatus, branch: "main", commit, triggered_by: "smoke", created_at: now, started_at: pipelineStartedAt },
+    { id: 54, pipeline_id: 1, app_id: 1, status: "failed", branch: "release", commit: "abcdef0123456789", triggered_by: "smoke-history", created_at: pipelineStartedAt, started_at: pipelineStartedAt, finished_at: now }
+  ], total: 2 });
+  if (p === "/cicd/runs/55" && method === "GET") return reply({
+    id: 55, pipeline_id: 1, app_id: 1, status: pipelineRunStatus, branch: "main", commit, triggered_by: "smoke",
+    created_at: now, started_at: pipelineStartedAt, finished_at: pipelineRunStatus === "succeeded" ? now : null,
+    stages: [
+      { idx: 0, name: "test", type: "test", status: "succeeded", started_at: pipelineStageStartedAt, finished_at: now },
+      { idx: 1, name: "compile", type: "build", status: pipelineRunStatus === "running" ? "running" : "succeeded",
+        started_at: pipelineRunStatus === "running" ? pipelineStageStartedAt : pipelineStartedAt, finished_at: pipelineRunStatus === "succeeded" ? now : null }
+    ]
+  });
+  if (p === "/cicd/runs/54" && method === "GET") return reply({
+    id: 54, pipeline_id: 1, app_id: 1, status: "failed", branch: "release", commit: "abcdef0123456789",
+    triggered_by: "smoke-history", created_at: pipelineStartedAt, started_at: pipelineStartedAt, finished_at: now,
+    stages: [{ idx: 0, name: "test", type: "test", status: "failed", started_at: pipelineStageStartedAt, finished_at: now, error: "assertion failed" }]
+  });
+  if (/^\/cicd\/runs\/(54|55)\/logs$/.test(p) && u.searchParams.get("follow") === "1") {
+    pipelineRunStatus = "succeeded";
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+    res.end('event: log\ndata: ' + JSON.stringify({ id: 1, stage: 1, line: "compile passed", ts: now }) + "\n\n" +
+      'event: end\ndata: {"status":"succeeded"}\n\n');
+    return;
+  }
+  if (p === "/cicd/runs/55/logs" && method === "GET") return reply([
+    { id: 1, stage: 0, line: "tests passed", ts: now },
+    { id: 2, stage: 1, line: "compile passed", ts: now }
+  ]);
+  if (p === "/cicd/runs/54/logs" && method === "GET") return reply([
+    { id: 3, stage: 0, line: "assertion failed", ts: now }
+  ]);
   if (p === "/provision/preflight") {
     const masters = input.mode === "single" || input.hosts.length < 3 ? 1 : 3;
     return reply({ method: "k3s", version: input.version, masters, workers: input.hosts.length - masters, ha: masters === 3,
@@ -536,7 +645,7 @@ const server = http.createServer(async (req, res) => {
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const base = "http://127.0.0.1:" + server.address().port;
-const debugPort = 19426;
+const debugPort = 20000 + (process.pid % 20000);
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "matrix-features-"));
 const chrome = spawn(chromePath, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
   "--remote-debugging-port=" + debugPort, "--remote-allow-origins=*", "--user-data-dir=" + profile, "--window-size=1440,1000", "about:blank"], { stdio: "ignore" });
@@ -553,9 +662,12 @@ try {
   await c.send("Page.addScriptToEvaluateOnNewDocument", { source: "localStorage.setItem('xs_access_token','mock-test-token');" });
   await c.send("Page.navigate", { url: base + "/#/cluster/list" });
   await c.until("window.XS?.mode==='live' && document.querySelector('#auth')?.hidden && window.XSLiveOps", "application did not start");
-  assert.equal(await c.eval("routes.observe.render === renderObserve && routes.logs.render.toString().includes('renderLogs') && routes.cluster.__xsLivePatched && routes.cluster.__xsLiveOrig === renderCluster && !routes.cluster.__xlopsPatched && routes.sre.render === renderSRE"), true,
-    "cluster should have one live wrapper retaining its original renderer; unrelated renderers must remain intact");
+  assert.equal(await c.eval("routes.observe.__xlopsPatched && routes.logs.render.toString().includes('renderLogs') && routes.cluster.__xsLivePatched && routes.cluster.__xsLiveOrig === renderCluster && !routes.cluster.__xlopsPatched && routes.sre.render === renderSRE"), true,
+    "cluster and observability should each keep one live wrapper while unrelated renderers remain intact");
   await c.until("!!document.querySelector('[data-climport]')", "initial cluster route was not repainted with the live renderer");
+  await c.until("clMenuReady() && window.XSClusterContext", "global cluster context did not load");
+  await c.eval("(()=>{const c=clMenuItems().find((item)=>String(item.id)==='1');if(!c)throw new Error('cluster 1 missing');XSClusterContext.set({kind:'cluster',cluster_id:c.id,name:c.name,env:c.env});})()");
+  await c.until("document.querySelector('#clctx')?.value==='1'", "global cluster selector did not activate cluster 1");
   console.log("PASS cluster route has one live wrapper; unrelated renderers are retained");
   await c.eval("openWizard()");
   await c.until("!!document.querySelector('#eform') && document.querySelector('#eform').innerText.includes('4.5 核可用')", "environment wizard did not render live probe data");
@@ -590,19 +702,39 @@ try {
   await c.eval("closeAll()");
   const visit = async (hash, check) => {
     await c.eval("location.hash=" + JSON.stringify(hash));
-    await c.until(check || "!/正在|读取中/.test(document.querySelector('#view').innerText)", hash + " did not load");
+    await c.until(check || "!/正在|读取中/.test(document.querySelector('#view').innerText)", hash + " did not load", 30000);
     await sleep(150);
     assert.equal(await c.eval("/页面建设中|该页面尚未接入|页面加载出错|无可展示数据/.test(document.querySelector('#view').innerText)"), false, hash + " still shows a placeholder");
     assert.deepEqual(c.errors, [], hash + " browser exception");
   };
-  await visit("#/traffic/topo", "document.querySelectorAll('[data-flow-node]').length===3");
-  assert.equal(await c.eval("document.querySelectorAll('[data-flow-edge]').length"), 2);
+  await visit("#/cicd/pipeline/1",
+    "!!document.querySelector('.x-cicd-history [data-action=\"select-run\"][data-id=\"55\"]') && document.querySelectorAll('.x-cicd-stage').length===2 && document.querySelector('.x-cicd-log-body')?.innerText.includes('compile passed')");
+  assert.equal(await c.eval("document.querySelector('.x-cicd-flow')?.innerText.includes('成功') && document.querySelector('.x-cicd-flow')?.innerText.includes('运行中')"), true,
+    "pipeline detail should show every configured stage and its observed status");
+  assert.equal(await c.eval("document.querySelector('[data-action=\"select-run\"][data-id=\"55\"]')?.getAttribute('aria-current')==='true'"), true,
+    "the latest run should be highlighted in the run history");
+  assert.equal(await c.eval("document.querySelector('.x-cicd-log-body').getAttribute('aria-label')==='运行日志' && !document.querySelector('.x-cicd-log-body').isContentEditable"), true,
+    "pipeline logs should remain read-only on the detail page");
+  const pipelineLogCalls = reads.filter((entry) => entry.path === "/cicd/runs/55/logs");
+  assert.equal(pipelineLogCalls.length > 0, true, "pipeline detail should read the existing run log endpoint");
+  await c.eval("document.querySelector('[data-action=\"select-run\"][data-id=\"54\"]').click()");
+  await c.until("document.querySelector('.x-cicd-stage')?.innerText.includes('assertion failed') && document.querySelector('.x-cicd-log-body')?.innerText.includes('assertion failed')",
+    "historical run details did not show the failed stage and logs");
+  assert.equal(await c.eval("document.querySelector('.x-cicd-page').innerText.includes('失败')"), true,
+    "historical stage failures should remain visible in run details");
+  console.log("PASS complete pipeline details, aligned history and failed-run logs");
+  await visit("#/traffic/topo",
+    "document.querySelectorAll('[data-flow-node]').length>=3 && !!document.querySelector('[data-flow-node].flow-node--entry') && !!document.querySelector('[data-flow-node].flow-node--service') && !!document.querySelector('[data-flow-node].flow-node--pod')");
+  assert.ok(await c.eval("document.querySelectorAll('[data-flow-edge]').length>=4"), "entry chain should include ingress to service and service to pod edges");
+  assert.equal(await c.eval("!!document.querySelector('[data-flow-entry]') && document.querySelector('[data-flow-policy]')?.checked"), true,
+    "unified topology should expose entry filtering and policy overlay");
   assert.equal(await c.eval("document.querySelector('.flow-node-card').getAttribute('width')"), "224");
   assert.equal(await c.eval("document.querySelector('.flow-node-card').getAttribute('height')"), "84");
   await c.eval("(()=>document.querySelector('[data-flow-node]').dispatchEvent(new PointerEvent('pointerover',{bubbles:true})))()");
   assert.equal(await c.eval("document.querySelector('[data-flow-node]').classList.contains('flow-active') && document.querySelector('[data-flow-edge]').classList.contains('flow-focus')"), true, "hover should spotlight the connected route");
   await c.eval("(()=>document.querySelector('[data-flow-node]').dispatchEvent(new PointerEvent('pointerout',{bubbles:true,relatedTarget:document.body})))()");
-  assert.ok(await c.eval("document.querySelectorAll('.flow-edge-line[marker-end]').length===2"), "observed calls need directional arrows");
+  assert.equal(await c.eval("document.querySelectorAll('.flow-edge-line[marker-end]').length===document.querySelectorAll('[data-flow-edge]').length"), true,
+    "all primary, trace and policy edges need directional arrows");
   const topologyDesktop = await c.send("Page.captureScreenshot", { format: "png" });
   const topologyDesktopPath = path.join(os.tmpdir(), "matrix-traffic-topology-desktop.png");
   fs.writeFileSync(topologyDesktopPath, Buffer.from(topologyDesktop.data, "base64"));
@@ -617,7 +749,7 @@ try {
   await c.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await c.until("document.querySelector('[data-flow-topology]')?.dataset.flowDirection==='vertical'", "traffic graph did not reflow for mobile");
   assert.equal(await c.eval("document.querySelector('.flow-node-card').getAttribute('width')"), "304");
-  assert.equal(await c.eval("document.querySelectorAll('.flow-edge-motion').length"), 2);
+  assert.equal(await c.eval("!!document.querySelector('.flow-edge.observed')"), true, "observed trace overlay should remain visible on mobile");
   const topologyMobile = await c.send("Page.captureScreenshot", { format: "png" });
   const topologyMobilePath = path.join(os.tmpdir(), "matrix-traffic-topology-mobile.png");
   fs.writeFileSync(topologyMobilePath, Buffer.from(topologyMobile.data, "base64"));
@@ -629,11 +761,31 @@ try {
     "#/observe/channels", "#/cicd/pipeline", "#/delivery/apps", "#/release", "#/middleware", "#/oncall", "#/settings", "#/ai", "#/automation", "#/testing"]) {
     await visit(hash);
     if (hash === "#/settings") {
-      assert.equal(await c.eval("(()=>{const view=document.querySelector('#view');const text=view.innerText;return text.includes('系统设置')&&!!view.querySelector('[data-system-config=\"basic\"]')&&['基础信息','代码仓库','镜像仓库','K8s 集群','可观测性'].every(label=>text.includes(label))&&!text.includes('系统接入')&&!text.includes('ai.features')&&!text.includes('public.notices')&&!text.includes('公开配置')})()"), true,
-        "live settings should retain the original configuration groups under the confirmed page name");
+      assert.equal(await c.eval("(()=>{const text=document.querySelector('#view').innerText;return text.includes('系统设置')&&text.includes('平台基础信息')&&text.includes('访问域名')&&text.includes('环境审批策略')&&['代码仓库','镜像仓库','K8s 集群','可观测性','新建设置'].every(label=>!text.includes(label))})()"), true,
+        "system settings should contain only platform-level responsibilities");
     }
     console.log("PASS route", hash);
   }
+  await c.eval("XSClusterContext.set({kind:'cluster',cluster_id:1,name:'prod-cluster',env:'prod'})");
+  await visit("#/cluster/integrations", "!!document.querySelector('[data-cluster-source-config=\"prometheus\"]')");
+  await c.eval("document.querySelector('[data-cluster-source-config=\"prometheus\"]').click()");
+  await c.until("!!document.querySelector('[data-cluster-source-form=\"prometheus\"] [data-cluster-source-candidate]') && !!document.querySelector('[data-cluster-source-form=\"prometheus\"] [name=url]')",
+    "cluster integration datasource form absent");
+  await c.until("[...document.querySelector('[data-cluster-source-form=\"prometheus\"] [data-cluster-source-candidate]').options].some((o)=>o.value)",
+    "Prometheus should be discovered as a selectable datasource candidate");
+  await c.eval("(()=>{const f=document.querySelector('[data-cluster-source-form=\"prometheus\"]'),s=f.querySelector('[data-cluster-source-candidate]');s.value=[...s.options].find((o)=>o.value).value;s.dispatchEvent(new Event('change',{bubbles:true}));})()");
+  assert.equal(await c.eval("/^http:\\/\\/prometheus-server\\.monitoring\\.svc:9090$/.test(document.querySelector('[data-cluster-source-form=\"prometheus\"] [name=url]').value)"), true,
+    "selected discovery candidate should fill the editable URL and avoid claiming connectivity");
+  assert.equal(await c.eval("document.querySelector('#view').innerText.includes('已发现 · 未验证')"), true,
+    "cluster integration discovery must not claim an unverified candidate is connected");
+  console.log("PASS cluster integration discovery offers candidates and editable addresses");
+  await visit("#/delivery/apps", "!!document.querySelector('[data-newapp]')");
+  await c.eval("document.querySelector('[data-newapp]').click()");
+  await c.until("!!document.querySelector('#modal form [data-app-env-row]')", "application environment table absent");
+  assert.equal(await c.eval("!!document.querySelector('[data-app-env-field=name]') && !!document.querySelector('[data-app-env-field=target_id]') && !document.querySelector('#modal form textarea[name=envs]')"), true,
+    "application creation should use environment rows instead of a JSON textarea");
+  await c.eval("closeAll()");
+  console.log("PASS application creation uses editable environment rows");
   await visit("#/delivery/apps");
   assert.equal(await c.eval("/东京|demo-(dev|test|pre|prod)|prod-sh|staging-bj|dev-gz/.test(document.querySelector('#view').innerText)"), false,
     "live application delivery must not show seeded clusters");
@@ -646,7 +798,7 @@ try {
     "HPA page should show live replica state without adding horizontal navigation");
   await c.eval("document.querySelector('[data-hpa-new]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('创建 HPA')", "HPA create form absent");
-  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.namespace.value='prod';f.elements.name.value='api-hpa';f.elements.spec.value=JSON.stringify({scaleTargetRef:{apiVersion:'apps/v1',kind:'Deployment',name:'api'},minReplicas:2,maxReplicas:6,metrics:[{type:'Resource',resource:{name:'cpu',target:{type:'Utilization',averageUtilization:70}}}]});f.elements.labels.value='{\"team\":\"platform\"}';f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.namespace.value='prod';f.elements.name.value='api-hpa';XSStructuredForms.fill(f.querySelector('[data-xsf-name=spec]'),{scaleTargetRef:{apiVersion:'apps/v1',kind:'Deployment',name:'api'},minReplicas:2,maxReplicas:6,metrics:[{type:'Resource',resource:{name:'cpu',target:{type:'Utilization',averageUtilization:70}}}]},'spec');XSStructuredForms.fill(f.querySelector('[data-xsf-name=labels]'),{team:'platform'},'labels');f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden && document.querySelector('#view').innerText.includes('api-hpa')", "HPA create did not refresh into the inventory");
   const hpaCreate = writes.find((w) => w.path === "/clusters/1/hpa" && w.method === "POST");
   assert.equal(hpaCreate?.body.name, "api-hpa");
@@ -664,7 +816,7 @@ try {
   await c.eval("document.querySelector('#modal [data-close]')?.click()");
   await c.eval("document.querySelector('[data-cron-new]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('创建 CronJob')", "CronJob create form absent");
-  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.namespace.value='prod';f.elements.name.value='hourly-cleanup';f.elements.spec.value=JSON.stringify({schedule:'0 * * * *',suspend:false,jobTemplate:{spec:{template:{spec:{restartPolicy:'Never',containers:[{name:'cleanup',image:'busybox:1.36',command:['sh','-c','echo done']}]}}}}});f.elements.labels.value='{}';f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.namespace.value='prod';f.elements.name.value='hourly-cleanup';XSStructuredForms.fill(f.querySelector('[data-xsf-name=spec]'),{schedule:'0 * * * *',suspend:false,jobTemplate:{spec:{template:{spec:{restartPolicy:'Never',containers:[{name:'cleanup',image:'busybox:1.36',command:['sh','-c','echo done']}]}}}}},'spec');f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden && document.querySelector('#view').innerText.includes('hourly-cleanup')", "CronJob create did not refresh into the inventory");
   const cronCreate = writes.find((w) => w.path === "/clusters/1/cronjobs" && w.method === "POST");
   assert.equal(cronCreate?.body.spec.schedule, "0 * * * *");
@@ -678,7 +830,7 @@ try {
   await c.until("document.querySelector('#modal')?.innerText.includes('nightly-cleanup-29010000')", "read-only users should be able to inspect CronJob history");
   await c.eval("document.querySelector('#modal [data-close]')?.click();XS.user.permissions=['*'];XS.user.roles=['admin']");
   await visit("#/cluster/backup/1", "document.querySelector('#view').innerText.includes('VolumeSnapshot')");
-  assert.equal(await c.eval("document.querySelector('#view').innerText.includes('未安装 snapshot.storage.k8s.io/v1 CRD') && !document.querySelector('[data-storage-new=\"snapshot\"]')"), true,
+  assert.equal(await c.eval("document.querySelector('#view').innerText.includes('未安装 snapshot.storage.k8s.io/v1 CRD') && !document.querySelector('[data-snapshot-create]')"), true,
     "backup view should explain missing snapshot capability and avoid fake backups");
   console.log("PASS live HPA creation, CronJob create/history, and honest snapshot backup capability state");
   assert.equal(await c.eval("(()=>{const group=(href)=>document.querySelector('#nav a[href=\"'+href+'\"]').closest('.x-ng').querySelector('.x-ngh .x-ni span').textContent.trim();return group('#/cluster/network')==='工作负载'&&group('#/cluster/storage')==='工作负载'&&!!document.querySelector('#nav a[href=\"#/cluster/network\"]')&&!!document.querySelector('#nav a[href=\"#/cluster/storage\"]')})()"), true,
@@ -690,7 +842,7 @@ try {
   await visit("#/cluster/nodes");
   assert.equal(await c.eval("/prod-bj|test-sh|dev-gz|10\\.0\\.1\\.11|10\\.1\\.1\\.11/.test(document.querySelector('#view').innerText)"), false,
     "live node inventory must not render bundled sample nodes");
-  await visit("#/cluster/nodepools/2", "document.querySelector('#view').innerText.includes('system') && document.querySelector('#view').innerText.includes('未接入云厂商节点池扩缩容')");
+  await visit("#/cluster/nodepools/2", "document.querySelector('#view').innerText.includes('system') && !!document.querySelector('[data-act=\"nodegroup-name\"]') && !!document.querySelector('[data-act=\"nodegroup-label\"]')");
   assert.equal(await c.eval("!document.querySelector('[data-live-tab]')"), true, "cluster pages must not render horizontal in-page navigation");
   await visit("#/cluster/storage/2", "document.querySelector('#view').innerText.includes('fast-ssd')");
   assert.equal(await c.eval("document.querySelector('#view').innerText.includes('pv-smoke') && document.querySelector('#view').innerText.includes('prod/data')"), true,
@@ -703,7 +855,7 @@ try {
     "HostPath PVs with resource versions must expose editing");
   await c.eval("document.querySelector('[data-storage-new=\"class\"]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('创建 StorageClass')", "storage class create form absent");
-  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.name.value='smoke-class';f.elements.provisioner.value='csi.smoke.io';f.elements.reclaim_policy.value='Retain';f.elements.volume_binding_mode.value='Immediate';f.elements.parameters.value=JSON.stringify({type:'gp3'});f.elements.mount_options.value='noatime,discard';f.elements.is_default.checked=true;f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.name.value='smoke-class';f.elements.provisioner.value='csi.smoke.io';f.elements.reclaim_policy.value='Retain';f.elements.volume_binding_mode.value='Immediate';XSStructuredForms.fill(f.querySelector('[data-xsf-name=parameters]'),{type:'gp3'},'parameters');f.elements.mount_options.value='noatime,discard';f.elements.is_default.checked=true;f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden && !!document.querySelector('[data-storage-new=\"class\"]')", "storage class create did not submit");
   const classCreate = writes.find((w) => w.path === "/clusters/2/storage/classes" && w.method === "POST");
   assert.deepEqual(classCreate?.body, { name: "smoke-class", provisioner: "csi.smoke.io", reclaim_policy: "Retain",
@@ -733,14 +885,14 @@ try {
   assert.deepEqual(classDelete?.body, { uid: "sc-new-uid", resource_version: "41", force: false });
   await c.eval("document.querySelector('[data-storage-new=\"pvc\"]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('创建 PersistentVolumeClaim')", "PVC create form absent");
-  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.namespace.value='prod';f.elements.name.value='new-claim';f.elements.size.value='5Gi';f.elements.storage_class.value='fast-ssd';f.elements.labels.value=JSON.stringify({app:'smoke'});f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.namespace.value='prod';f.elements.name.value='new-claim';f.elements.size.value='5Gi';f.elements.storage_class.value='fast-ssd';XSStructuredForms.fill(f.querySelector('[data-xsf-name=labels]'),{app:'smoke'},'labels');f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden && !!document.querySelector('[data-storage-new=\"class\"]')", "PVC create did not submit");
   const pvcCreate = writes.find((w) => w.path === "/clusters/2/storage/claims" && w.method === "POST");
   assert.deepEqual(pvcCreate?.body, { name: "new-claim", namespace: "prod", storage_class: "fast-ssd",
     access_modes: ["ReadWriteOnce"], size: "5Gi", volume_mode: "Filesystem", volume_name: "", labels: { app: "smoke" } });
   await c.eval("document.querySelector('[data-act=\"storage-pvc-edit\"][data-id=\"prod/data\"]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('编辑 PVC')", "PVC edit form absent");
-  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.size.value='30Gi';f.elements.labels.value=JSON.stringify({app:'web',tier:'data'});f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.size.value='30Gi';XSStructuredForms.fill(f.querySelector('[data-xsf-name=labels]'),{app:'web',tier:'data'},'labels');f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden && !!document.querySelector('[data-storage-new=\"class\"]')", "PVC update did not submit");
   const pvcUpdate = writes.find((w) => w.path === "/clusters/2/storage/claims/prod/data" && w.method === "PUT");
   assert.deepEqual(pvcUpdate?.body, { size: "30Gi", labels: { app: "web", tier: "data" }, resource_version: "31" });
@@ -757,14 +909,14 @@ try {
   assert.deepEqual(pvcDelete?.body, { uid: "pvc-new-uid", resource_version: "41", confirm: "prod/new-claim", allow_reclaim_delete: false });
   await c.eval("document.querySelector('[data-storage-new=\"pv\"]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('创建 PersistentVolume')", "PV create form absent");
-  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.name.value='new-pv';f.elements.capacity.value='50Gi';f.elements.host_path.value='/mnt/new';f.elements.labels.value=JSON.stringify({tier:'smoke'});f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.name.value='new-pv';f.elements.capacity.value='50Gi';f.elements.host_path.value='/mnt/new';XSStructuredForms.fill(f.querySelector('[data-xsf-name=labels]'),{tier:'smoke'},'labels');f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden && !!document.querySelector('[data-storage-new=\"class\"]')", "PV create did not submit");
   const pvCreate = writes.find((w) => w.path === "/clusters/2/storage/volumes" && w.method === "POST");
   assert.deepEqual(pvCreate?.body, { name: "new-pv", capacity: "50Gi", access_modes: ["ReadWriteOnce"], reclaim_policy: "Retain",
     storage_class: "", volume_mode: "Filesystem", labels: { tier: "smoke" }, host_path: "/mnt/new" });
   await c.eval("document.querySelector('[data-act=\"storage-pv-edit\"][data-id=\"pv-smoke\"]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('编辑 PV')", "PV edit form absent");
-  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.capacity.value='25Gi';f.elements.labels.value=JSON.stringify({tier:'data'});f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.capacity.value='25Gi';XSStructuredForms.fill(f.querySelector('[data-xsf-name=labels]'),{tier:'data'},'labels');f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden && !!document.querySelector('[data-storage-new=\"class\"]')", "PV update did not submit");
   const pvUpdate = writes.find((w) => w.path === "/clusters/2/storage/volumes/pv-smoke" && w.method === "PUT");
   assert.deepEqual(pvUpdate?.body, { name: "pv-smoke", capacity: "25Gi", access_modes: ["ReadWriteOnce"], reclaim_policy: "Delete",
@@ -781,7 +933,7 @@ try {
   await c.until("!!document.querySelector('[data-storage-new=\"snapshot\"]')", "snapshot create control did not appear when capability was supported");
   await c.eval("document.querySelector('[data-storage-new=\"snapshot\"]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('创建 VolumeSnapshot')", "snapshot create form absent");
-  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.name.value='snap-smoke';f.elements.source_pvc.value='prod/data';f.elements.class_name.value='fast-snap';f.elements.labels.value=JSON.stringify({app:'web'});f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.name.value='snap-smoke';f.elements.source_pvc.value='prod/data';f.elements.class_name.value='fast-snap';XSStructuredForms.fill(f.querySelector('[data-xsf-name=labels]'),{app:'web'},'labels');f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden && !!document.querySelector('[data-storage-new=\"class\"]')", "snapshot create did not submit");
   const snapshotCreate = writes.find((w) => w.path === "/clusters/2/storage/snapshots" && w.method === "POST");
   assert.deepEqual(snapshotCreate?.body, { namespace: "prod", name: "snap-smoke", source_pvc: "data", class_name: "fast-snap", labels: { app: "web" } });
@@ -811,7 +963,7 @@ try {
     "the workload Service page should manage Services only");
   await c.eval("document.querySelector('[data-network-new=\"service\"]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('创建 Service')", "Service create form absent");
-  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.namespace.value='prod';f.elements.name.value='api-edge';f.elements.type.value='NodePort';f.elements.ports.value=JSON.stringify([{name:'http',port:80,targetPort:8080,nodePort:30080,protocol:'TCP'}]);f.elements.selector.value=JSON.stringify({app:'api'});f.elements.external_ips.value='192.0.2.10, 192.0.2.11';f.elements.external_traffic_policy.value='Local';f.elements.labels.value=JSON.stringify({team:'platform'});f.elements.annotations.value=JSON.stringify({owner:'smoke'});f.elements.reason.value='smoke service';f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.namespace.value='prod';f.elements.name.value='api-edge';f.elements.type.value='NodePort';XSStructuredForms.fill(f.querySelector('[data-xsf-name=ports]'),[{name:'http',port:80,targetPort:8080,nodePort:30080,protocol:'TCP'}],'ports');XSStructuredForms.fill(f.querySelector('[data-xsf-name=selector]'),{app:'api'},'selector');f.elements.external_ips.value='192.0.2.10, 192.0.2.11';f.elements.external_traffic_policy.value='Local';XSStructuredForms.fill(f.querySelector('[data-xsf-name=labels]'),{team:'platform'},'labels');XSStructuredForms.fill(f.querySelector('[data-xsf-name=annotations]'),{owner:'smoke'},'annotations');f.elements.reason.value='smoke service';f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden && document.querySelector('#view').innerText.includes('api-edge')", "Service create did not refresh the inventory");
   const serviceCreate = writes.find((w) => w.path === "/clusters/2/network/services" && w.method === "POST");
   assert.deepEqual(serviceCreate?.body, { name: "api-edge", namespace: "prod", type: "NodePort",
@@ -820,6 +972,14 @@ try {
     external_traffic_policy: "Local", session_affinity: "None", labels: { team: "platform" }, annotations: { owner: "smoke" } });
   assert.equal(new URLSearchParams(serviceCreate?.search).get("reason"), "smoke service");
   console.log("PASS Service is managed on its own workload page and submits an approved resource payload");
+  await visit("#/cluster/workloads", "!!document.querySelector('[data-wl-create]')");
+  await c.eval("document.querySelector('[data-wl-create]').click()");
+  await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('创建工作负载')",
+    "workload create form absent");
+  assert.equal(await c.eval("!!document.querySelector('#liveForm [name=kind]') && !!document.querySelector('#liveForm [name=image]') && !document.querySelector('#liveForm textarea[name=manifest]')"), true,
+    "workload creation should use structured fields without a raw manifest editor");
+  await c.eval("closeAll()");
+  console.log("PASS workload creation button is visible with workload:write and opens a structured form");
   await visit("#/cluster/config/2", "document.querySelector('#view').innerText.includes('registry-auth')");
   assert.equal(await c.eval("document.querySelector('#view').innerText.includes('.dockerconfigjson') && !document.querySelector('#view').innerText.includes('frontend-should-never-render-secret') && !!document.querySelector('[data-act=\"cm-detail\"]') && !document.querySelector('[data-act=\"secret-detail\"]')"), true,
     "Secret inventory should expose key metadata without a value-view action");
@@ -829,18 +989,18 @@ try {
   await c.eval("closeAll()");
   await c.eval("document.querySelector('[data-act=\"secret-edit\"][data-id=\"prod/registry-auth\"]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('Secret 旧值不会回显')", "Secret edit did not explain that existing values are omitted");
-  assert.equal(await c.eval("document.querySelector('#liveForm').elements.data.value==='{}' && !document.querySelector('#liveForm').elements.data.value.includes('frontend-should-never-render-secret')"), true,
-    "Secret edit must not prefill existing secret values");
+  assert.equal(await c.eval("document.querySelector('#liveForm [data-xsf-name=data] [data-xsf-field=key]')?.value==='.dockerconfigjson' && !document.querySelector('#liveForm').innerHTML.includes('frontend-should-never-render-secret')"), true,
+    "Secret edit must show configured keys without prefilling existing values");
   await c.eval("closeAll()");
   await visit("#/cluster/nodepools/2", "document.querySelector('#view').innerText.includes('system')");
   assert.equal(await c.eval("!!document.querySelector('[data-act=\"nodegroup-label\"][data-id=\"system\"]') && !!document.querySelector('[data-act=\"nodegroup-taint-add\"][data-id=\"system\"]') && !!document.querySelector('[data-act=\"nodegroup-taint-remove\"][data-id=\"system\"]')"), true,
     "non-empty node groups should expose label and taint batch controls");
   await c.eval("document.querySelector('[data-act=\"nodegroup-label\"][data-id=\"system\"]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('批量设置节点标签')", "node label batch form absent");
-  await c.eval("(()=>{const f=document.querySelector('#liveForm');f.elements.labels.value=JSON.stringify({'node.xingshu.com/pool':'system','team':'platform','retired':null});f.elements.reason.value='node label smoke';f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#liveForm');XSStructuredForms.fill(f.querySelector('[data-xsf-name=labels]'),{'node.xingshu.com/pool':'system',team:'platform'},'labels');f.elements.reason.value='node label smoke';f.requestSubmit();})()");
   await c.until("document.querySelector('#toast')?.textContent.includes('已提交 1 个节点的标签变更') && !!document.querySelector('[data-act=\"nodegroup-taint-add\"]')", "node label batch did not submit");
   const nodeLabels = writes.find((w) => w.path === "/clusters/2/node-batch-labels" && w.method === "POST");
-  assert.deepEqual(nodeLabels?.body, { nodes: ["node-1"], labels: { "node.xingshu.com/pool": "system", team: "platform", retired: null } });
+  assert.deepEqual(nodeLabels?.body, { nodes: ["node-1"], labels: { "node.xingshu.com/pool": "system", team: "platform" } });
   assert.equal(new URLSearchParams(nodeLabels?.search).get("reason"), "node label smoke");
   await c.eval("document.querySelector('[data-act=\"nodegroup-taint-add\"][data-id=\"system\"]').click()");
   await c.until("!!document.querySelector('#liveForm') && document.querySelector('#modal').innerText.includes('批量新增节点污点')", "node taint-add form absent");
@@ -869,8 +1029,8 @@ try {
     "opening ConfigMap/Secret metadata must not send a resource mutation");
   await visit("#/settings");
   assert.equal(await c.eval("document.querySelector('#view').innerText.includes('系统设置')"), true, "settings route should use the confirmed page name");
-  assert.equal(await c.eval("(()=>{const view=document.querySelector('#view');const text=view.innerText;return !!view.querySelector('[data-system-config=\"basic\"]')&&['基础信息','代码仓库','镜像仓库','K8s 集群','可观测性'].every(label=>text.includes(label))&&!text.includes('系统接入')})()"), true,
-    "live settings should retain the original configuration groups under the confirmed page name");
+  assert.equal(await c.eval("(()=>{const text=document.querySelector('#view').innerText;return text.includes('平台基础信息')&&text.includes('访问域名')&&text.includes('环境审批策略')&&['代码仓库','镜像仓库','K8s 集群','可观测性','新建设置'].every(label=>!text.includes(label))})()"), true,
+    "live settings should contain only platform-level responsibilities");
   await visit("#/cicd/pipeline");
   await visit("#/cluster/helm", "!!document.querySelector('[data-hmlive-tab]')");
   await c.eval("document.querySelectorAll('[data-hmlive-tab]')[2].click()");
@@ -890,9 +1050,9 @@ try {
   await visit("#/observe/rules", "!!document.querySelector('[data-rulenew]') && !document.querySelector('[data-rulenew]').disabled");
   await c.eval("document.querySelector('[data-rulenew]').click()");
   await c.until("!!document.querySelector('#modal form') && !!document.querySelector('#modal [name=cluster_id]')", "alert rule form did not open");
-  await c.eval("(()=>{const f=document.querySelector('#modal form');f.elements.cluster_id.value='2';f.elements.namespace.value='monitoring';f.elements.rule_group.value='matrix-ui';f.elements.name.value='NodeHighCPU';f.elements.expr.value='sum(rate(node_cpu_seconds_total[5m])) > 0.85';f.elements.for.value='5m';f.elements.severity.value='warning';f.elements.summary.value='Node CPU is high';f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#modal form');f.elements.namespace.value='monitoring';f.elements.rule_group.value='matrix-ui';f.elements.name.value='NodeHighCPU';f.elements.expr.value='sum(rate(node_cpu_seconds_total[5m])) > 0.85';f.elements.for.value='5m';f.elements.severity.value='warning';f.elements.summary.value='Node CPU is high';f.requestSubmit();})()");
   await c.until("document.querySelector('#toast')?.textContent.includes('告警规则已写入目标集群')", "alert rule was not written to the selected cluster");
-  const alertRuleWrite = writes.find((w) => w.path === "/clusters/2/alert-rules" && w.method === "POST");
+  const alertRuleWrite = writes.find((w) => w.path === "/clusters/1/alert-rules" && w.method === "POST");
   assert.deepEqual(alertRuleWrite?.body, { namespace: "monitoring", rule_group: "matrix-ui", name: "NodeHighCPU",
     expr: "sum(rate(node_cpu_seconds_total[5m])) > 0.85", for: "5m", severity: "warning", summary: "Node CPU is high" });
   console.log("PASS live alert rules can be created against the explicitly selected cluster");
@@ -905,7 +1065,7 @@ try {
   await c.eval("window.__smokeConfirm=window.confirm;window.__smokeK8Confirm=window.k8Confirm;window.confirm=()=>true;window.k8Confirm=(_title,_message,_label,fn)=>fn();document.querySelector('[data-wfnew]').click()");
   await c.until("!!document.querySelector('#modal form')", "workflow editor absent");
   const customPlaybook = "- name: check hosts\n  hosts: all\n  gather_facts: false\n  tasks:\n    - ansible.builtin.ping: {}";
-  await c.eval("(()=>{const f=document.querySelector('#modal form');f.elements.name.value='custom-playbook';f.elements.steps.value='';f.elements.playbook.value=" + JSON.stringify(customPlaybook) + ";f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#modal form');f.elements.name.value='custom-playbook';f.querySelector('[data-auto-step-rows]').innerHTML='';f.elements.playbook.value=" + JSON.stringify(customPlaybook) + ";f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden", "custom workflow did not save");
   for (let i = 0; i < 50 && !writes.some((w) => w.path === "/automation/workflows" && w.method === "POST"); i++) await sleep(100);
   const workflowCreate = writes.find((w) => w.path === "/automation/workflows" && w.method === "POST");
@@ -928,17 +1088,18 @@ try {
   assert.equal(await c.eval("document.querySelector('#view').innerText.includes('notify.webhook')"), false, "legacy notification keys should not appear as duplicate platform settings");
   assert.equal(await c.eval("!!document.querySelector('a[href=\"#/observe/channels\"]')"), true, "settings should link to the single notification channel manager");
   assert.equal(await c.eval("document.querySelector('#view').innerText.includes(location.origin)"), true, "the current platform address should be detected automatically");
-  assert.equal(await c.eval("!!document.querySelector('[data-mirror-provider] option[value=\"daocloud\"]')"), true, "settings should offer DaoCloud mirror preset");
-  await c.eval("(()=>{const s=document.querySelector('[data-mirror-provider]');s.value='aliyun';s.dispatchEvent(new Event('change',{bubbles:true}));const e=document.querySelector('[data-mirror-endpoint]');e.value='https://tenant.mirror.aliyuncs.com';document.querySelector('[data-mirror-save]').click();})()");
+  await visit("#/cluster/registries", "document.querySelector('[data-reg-secrets]').innerText.includes('registry-auth') && !!document.querySelector('[data-reg-mirror-form]')");
+  assert.equal(await c.eval("!!document.querySelector('[data-reg-mirror-form] select[name=provider] option[value=\"daocloud\"]')"), true, "cluster registries should offer the DaoCloud mirror preset");
+  await c.eval("(()=>{const f=document.querySelector('[data-reg-mirror-form]'),s=f.elements.provider,e=f.elements.endpoint;s.value='aliyun';s.dispatchEvent(new Event('change',{bubbles:true}));e.value='https://tenant.mirror.aliyuncs.com';f.requestSubmit();})()");
   for (let i = 0; i < 40 && !writes.some((w) => w.path === "/provision/registry-mirror" && w.method === "PUT"); i++) await sleep(100);
   const aliMirrorWrite = writes.find((w) => w.path === "/provision/registry-mirror" && w.method === "PUT");
   assert.deepEqual(aliMirrorWrite?.body, { provider: "aliyun", endpoint: "https://tenant.mirror.aliyuncs.com" });
   await sleep(250);
-  await c.eval("(()=>{const s=document.querySelector('[data-mirror-provider]');s.value='daocloud';s.dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('[data-mirror-save]').click();})()");
+  await c.eval("(()=>{const f=document.querySelector('[data-reg-mirror-form]'),s=f.elements.provider;s.value='daocloud';s.dispatchEvent(new Event('change',{bubbles:true}));f.requestSubmit();})()");
   for (let i = 0; i < 40 && writes.filter((w) => w.path === "/provision/registry-mirror" && w.method === "PUT").length < 2; i++) await sleep(100);
   const mirrorWrite = writes.filter((w) => w.path === "/provision/registry-mirror" && w.method === "PUT").at(-1);
   assert.deepEqual(mirrorWrite.body, { provider: "daocloud", endpoint: "https://m.daocloud.io" });
-  console.log("PASS settings save account-specific and DaoCloud image mirror selections without style changes");
+  console.log("PASS platform settings stay platform-scoped and cluster mirrors live on their own route");
   await visit("#/cluster/list", "!!document.querySelector('[data-climport]')");
   await c.eval("document.querySelector('[data-climport]').click()");
   await c.until("!!document.querySelector('#claf') && !!document.querySelector('#cltest')", "live multi-context import dialog absent");
@@ -985,7 +1146,8 @@ try {
   await visit("#/ai/history", "!!document.querySelector('[data-ai-history-alert=\"42\"]')");
   assert.equal(await c.eval("document.querySelector('#view').innerText.includes('Application availability affected')"), true);
   await c.eval("document.querySelector('[data-ai-history-alert=\"42\"]').click()");
-  assert.equal(await c.eval("location.hash"), "#/observe/alerts/42", "AI history should link to its source alert");
+  await c.until("!document.querySelector('#modal').hidden && document.querySelector('#modal').innerText.includes('CrashLoopBackOff')",
+    "AI history did not open its source alert");
   console.log("PASS AI diagnosis history reads live records and links to the originating alert");
   await visit("#/bastion/accounts", "!!document.querySelector('#basAdminAccountNew')");
   await c.eval("document.querySelector('#basAdminAccountNew').click()");
@@ -1040,6 +1202,7 @@ try {
   await c.until("!!document.querySelector('#basFilterForm')", "bastion command filter edit form absent");
   await c.eval("(()=>{const f=document.querySelector('#basFilterForm');f.elements.enabled.checked=false;f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden", "bastion filter update did not finish");
+  await c.until("!!document.querySelector('[data-bfilter-del=\"51\"]')", "bastion filter delete action did not return after update");
   assert.ok(writes.some((w) => w.path === "/bastion/filters/51" && w.method === "PUT"));
   await c.eval("document.querySelector('[data-bfilter-del=\"51\"]').click()");
   await c.until("!!document.querySelector('#kcOk')", "bastion filter delete confirmation absent");
@@ -1150,23 +1313,35 @@ try {
   await visit("#/traffic/mesh", "!!document.querySelector('[data-net-create]')");
   await visit("#/traffic/expose", "!!document.querySelector('[data-net-create]')");
   console.log("PASS consolidated external exposure page and legacy route redirects");
-  await visit("#/traffic/topo", "document.querySelectorAll('[data-flow-node]').length===3");
-  assert.equal(await c.eval("document.querySelectorAll('[data-flow-edge]').length"), 2);
+  clusters = [...clusters, { id: 3, name: "prod-cluster-b", env: "prod", status: "connected", api_server: "https://10.0.0.3:6443", version: "v1.31.4", updated_at: now }];
+  await c.eval("CL_LIVE.status='idle';window.XS_CLUSTERS=null;clMenuLoad(true)");
+  await c.until("[...document.querySelectorAll('#clctx option')].some((o)=>o.value==='3')", "same-environment cluster did not enter the selector");
+  await c.eval("(()=>{const c=clMenuItems().find((item)=>String(item.id)==='3');XSClusterContext.set({kind:'cluster',cluster_id:c.id,name:c.name,env:c.env});})()");
+  await c.until("XSClusterContext.get().cluster_id==='3' && document.querySelector('#clctx').value==='3'", "cluster context did not switch to cluster 3");
+  await visit("#/logs", "document.querySelector('#view').innerText.includes('当前集群环境未配置日志数据源')");
+  assert.equal(await c.eval("document.querySelector('#view').innerText.includes('traces')"), false, "cluster 3 must not reuse cluster 1 log data");
+  await visit("#/observe", "document.querySelector('#view').innerText.includes('未绑定 Prometheus 数据源')");
+  await visit("#/observe/events", "!document.querySelector('#view').innerText.includes('CrashLoopBackOff')");
+  await visit("#/trace", "document.querySelector('#view').innerText.includes('未配置 Jaeger / Tempo 数据源')");
+  await c.eval("(()=>{const c=clMenuItems().find((item)=>String(item.id)==='1');XSClusterContext.set({kind:'cluster',cluster_id:c.id,name:c.name,env:c.env});})()");
+  clusters = clusters.filter((cluster) => Number(cluster.id) !== 3);
+  await c.eval("CL_LIVE.status='idle';window.XS_CLUSTERS=null;clMenuLoad(true)");
+  console.log("PASS same-environment cluster switch isolates logs and never falls back to the first cluster");
+  await visit("#/traffic/topo", "document.querySelectorAll('[data-flow-node]').length>=3 && !!document.querySelector('.flow-node--pod')");
+  assert.ok(await c.eval("document.querySelectorAll('[data-flow-edge]').length>=4"), "unified topology should retain the ingress-to-Pod primary chain");
   assert.equal(await c.eval("document.querySelector('.flow-node-card').getAttribute('width')"), "224");
-  assert.match(await c.eval("document.querySelector('.x-flow-unobserved').textContent"), /db/);
-  assert.ok(await c.eval("parseFloat(getComputedStyle(document.querySelector('.flow-edge-motion')).strokeWidth) >= 3"), "observed flow should be visually distinct");
-  assert.equal(await c.eval("document.querySelectorAll('.flow-edge-motion').length"), 2);
-  assert.match(await c.eval("document.querySelector('.flow-edge-label').textContent"), /样本.*错/);
+  assert.equal(await c.eval("[...document.querySelectorAll('[data-flow-node]')].some((node)=>['orders','db'].includes(node.textContent.trim().split(/\\s+/)[0]))"), false,
+    "unrelated isolated services should stay out of the default ingress chain");
+  assert.equal(await c.eval("!!document.querySelector('.flow-edge.observed')"), true, "observed trace flow should be visually distinct");
+  assert.equal(await c.eval("!!document.querySelector('.flow-edge.declared')"), true, "declared NetworkPolicy flow should be a separate overlay");
+  assert.match(await c.eval("document.querySelector('.flow-edge.observed .flow-edge-label').textContent"), /span/i);
   assert.ok(await c.eval("(()=>{const e=document.querySelector('[data-flow-edge]'),p=e.querySelector('.flow-edge-line'),m=p.getPointAtLength(p.getTotalLength()/2),l=e.querySelector('.flow-edge-label');return Math.abs(Number(l.getAttribute('y'))-m.y)>=24;})()"), "desktop edge captions should clear the flow path");
-  assert.notEqual(await c.eval("getComputedStyle(document.querySelector('.flow-edge-motion')).animationName"), "none");
-  const start = await c.eval("(()=>{const e=document.querySelector('[data-flow-node]');const r=e.querySelector('.flow-node-card').getBoundingClientRect(),edge=document.querySelector('[data-flow-edge]'),line=edge.querySelector('.flow-edge-line');return {x:r.x+r.width/2,y:r.y+r.height/2,transform:e.getAttribute('transform'),path:line.getAttribute('d'),motion:edge.querySelector('.flow-edge-motion').getAttribute('d'),label:edge.querySelector('.flow-edge-label').getAttribute('x'),labelBg:edge.querySelector('[data-flow-label-bg]').getAttribute('x')};})()");
+  const start = await c.eval("(()=>{const e=document.querySelector('[data-flow-node]');const r=e.querySelector('.flow-node-card').getBoundingClientRect(),edge=document.querySelector('[data-flow-edge]'),line=edge.querySelector('.flow-edge-line');return {x:r.x+r.width/2,y:r.y+r.height/2,transform:e.getAttribute('transform'),path:line.getAttribute('d'),label:edge.querySelector('.flow-edge-label').getAttribute('x'),labelBg:edge.querySelector('[data-flow-label-bg]').getAttribute('x')};})()");
   await c.send("Input.dispatchMouseEvent", { type: "mousePressed", x: start.x, y: start.y, button: "left", clickCount: 1 });
   await c.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: start.x + 75, y: start.y + 35, button: "left", buttons: 1 });
   await c.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: start.x + 75, y: start.y + 35, button: "left", clickCount: 1 });
   assert.notEqual(await c.eval("document.querySelector('[data-flow-node]').getAttribute('transform')"), start.transform);
   assert.notEqual(await c.eval("document.querySelector('[data-flow-edge] path').getAttribute('d')"), start.path);
-  assert.equal(await c.eval("document.querySelector('[data-flow-edge] .flow-edge-line').getAttribute('d')===document.querySelector('[data-flow-edge] .flow-edge-motion').getAttribute('d')"), true);
-  assert.notEqual(await c.eval("document.querySelector('[data-flow-edge] .flow-edge-motion').getAttribute('d')"), start.motion);
   assert.notEqual(await c.eval("document.querySelector('[data-flow-edge] .flow-edge-label').getAttribute('x')"), start.label);
   assert.notEqual(await c.eval("document.querySelector('[data-flow-edge] [data-flow-label-bg]').getAttribute('x')"), start.labelBg);
   await c.eval("document.querySelector('[data-flow-reset]').click()");
@@ -1176,24 +1351,20 @@ try {
   assert.notEqual(await c.eval("document.querySelector('[data-flow-node]').getAttribute('transform')"), keyboardStart.transform);
   assert.notEqual(await c.eval("document.querySelector('[data-flow-edge] path').getAttribute('d')"), keyboardStart.path);
   await c.eval("document.querySelector('[data-flow-reset]').click()");
-  assert.equal(await c.eval("!!document.querySelector('[data-flow-empty]')"), false);
   traceSamplesAvailable = false;
   await c.eval("renderTrafficLive(document.querySelector('#view'))");
-  await c.until("!!document.querySelector('[data-flow-empty]') && document.querySelectorAll('[data-flow-edge]').length===0", "empty trace window should be stated without inventing service calls");
-  assert.equal(await c.eval("document.querySelectorAll('[data-flow-node].flow-connected').length"), 0);
-  assert.match(await c.eval("document.querySelector('[data-flow-empty]').textContent"), /不推测调用关系/);
+  await c.until("document.querySelectorAll('.flow-edge.observed').length===0 && document.querySelectorAll('[data-flow-edge]').length>=4",
+    "empty trace window should remove observed edges without inventing calls");
   traceSamplesAvailable = true;
   await c.eval("renderTrafficLive(document.querySelector('#view'))");
-  await c.until("document.querySelectorAll('[data-flow-edge]').length===2", "trace refresh did not restore observed calls");
+  await c.until("document.querySelectorAll('.flow-edge.observed').length===1", "trace refresh did not restore observed calls");
   console.log("PASS mouse and keyboard node movement, connected directional flow, reset, and honest empty state");
-  await visit("#/netpol/graph", "document.querySelectorAll('[data-flow-edge]').length===4 && !!document.querySelector('.flow-edge.observed') && !!document.querySelector('.flow-edge.declared')");
+  await visit("#/netpol/graph", "location.hash==='#/traffic/topo' && document.querySelector('[data-flow-policy]')?.checked && !!document.querySelector('.flow-edge.observed') && !!document.querySelector('.flow-edge.declared')");
   const desktopPolicy = await c.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   const desktopPolicyPath = path.join(os.tmpdir(), "matrix-netpol-desktop.png");
   fs.writeFileSync(desktopPolicyPath, Buffer.from(desktopPolicy.data, "base64"));
-  assert.equal(await c.eval("document.querySelectorAll('.flow-edge.observed').length"), 2);
-  assert.equal(await c.eval("document.querySelectorAll('.flow-edge.declared').length"), 2);
-  assert.equal(await c.eval("document.querySelectorAll('.flow-edge.observed .flow-edge-motion').length"), 2);
-  assert.equal(await c.eval("document.querySelectorAll('.flow-edge.declared .flow-edge-motion').length"), 0);
+  assert.equal(await c.eval("document.querySelectorAll('.flow-edge.observed').length"), 1);
+  assert.equal(await c.eval("document.querySelectorAll('.flow-edge.declared').length"), 1);
   const policyDrag = await c.eval("(()=>{const e=document.querySelector('[data-flow-node]');const r=e.querySelector('.flow-node-card').getBoundingClientRect(),edge=document.querySelector('[data-flow-edge]');return {x:r.x+r.width/2,y:r.y+r.height/2,transform:e.getAttribute('transform'),path:edge.querySelector('path').getAttribute('d'),label:edge.querySelector('.flow-edge-label').getAttribute('x')};})()");
   await c.send("Input.dispatchMouseEvent", { type: "mousePressed", x: policyDrag.x, y: policyDrag.y, button: "left", clickCount: 1 });
   await c.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: policyDrag.x + 45, y: policyDrag.y + 30, button: "left", buttons: 1 });
@@ -1205,7 +1376,7 @@ try {
   await visit("#/netpol", "!!document.querySelector('[data-netpol-create]') && !!document.querySelector('[data-netpol-edit=\"0\"]')");
   await c.eval("document.querySelector('[data-netpol-create]').click()");
   await c.until("!!document.querySelector('#netpolEditForm')", "NetworkPolicy create form absent");
-  await c.eval("(()=>{const f=document.querySelector('#netpolEditForm');f.elements.namespace.value='prod';f.elements.name.value='smoke-policy';f.elements.labels.value='{\"team\":\"platform\"}';f.elements.spec.value=JSON.stringify({podSelector:{matchLabels:{app:'api'}},policyTypes:['Ingress'],ingress:[],egress:[]});f.elements.reason.value='smoke create';f.elements.confirm.checked=true;f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#netpolEditForm');f.elements.namespace.value='prod';f.elements.name.value='smoke-policy';XSStructuredForms.fill(f.querySelector('[data-xsf-name=labels]'),{team:'platform'},'labels');XSStructuredForms.fill(f.querySelector('[data-xsf-name=podSelector]'),{app:'api'},'podSelector');f.querySelector('input[name=policyTypes][value=Ingress]').checked=true;f.elements.reason.value='smoke create';f.elements.confirm.checked=true;f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden", "NetworkPolicy create did not submit");
   const policyCreate = writes.find((w) => w.path.endsWith("/network/policies/prod/smoke-policy") && w.method === "POST");
   assert.equal(policyCreate?.body.spec.podSelector.matchLabels.app, "api");
@@ -1214,7 +1385,7 @@ try {
   await c.until("!!document.querySelector('[data-netpol-edit-key=\"prod/web-to-api\"]')", "NetworkPolicy list did not refresh after create");
   await c.eval("document.querySelector('[data-netpol-edit-key=\"prod/web-to-api\"]').click()");
   await c.until("!!document.querySelector('#netpolEditForm')", "NetworkPolicy edit form absent");
-  await c.eval("(()=>{const f=document.querySelector('#netpolEditForm');f.elements.spec.value=JSON.stringify({podSelector:{matchLabels:{app:'updated-api'}},policyTypes:['Ingress'],ingress:[],egress:[]});f.elements.reason.value='smoke update';f.elements.confirm.checked=true;f.requestSubmit();})()");
+  await c.eval("(()=>{const f=document.querySelector('#netpolEditForm');XSStructuredForms.fill(f.querySelector('[data-xsf-name=podSelector]'),{app:'updated-api'},'podSelector');f.elements.reason.value='smoke update';f.elements.confirm.checked=true;f.requestSubmit();})()");
   await c.until("document.querySelector('#modal').hidden", "NetworkPolicy update did not submit");
   const policyUpdate = writes.find((w) => w.path.endsWith("/network/policies/prod/web-to-api") && w.method === "PUT");
   assert.equal(policyUpdate?.body.uid, "policy-uid-1");
@@ -1235,7 +1406,7 @@ try {
   await c.until("document.querySelector('[data-probe-result]')?.dataset.reachable==='true'", "real connectivity probe result absent");
   const probe = writes.find((w) => w.path.endsWith("/network/probe"));
   assert.equal(probe.body.uid, readyPods[0].uid);
-  assert.equal(probe.body.container, "api");
+  assert.equal(probe.body.container, "web");
   console.log("PASS authenticated source-Pod TCP probe UI");
   await c.eval("XSProvision.open()");
   await c.until("!!document.querySelector('#provisionForm')", "provision dialog absent");
@@ -1255,15 +1426,15 @@ try {
   console.log("PASS SSH preflight, mirror plan confirmation, fingerprint confirmation and persistent job");
   await c.eval("closeAll()");
   await visit("#/cicd/pipeline", "!!document.querySelector('[data-argo-apps]')");
-  await c.eval("document.querySelector('[data-newpl]').click()");
-  await c.until("!!document.querySelector('[data-stage-add]')", "pipeline editor absent");
-  await c.eval("(()=>{const f=document.querySelector('.x-modal form');f.querySelector('[data-stage-add]').click();const rows=f.querySelectorAll('[data-stage-row]');const row=rows[rows.length-1];const type=row.querySelector('[data-stage-field=type]');type.value='jenkins';type.dispatchEvent(new Event('change',{bubbles:true}));const active=f.querySelectorAll('[data-stage-row]');const stage=active[active.length-1];stage.querySelector('[data-stage-field=name]').value='notify-ci';stage.querySelector('[data-stage-field=jenkins_job]').value='team/app';stage.querySelector('[data-jenkins-discover]').click();})()");
-  await c.until("document.querySelector('.ops-jenkins-schema')?.innerText.includes('已发现 3 个 Job 参数')", "Jenkins parameter discovery absent");
-  assert.equal(await c.eval("document.querySelector('[data-stage-field=params_text]').value.includes('BRANCH=main')"), true);
-  assert.equal(await c.eval("document.querySelector('[data-stage-field=params_text]').value.includes('DEPLOY_ENV=')"), true);
-  assert.equal(await c.eval("document.querySelector('[data-stage-field=params_text]').value.includes('do-not-return')"), false);
-  assert.equal(await c.eval("document.querySelector('.ops-jenkins-schema').textContent.includes('可选值：test / prod') && document.querySelector('.ops-jenkins-schema').textContent.includes('敏感参数，默认值未读取')"), true);
-  await c.eval("closeAll()");
+  await c.eval("document.querySelector('[data-action=create]').click()");
+  await c.until("!!document.querySelector('[data-action=add-stage]')", "pipeline editor absent");
+  await c.eval("(()=>{const f=document.querySelector('[data-cicd-form=pipeline]');f.querySelector('[data-action=add-stage]').click();const rows=f.querySelectorAll('[data-editor-stage]');const stage=rows[rows.length-1];const type=stage.querySelector('[name=type]');type.value='jenkins';type.dispatchEvent(new Event('change',{bubbles:true}));stage.querySelector('[name=name]').value='notify-ci';stage.querySelector('[name=jenkins_id]').value='2';stage.querySelector('[name=jenkins_job]').value='team/app';stage.querySelector('[data-action=discover-jenkins]').click();})()");
+  await c.until("(()=>{const nodes=document.querySelectorAll('[data-jenkins-status]');return nodes[nodes.length-1]?.innerText.includes('已发现 3 个参数')})()", "Jenkins parameter discovery absent");
+  assert.equal(await c.eval("document.querySelectorAll('[data-editor-stage]')[document.querySelectorAll('[data-editor-stage]').length-1].querySelector('[name=params]').value.includes('BRANCH=main')"), true);
+  assert.equal(await c.eval("document.querySelectorAll('[data-editor-stage]')[document.querySelectorAll('[data-editor-stage]').length-1].querySelector('[name=params]').value.includes('DEPLOY_ENV=')"), true);
+  assert.equal(await c.eval("document.querySelectorAll('[data-editor-stage]')[document.querySelectorAll('[data-editor-stage]').length-1].querySelector('[name=params]').value.includes('TOKEN=')"), false);
+  assert.equal(await c.eval("(()=>{const nodes=document.querySelectorAll('[data-jenkins-status]');return nodes[nodes.length-1].innerText.includes('敏感默认值未读取')})()"), true);
+  await c.eval("document.querySelector('.x-cicd-dialog [data-action=close-modal]').click()");
   await c.eval("document.querySelector('[data-argo-apps]').click()");
   await c.until("!!document.querySelector('[data-argo-sync]')", "Argo applications absent");
   await c.eval("document.querySelector('[data-argo-sync]').click()");
@@ -1285,16 +1456,18 @@ try {
   await c.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await c.until("document.querySelector('[data-flow-topology]')?.viewBox.baseVal.width===360", "mobile traffic topology did not switch to vertical layout");
   await sleep(400);
-  assert.equal(await c.eval("document.querySelectorAll('[data-flow-edge]').length"), 2, "mobile trace arrows absent");
+  assert.ok(await c.eval("document.querySelectorAll('[data-flow-edge]').length>=4"), "mobile ingress-to-Pod arrows absent");
   assert.equal(await c.eval("document.querySelector('.flow-node-card').getAttribute('width')"), "304", "mobile cards should fit the narrow graph layout");
-  assert.equal(await c.eval("document.querySelectorAll('.flow-edge-motion').length"), 2, "mobile observed flow animation absent");
+  assert.equal(await c.eval("!!document.querySelector('.flow-edge.observed') && document.querySelector('[data-flow-policy]')?.checked"), true,
+    "mobile trace overlay and policy controls should both remain visible");
   assert.ok(await c.eval("(()=>{const edge=document.querySelector('[data-flow-edge]'),path=edge.querySelector('.flow-edge-line'),p=path.getPointAtLength(path.getTotalLength()/2),label=edge.querySelector('.flow-edge-label');return Math.abs(Number(label.getAttribute('x'))-p.x)>=68;})()"), "mobile edge labels should sit beside vertical paths");
   assert.ok(await c.eval("(()=>{const svg=document.querySelector('[data-flow-topology]'),label=document.querySelector('[data-flow-edge] [data-flow-label-bg]'),x=Number(label.getAttribute('x')),w=Number(label.getAttribute('width'));return x>=0&&x+w<=svg.viewBox.baseVal.width;})()"), "mobile edge labels should remain fully inside the topology canvas");
   const mobile = await c.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   const mobilePath = path.join(os.tmpdir(), "matrix-features-mobile.png");
   fs.writeFileSync(mobilePath, Buffer.from(mobile.data, "base64"));
   await c.eval("location.hash='#/netpol/graph'");
-  await c.until("document.querySelector('[data-flow-topology]')?.viewBox.baseVal.width===360 && document.querySelectorAll('[data-flow-edge]').length>=3", "mobile policy topology did not render");
+  await c.until("location.hash==='#/traffic/topo' && document.querySelector('[data-flow-policy]')?.checked && document.querySelector('[data-flow-topology]')?.viewBox.baseVal.width===360 && document.querySelectorAll('[data-flow-edge]').length>=4",
+    "mobile policy overlay did not render in the unified topology");
   assert.ok(await c.eval("(()=>[...document.querySelectorAll('[data-flow-label-bg]')].every(label=>{const x=Number(label.getAttribute('x')),w=Number(label.getAttribute('width'));return x>=0&&x+w<=360;}))()"), "mobile policy labels should remain fully inside the topology canvas");
   const mobilePolicy = await c.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   const mobilePolicyPath = path.join(os.tmpdir(), "matrix-netpol-mobile.png");

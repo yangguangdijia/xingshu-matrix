@@ -5,21 +5,100 @@
   const quote = (s) => JSON.stringify(String(s));
   const regex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const env = (v) => ({ development: "dev", 开发: "dev", production: "prod", 生产: "prod", 预发: "staging", pre: "staging", 测试: "test", testing: "test", qa: "test" }[String(v).toLowerCase()] || String(v).toLowerCase());
+  const validLabel = (label) => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(label);
+  function sourceScope(source, clusters, cluster) {
+    const o = source.options || {};
+    let scope = o.scope;
+    if (!scope && (o.cluster_id || o.cluster_name)) scope = "cluster";
+    if (scope !== "cluster" && scope !== "central") return null;
+    if (scope === "cluster") {
+      if (!o.cluster_id || env(source.env) !== env(cluster.env)) return null;
+      const owner = clusters.find((c) => String(c.id) === String(o.cluster_id));
+      if (o.cluster_name && (!owner || owner.name !== o.cluster_name)) throw new Error("数据源 cluster_id 与 cluster_name 不一致");
+      return String(o.cluster_id) === String(cluster.id) ? { ds: source, scope, dedicated: true, cluster } : null;
+    }
+    if (o.cluster_id || o.cluster_name) throw new Error("中央数据源不能同时设置单集群归属");
+    if (source.env && env(source.env) !== env(cluster.env)) return null;
+    const values = o.cluster_values;
+    if (!values || typeof values !== "object" || Array.isArray(values)) throw new Error("中央数据源缺少 cluster_values 集群映射");
+    if (!Object.prototype.hasOwnProperty.call(values, String(cluster.id))) return null;
+    const clusterValue = values[String(cluster.id)], clusterLabel = o.cluster_label;
+    const traceLabel = /^(?:jaeger|tempo)$/.test(source.type) && /^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(clusterLabel);
+    if (typeof clusterValue !== "string" || !clusterValue.trim() || !(validLabel(clusterLabel) || traceLabel)) throw new Error("中央数据源缺少有效的集群标签映射");
+    return { ds: source, scope, dedicated: false, cluster, clusterValue, clusterLabel };
+  }
   function datasource(list, clusters, cluster, types) {
     if (!cluster) return null;
-    const candidates = list.filter((d) => types.includes(d.type) && env(d.env) === env(cluster.env));
-    const owned = candidates.filter((d) => {
-      const o = d.options || {};
-      return String(o.cluster_id || "") === String(cluster.id) || o.cluster_name === cluster.name;
-    });
-    if (owned.length === 1) return { ds: owned[0], dedicated: true };
+    const candidates = (list || []).filter((d) => types.includes(d.type));
+    const matching = candidates.map((d) => sourceScope(d, clusters || [], cluster)).filter(Boolean);
+    const owned = matching.filter((d) => d.scope === "cluster");
+    if (owned.length === 1) return owned[0];
     if (owned.length > 1) throw new Error("当前集群存在多个同类数据源，请在数据源中明确唯一归属");
-    const shared = candidates.filter((d) => !(d.options || {}).cluster_id && !(d.options || {}).cluster_name);
-    if (!shared.length) return null;
-    if (shared.length !== 1) throw new Error("当前环境存在多个同类数据源，请设置 options.cluster_id 或 cluster_name");
-    return { ds: shared[0], dedicated: clusters.filter((c) => env(c.env) === env(cluster.env)).length === 1 };
+    const shared = matching.filter((d) => d.scope === "central");
+    if (shared.length > 1) throw new Error("当前集群存在多个中央数据源，归属不明确");
+    return shared[0] || null;
   }
-  function metricQueries(nodes, pods, ns, app) {
+  function resolvedDatasource(result, clusters, cluster, type) {
+    if (!cluster || cluster.id == null) throw new Error("请选择目标集群");
+    const outer = result && result.data && typeof result.data === "object" ? result.data : result || {};
+    const source = outer.datasource || (outer.data && outer.data.datasource) || outer;
+    if (!source || source.id == null) throw new Error("数据源解析接口未返回数据源");
+    if (source.type !== type) throw new Error("数据源解析接口返回了不匹配的类型");
+    const scope = outer.scope || (outer.data && outer.data.scope) || (source.options || {}).scope;
+    if (scope !== "cluster" && scope !== "central") throw new Error("数据源解析接口未返回有效归属");
+    const options = Object.assign({}, source.options || {}, { scope });
+    const clusterId = outer.cluster_id != null ? outer.cluster_id : outer.data && outer.data.cluster_id;
+    if (scope === "cluster") {
+      if (options.cluster_id == null && clusterId != null) options.cluster_id = clusterId;
+      if (options.cluster_name == null) options.cluster_name = cluster.name || "";
+    }
+    const normalized = Object.assign({}, source, { options });
+    const ownership = sourceScope(normalized, clusters || [cluster], cluster);
+    if (!ownership) throw new Error("解析到的数据源不属于当前集群");
+    return Object.assign({}, ownership, { resolved: true });
+  }
+  function clusterMatcher(selector, scope) {
+    if (!scope || scope.scope !== "central") return selector;
+    const label = scope.clusterLabel, value = scope.clusterValue;
+    if (!validLabel(label) || typeof value !== "string" || !value.trim()) throw new Error("中央数据源缺少有效的集群标签映射");
+    const parts = [], source = String(selector || "");
+    let start = 0, quoted = false, escaped = false;
+    for (let i = 0; i < source.length; i++) {
+      if (escaped) { escaped = false; continue; }
+      if (quoted && source[i] === "\\") { escaped = true; continue; }
+      if (source[i] === '"') { quoted = !quoted; continue; }
+      if (source[i] === "," && !quoted) { parts.push(source.slice(start, i)); start = i + 1; }
+    }
+    if (quoted || escaped) throw new Error("无法验证当前集群标签条件");
+    if (source) parts.push(source.slice(start));
+    let present = false;
+    for (const part of parts) {
+      const match = part.match(/^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(=~|!=|!~|=)\s*("(?:\\.|[^"\\])*")\s*$/);
+      if (!match) throw new Error("无法验证当前集群标签条件");
+      if (match[1] !== label) continue;
+      let actual;
+      try { actual = JSON.parse(match[3]); } catch { throw new Error("无法验证当前集群标签条件"); }
+      if (present || match[2] !== "=" || actual !== value) throw new Error("查询条件与当前集群标签冲突");
+      present = true;
+    }
+    return present ? source : source ? source + "," + label + "=" + quote(value) : label + "=" + quote(value);
+  }
+  function scopedPromQuery(query, scope, generated = false) {
+    if (!scope || scope.scope !== "central") return query;
+    if (!generated) {
+      const single = String(query).trim().match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{([^{}]*)\})?$/);
+      if (!single) throw new Error("中央数据源仅支持可验证的单指标选择器；复杂 PromQL 请等待服务端隔离支持");
+      return single[1] + "{" + clusterMatcher(single[2] || "", scope) + "}";
+    }
+    let count = 0;
+    const result = query.replace(/([a-zA-Z_:][a-zA-Z0-9_:]*)\{([^{}]*)\}/g, (_, name, selector) => {
+      count++;
+      return name + "{" + clusterMatcher(selector, scope) + "}";
+    });
+    if (!count) throw new Error("无法验证指标查询的集群范围");
+    return result;
+  }
+  function metricQueries(nodes, pods, ns, app, scope) {
     const ips = nodes.map((n) => n.internal_ip).filter(Boolean).map((ip) => regex((ip.includes(":") ? "[" + ip + "]" : ip) + ":9100"));
     if (!ips.length) throw new Error("集群没有可用于关联 node-exporter 的节点地址");
     const selector = 'instance=~' + quote(ips.join("|"));
@@ -30,7 +109,7 @@
     const match = 'namespace=~' + quote(ns ? regex(ns) : ".+") + ',node=~' + quote(node);
     const join = ' * on(namespace,pod) group_left() max by(namespace,pod) (kube_pod_info{' + match + '})';
     const container = ps + ',container!="",container!="POD",image!=""';
-    return {
+    const queries = {
       cpu: workload ? '100 * sum(rate(container_cpu_usage_seconds_total{' + container + '}[5m])' + join + ') / sum(kube_node_status_allocatable{resource="cpu",node=~' + quote(node) + '})' : '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle",' + selector + '}[5m])))',
       mem: workload ? '100 * sum(container_memory_working_set_bytes{' + container + '}' + join + ') / sum(kube_node_status_allocatable{resource="memory",node=~' + quote(node) + '})' : '100 * (1 - sum(node_memory_MemAvailable_bytes{' + selector + '}) / sum(node_memory_MemTotal_bytes{' + selector + '}))',
       rx: 'sum(rate(node_network_receive_bytes_total{device!="lo",' + selector + '}[5m])) / 1000000',
@@ -38,6 +117,7 @@
       disk: '100 * (1 - sum(node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay",' + selector + '}) / sum(node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay",' + selector + '}))',
       rst: 'sum(kube_pod_container_status_restarts_total{' + ps + '}' + join + ')'
     };
+    return Object.fromEntries(Object.entries(queries).map(([key, value]) => [key, scopedPromQuery(value, scope, true)]));
   }
   function matrix(raw) {
     const data = raw && raw.data || raw || {};
@@ -48,12 +128,22 @@
     const o = scope.ds.options || {};
     let selector = o.log_selector || '{job="fluent-bit"}';
     if (!/^\{[^{}]+\}$/.test(selector)) throw new Error("Loki log_selector 必须是标签选择器");
-    if (!scope.dedicated) {
-      const label = o.cluster_label || "cluster";
-      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(label)) throw new Error("Loki 集群标签名无效");
-      selector = selector.slice(0, -1) + "," + label + "=" + quote(scope.cluster.name) + "}";
-    }
+    selector = "{" + clusterMatcher(selector.slice(1, -1), scope) + "}";
     return selector;
+  }
+  function scopedLogQuery(input, scope) {
+    if (!scope || scope.scope !== "central") return input;
+    if (!String(input || "").trim()) return logQuery(scope);
+    const parsed = String(input).trim().match(/^(\{[^{}]+\})(\s*(?:\|[=~!]\s*"(?:\\.|[^"\\])*"\s*)*)$/);
+    if (!parsed) throw new Error("中央日志查询仅支持可验证的标签选择器和简单过滤条件");
+    return "{" + clusterMatcher(parsed[1].slice(1, -1), scope) + "}" + parsed[2];
+  }
+  function traceTags(scope, tags = {}) {
+    if (!scope || scope.scope !== "central") return { ...tags };
+    const label = scope.clusterLabel, value = scope.clusterValue;
+    if (!/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(label) || typeof value !== "string" || !value.trim()) throw new Error("中央数据源缺少有效的集群标签映射");
+    if (Object.prototype.hasOwnProperty.call(tags, label) && tags[label] !== value) throw new Error("链路标签与所选集群冲突");
+    return { ...tags, [label]: value };
   }
   function normalizeLog(row, cluster) {
     const labels = row.labels || {};
@@ -178,20 +268,22 @@
   function alertBelongsToScope(alert, scope) {
     const labels = alert.labels || {}, targetId = String(scope.targetId || ""), target = scope.targetCluster || null;
     const source = (scope.datasources || []).find((d) => String(d.id) === String(alert.datasource_id));
-    const options = source && source.options || {}, sourceId = options.cluster_id, sourceName = options.cluster_name;
-    if (sourceId != null && String(sourceId) !== targetId) return false;
-    if (sourceName && (!target || String(sourceName) !== String(target.name))) return false;
+    if (!source || !target || String(target.id) !== targetId) return false;
+    let ownership;
+    try { ownership = sourceScope(source, scope.clusters || [target], target); } catch { return false; }
+    if (!ownership) return false;
+    if (ownership.scope === "central" && labels[ownership.clusterLabel] !== ownership.clusterValue) return false;
     const clusterLabel = labels.cluster || labels.cluster_name || labels.cluster_id || labels["k8s.cluster.name"] || labels["k8s.cluster.uid"];
     if (clusterLabel) {
       const value = String(clusterLabel);
-      if (value !== targetId && (!target || value !== String(target.name))) return false;
-    } else if (sourceId == null && !sourceName && (!target || scope.environmentClusterCount !== 1)) return false;
+      if (value !== targetId && value !== String(target.name) && (ownership.scope !== "central" || value !== ownership.clusterValue)) return false;
+    }
     if (labels.namespace && scope.namespace && labels.namespace !== scope.namespace) return false;
     const appLabels = [labels.app, labels.application, labels.app_name, labels["app.kubernetes.io/name"], labels["service.name"]].filter(Boolean).map(String);
     if (appLabels.some((value) => value === scope.appName)) return true;
     const resources = [labels.pod, labels.pod_name, labels.service, labels.deployment, labels.statefulset, labels.daemonset, labels.job, labels.job_name].filter(Boolean).map(String);
     return resources.some((value) => (scope.pods || []).indexOf(value) >= 0 || (scope.services || []).indexOf(value) >= 0 || (scope.workloads || []).indexOf(value) >= 0);
   }
-  root.XSObserve = { items, env, datasource, metricQueries, matrix, logQuery, normalizeLog, traceRecord, alertLocation, alertWorkloadCandidates, alertRemediationTarget, redactDiagnosticText, alertBelongsToScope, quote, regex };
+  root.XSObserve = { items, env, datasource, sourceScope, resolvedDatasource, metricQueries, scopedPromQuery, matrix, logQuery, scopedLogQuery, traceTags, normalizeLog, traceRecord, alertLocation, alertWorkloadCandidates, alertRemediationTarget, redactDiagnosticText, alertBelongsToScope, quote, regex };
   if (typeof module !== "undefined") module.exports = root.XSObserve;
 })(typeof window === "undefined" ? globalThis : window);

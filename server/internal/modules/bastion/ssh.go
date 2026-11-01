@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -71,8 +70,21 @@ func (m *Module) hostKeyCallback(asset *Asset) ssh.HostKeyCallback {
 	return func(_ string, _ net.Addr, key ssh.PublicKey) error {
 		if asset.HostKey == "" {
 			k := string(bytes.TrimSpace(ssh.MarshalAuthorizedKey(key)))
-			_, err := m.d.DB.Exec(context.Background(), `UPDATE bastion_assets SET host_key=$2 WHERE id=$1 AND host_key=''`, asset.ID, k)
-			return err
+			ctx, cancel := context.WithTimeout(context.Background(), databaseTimeout)
+			defer cancel()
+			// Concurrent first connections must all compare with the winning
+			// stored key, rather than accepting an UPDATE that affected no rows.
+			var stored string
+			err := m.d.DB.QueryRow(ctx, `UPDATE bastion_assets SET host_key=
+				CASE WHEN host_key='' THEN $2 ELSE host_key END WHERE id=$1 RETURNING host_key`, asset.ID, k).Scan(&stored)
+			if err != nil {
+				return errors.New("host key could not be verified")
+			}
+			want, _, _, _, err := ssh.ParseAuthorizedKey([]byte(stored))
+			if err != nil || !bytes.Equal(want.Marshal(), key.Marshal()) {
+				return errors.New("host key mismatch")
+			}
+			return nil
 		}
 		want, _, _, _, err := ssh.ParseAuthorizedKey([]byte(asset.HostKey))
 		if err != nil {
@@ -127,12 +139,23 @@ func (m *Module) sshWS(c *gin.Context) {
 	}
 	auth, err := m.authMethod(acc)
 	if err != nil {
-		httpx.Fail(c, httpx.Internal(err))
+		httpx.Fail(c, httpx.Conflict("SSH credential is unavailable or invalid"))
 		return
 	}
 	filters, err := m.loadFilters(c)
 	if err != nil {
 		httpx.Fail(c, err)
+		return
+	}
+	if err := m.recordingReady(); err != nil {
+		httpx.Fail(c, httpx.Conflict("shared durable recording storage is unavailable; SSH connection refused"))
+		return
+	}
+	m.mu.Lock()
+	unavailable := m.stopping || m.store == nil
+	m.mu.Unlock()
+	if unavailable {
+		httpx.Fail(c, httpx.Conflict("bastion session owner is unavailable"))
 		return
 	}
 
@@ -142,28 +165,21 @@ func (m *Module) sshWS(c *gin.Context) {
 	}
 	defer ws.Close()
 
-	var sessID int64
-	err = m.d.DB.QueryRow(context.Background(), `INSERT INTO bastion_sessions
-		(user_id,username,asset_id,asset_name,account_id,account_user,protocol,client_ip)
-		VALUES ($1,$2,$3,$4,$5,$6,'ssh',$7) RETURNING id`,
-		p.UserID, p.Username, asset.ID, asset.Name, acc.ID, acc.Username, c.ClientIP()).Scan(&sessID)
+	ref := sessionRef{Owner: m.owner, Fence: newToken()}
+	createCtx, createCancel := context.WithTimeout(context.Background(), databaseTimeout)
+	err = m.d.DB.QueryRow(createCtx, `INSERT INTO bastion_sessions
+		(user_id,username,asset_id,asset_name,account_id,account_user,protocol,client_ip,
+		 owner_id,fence_token,heartbeat_at,lease_expires_at,recording_state,recording_storage_id)
+		VALUES ($1,$2,$3,$4,$5,$6,'ssh',$7,$8,$9,clock_timestamp(),
+		 clock_timestamp()+make_interval(secs => $10),'unavailable',$11) RETURNING id`,
+		p.UserID, p.Username, asset.ID, asset.Name, acc.ID, acc.Username, c.ClientIP(),
+		ref.Owner, ref.Fence, leaseSeconds, m.storageID).Scan(&ref.ID)
+	createCancel()
 	if err != nil {
-		_ = ws.WriteJSON(wsMsg{Type: "error", Data: "create session: " + err.Error()})
+		_ = ws.WriteJSON(wsMsg{Type: "error", Data: "session audit could not be created"})
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	m.register(sessID, cancel)
-
-	status, errMsg, recPath := "closed", "", ""
-	defer func() {
-		if m.unregister(sessID) {
-			status = "killed"
-		}
-		_, _ = m.d.DB.Exec(context.Background(), `UPDATE bastion_sessions SET status=$2,error=$3,recording_path=$4,ended_at=now() WHERE id=$1`,
-			sessID, status, errMsg, recPath)
-	}()
-
 	var wmu sync.Mutex
 	send := func(msg wsMsg) error {
 		wmu.Lock()
@@ -171,56 +187,156 @@ func (m *Module) sshWS(c *gin.Context) {
 		_ = ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		return ws.WriteJSON(msg)
 	}
-	fail := func(e error) {
-		status, errMsg = "failed", e.Error()
-		_ = send(wsMsg{Type: "output", Data: "\r\n\x1b[31m[bastion] " + e.Error() + "\x1b[0m\r\n"})
-		_ = send(wsMsg{Type: "closed", Data: e.Error()})
+	end := sessionEnd{Status: "closed", RecordingState: "unavailable", StorageID: m.storageID}
+	if !m.register(ref, cancel) {
+		cancel()
+		end.Status, end.Error = "failed", "owner is shutting down"
+		finalCtx, finalCancel := context.WithTimeout(context.Background(), databaseTimeout)
+		_ = m.store.finish(finalCtx, ref, end)
+		finalCancel()
+		return
 	}
+	watchDone := m.watchLease(ctx, ref)
+	var rec *Recorder
+	var raw net.Conn
+	var sess *ssh.Session
+	var streams sync.WaitGroup
+	var input sync.WaitGroup
+	var cancelTransport context.CancelFunc
+	defer func() {
+		// A kill acknowledgement is written only after all local transports,
+		// readers, input delivery and the durable recording have finished.
+		if raw != nil {
+			_ = raw.Close()
+		}
+		_ = ws.Close()
+		if sess != nil {
+			_ = sess.Close()
+		}
+		if cancelTransport != nil {
+			cancelTransport()
+		}
+		streams.Wait()
+		input.Wait()
+		if rec != nil {
+			if err := rec.Close(); err != nil {
+				end.RecordingState = "failed"
+				end.Status, end.Error = "failed", "recording persistence failed"
+			} else if end.RecordingState == "recording" {
+				end.RecordingState = "ready"
+			}
+		}
+		reason := m.sessionReason(ref.ID)
+		switch reason {
+		case "killed":
+			end.Status = "killed"
+		case "shutdown":
+			end.Status, end.Error = "closed", "owner shut down"
+		case "lease_lost":
+			end.Status, end.Error = "failed", "session ownership or lease lost"
+		}
+		finalCtx, finalCancel := context.WithTimeout(context.Background(), databaseTimeout)
+		if err := m.store.finish(finalCtx, ref, end); err != nil {
+			m.d.Logger.Warn("bastion: session final audit not persisted", "session", ref.ID)
+		}
+		finalCancel()
+		cancel()
+		<-watchDone
+		m.unregister(ref.ID)
+	}()
+	fail := func(message string) {
+		end.Status, end.Error = "failed", message
+		_ = send(wsMsg{Type: "error", Data: message})
+	}
+	_ = send(wsMsg{Type: "session", Data: itoa(ref.ID)})
 
 	cols, rows := qInt(c, "cols", 120), qInt(c, "rows", 32)
+	rec, end.RecordingPath, err = m.createRecording(ref, cols, rows, fmt.Sprintf("%s@%s by %s", acc.Username, asset.Name, p.Username))
+	if err != nil {
+		end.RecordingState = "failed"
+		fail("durable recording could not be created")
+		return
+	}
+	end.RecordingState = "recording"
+	recordCtx, recordCancel := context.WithTimeout(ctx, databaseTimeout)
+	tag, err := m.d.DB.Exec(recordCtx, `UPDATE bastion_sessions SET recording_path=$4,
+		recording_state='recording' WHERE id=$1 AND owner_id=$2 AND fence_token=$3
+		AND status='active' AND lease_expires_at>clock_timestamp() AND kill_requested_at IS NULL`,
+		ref.ID, ref.Owner, ref.Fence, end.RecordingPath)
+	recordCancel()
+	if err != nil || tag.RowsAffected() != 1 {
+		fail("recording audit could not be persisted")
+		return
+	}
 	addr := net.JoinHostPort(asset.Host, strconv.Itoa(asset.Port))
-	client, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
+	dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
+	raw, err = (&net.Dialer{}).DialContext(dialCtx, "tcp", addr)
+	dialCancel()
+	if err != nil {
+		fail("SSH network connection failed")
+		return
+	}
+	transportCtx, transportCancel := context.WithCancel(ctx)
+	cancelTransport = transportCancel
+	go func(conn net.Conn) {
+		<-transportCtx.Done()
+		_ = conn.Close()
+		_ = ws.Close()
+	}(raw)
+	_ = raw.SetDeadline(time.Now().Add(10 * time.Second))
+	conn, chans, reqs, err := ssh.NewClientConn(raw, addr, &ssh.ClientConfig{
 		User: acc.Username, Auth: []ssh.AuthMethod{auth},
 		HostKeyCallback: m.hostKeyCallback(asset), Timeout: 10 * time.Second,
 	})
 	if err != nil {
-		fail(fmt.Errorf("ssh dial %s: %w", addr, err))
+		fail("SSH handshake, authentication or host key verification failed")
 		return
 	}
-	defer client.Close()
-	sess, err := client.NewSession()
+	_ = raw.SetDeadline(time.Time{})
+	client := ssh.NewClient(conn, chans, reqs)
+	sess, err = client.NewSession()
 	if err != nil {
-		fail(err)
+		fail("SSH session creation failed")
 		return
 	}
-	defer sess.Close()
 	modes := ssh.TerminalModes{ssh.ECHO: 1, ssh.TTY_OP_ISPEED: 14400, ssh.TTY_OP_OSPEED: 14400}
 	if err := sess.RequestPty("xterm-256color", rows, cols, modes); err != nil {
-		fail(err)
+		fail("SSH PTY request failed")
 		return
 	}
-	stdin, _ := sess.StdinPipe()
-	stdout, _ := sess.StdoutPipe()
-	stderr, _ := sess.StderrPipe()
-	if err := sess.Shell(); err != nil {
-		fail(err)
-		return
-	}
-
-	name := fmt.Sprintf("%d-%s.cast", sessID, time.Now().Format("20060102T150405"))
-	rec, err := NewRecorder(filepath.Join(m.recordDir, name), cols, rows, fmt.Sprintf("%s@%s by %s", acc.Username, asset.Name, p.Username))
+	stdin, err := sess.StdinPipe()
 	if err != nil {
-		m.d.Logger.Warn("bastion: recording disabled", "session", sessID, "err", err)
-	} else {
-		recPath = name
-		defer rec.Close()
+		fail("SSH stdin setup failed")
+		return
+	}
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		fail("SSH stdout setup failed")
+		return
+	}
+	stderr, err := sess.StderrPipe()
+	if err != nil {
+		fail("SSH stderr setup failed")
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	if err := sess.Shell(); err != nil {
+		fail("SSH shell request failed")
+		return
 	}
 
 	var pmu sync.Mutex
 	proc := NewInputProcessor(filters)
-	done := make(chan struct{}, 3)
+	type ioResult struct {
+		kind string
+		err  error
+	}
+	done := make(chan ioResult, 4)
 
 	pump := func(r io.Reader) {
+		defer streams.Done()
 		buf := make([]byte, 16*1024)
 		for {
 			n, err := r.Read(buf)
@@ -229,26 +345,43 @@ func (m *Module) sshWS(c *gin.Context) {
 				pmu.Lock()
 				proc.Output(chunk)
 				pmu.Unlock()
-				rec.Output(chunk)
+				if err := rec.Output(chunk); err != nil {
+					done <- ioResult{"recording", err}
+					return
+				}
 				if send(wsMsg{Type: "output", Data: string(chunk)}) != nil {
-					break
+					done <- ioResult{"client", io.EOF}
+					return
 				}
 			}
 			if err != nil {
-				break
+				if !errors.Is(err, io.EOF) && ctx.Err() == nil {
+					done <- ioResult{"output", err}
+				}
+				return
 			}
 		}
-		done <- struct{}{}
 	}
+	streams.Add(2)
 	go pump(stdout)
 	go pump(stderr)
+	go func() {
+		err := sess.Wait()
+		streams.Wait()
+		done <- ioResult{"remote", err}
+	}()
 
+	input.Add(1)
 	go func() { // client -> remote
-		defer func() { done <- struct{}{} }()
+		defer input.Done()
 		ws.SetReadLimit(1 << 20)
 		for {
 			var msg wsMsg
 			if err := ws.ReadJSON(&msg); err != nil {
+				done <- ioResult{"client", err}
+				return
+			}
+			if ctx.Err() != nil {
 				return
 			}
 			switch msg.Type {
@@ -257,26 +390,41 @@ func (m *Module) sshWS(c *gin.Context) {
 				toRemote, toClient, events := proc.Input([]byte(msg.Data))
 				pmu.Unlock()
 				if len(toClient) > 0 {
-					rec.Output(toClient)
+					if err := rec.Output(toClient); err != nil {
+						done <- ioResult{"recording", err}
+						return
+					}
 					_ = send(wsMsg{Type: "output", Data: string(toClient)})
 				}
-				for _, ev := range events {
-					var rule any
-					if ev.RuleID > 0 {
-						rule = ev.RuleID
-					}
-					_, _ = m.d.DB.Exec(context.Background(), `INSERT INTO bastion_commands (session_id,command,action,rule_id) VALUES ($1,$2,$3,$4)`,
-						sessID, ev.Command, ev.Action, rule)
+				ids, err := m.auditCommands(ctx, ref, events)
+				if err != nil {
+					done <- ioResult{"audit", err}
+					return
 				}
 				if len(toRemote) > 0 {
-					if _, err := stdin.Write(toRemote); err != nil {
+					n, writeErr := stdin.Write(toRemote)
+					if n != len(toRemote) && writeErr == nil {
+						writeErr = io.ErrShortWrite
+					}
+					if err := m.commandDelivery(ctx, ref, ids, writeErr); err != nil {
+						done <- ioResult{"audit", err}
+						return
+					}
+					if writeErr != nil {
+						done <- ioResult{"input", writeErr}
 						return
 					}
 				}
 			case "resize":
 				if msg.Cols > 0 && msg.Rows > 0 {
-					_ = sess.WindowChange(msg.Rows, msg.Cols)
-					rec.Resize(msg.Cols, msg.Rows)
+					if err := rec.Resize(msg.Cols, msg.Rows); err != nil {
+						done <- ioResult{"recording", err}
+						return
+					}
+					if err := sess.WindowChange(msg.Rows, msg.Cols); err != nil {
+						done <- ioResult{"input", err}
+						return
+					}
 				}
 			}
 		}
@@ -287,10 +435,18 @@ func (m *Module) sshWS(c *gin.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			_ = send(wsMsg{Type: "output", Data: "\r\n\x1b[31m[bastion] 会话已被管理员强制断开\x1b[0m\r\n"})
-			_ = send(wsMsg{Type: "closed", Data: "killed"})
 			return
-		case <-done:
+		case result := <-done:
+			if result.kind == "client" {
+				if result.err != nil && !errors.Is(result.err, io.EOF) && !websocket.IsCloseError(result.err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					fail("client connection ended unexpectedly")
+				}
+			} else if result.err != nil {
+				if result.kind == "recording" {
+					end.RecordingState = "failed"
+				}
+				fail(result.kind + " failed; remote command outcome is not guaranteed")
+			}
 			_ = send(wsMsg{Type: "closed", Data: "session ended"})
 			return
 		case <-ping.C:
@@ -298,6 +454,7 @@ func (m *Module) sshWS(c *gin.Context) {
 			err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
 			wmu.Unlock()
 			if err != nil && !errors.Is(err, websocket.ErrCloseSent) {
+				end.Status, end.Error = "failed", "client heartbeat failed"
 				return
 			}
 		}

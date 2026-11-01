@@ -71,6 +71,8 @@
 
   XS.isApproval = function (err) { return !!(err && err.code === 40304); };
   XS.isAuth = function (err) { return !!(err && (err.status === 401 || err.code === 40100 || err.code === 40101)); };
+  XS.isStale = function (err) { return !!(err && err.code === "XS_CONTEXT_CHANGED"); };
+  XS.isCancelled = function (err) { return !!(err && (err.code === "XS_REQUEST_CANCELLED" || XS.isStale(err))); };
 
   XS.toast = function (msg) {
     if (typeof window.toast === "function") { try { window.toast(msg); return; } catch (e) {} }
@@ -116,8 +118,39 @@
     return res.text().then(function (text) { return text ? { message: text } : null; });
   }
 
+  function contextChanged() { return new ApiError("集群上下文已变化，请重新加载", 0, "XS_CONTEXT_CHANGED"); }
+  function requestCancelled() { return new ApiError("请求已取消", 0, "XS_REQUEST_CANCELLED"); }
+  function assertRequestScope(options) {
+    if (options._clusterScope && !options._clusterScope.context.isCurrent(options._clusterScope.snapshot)) throw contextChanged();
+    if (options.signal && options.signal.aborted) throw requestCancelled();
+  }
+
+  function prepareScope(path, options) {
+    if (!options.scope || options.scope === "platform" || options.scope === "environment") return options;
+    if (options.scope !== "cluster") throw new ApiError("此请求范围尚不支持，请逐集群查询", 0, "XS_SCOPE_UNSUPPORTED");
+    var context = window.XSClusterContext;
+    if (!context || typeof context.get !== "function") throw new ApiError("集群上下文尚未加载", 0, "XS_CLUSTER_REQUIRED");
+    var snapshot = context.get();
+    if (snapshot.kind !== "cluster" || !snapshot.cluster_id) throw new ApiError("请先选择集群", 0, "XS_CLUSTER_REQUIRED");
+    var query = Object.assign({}, options.query || {});
+    var inlineQuery = String(path).split("?")[1] || "";
+    var inlineIds = new URLSearchParams(inlineQuery).getAll("cluster_id");
+    var suppliedIds = inlineIds.slice();
+    if (query.cluster_id !== undefined && query.cluster_id !== null) suppliedIds.push(String(query.cluster_id));
+    if (suppliedIds.some(function (id) { return id !== String(snapshot.cluster_id); })) {
+      throw new ApiError("请求集群与当前集群不一致", 0, "XS_CLUSTER_MISMATCH");
+    }
+    if (!suppliedIds.length) query.cluster_id = snapshot.cluster_id;
+    else if (inlineIds.length) delete query.cluster_id;
+    return Object.assign({}, options, {
+      query: query,
+      _clusterScope: { context: context, snapshot: snapshot }
+    });
+  }
+
   function request(path, options) {
     options = options || {};
+    try { assertRequestScope(options); } catch (err) { return Promise.reject(err); }
     var headers = Object.assign({ "Accept": "application/json" }, options.headers || {});
     var body = options.body;
     if (body !== undefined && body !== null && !(body instanceof FormData) && typeof body !== "string") {
@@ -128,22 +161,38 @@
     }
     var tok = XS.token();
     if (tok && !options.noAuth) headers.Authorization = "Bearer " + tok;
-    var ctl = null;
-    if (typeof AbortController !== "undefined" && options.timeoutMs !== 0) {
-      ctl = new AbortController();
-      var timer = setTimeout(function () { ctl.abort(); }, options.timeoutMs || 30000);
-      options._timer = timer;
+    var ctl = typeof AbortController === "undefined" ? null : new AbortController();
+    var timer = null;
+    var timedOut = false;
+    var externalSignal = options.signal;
+    function abort() { if (ctl) ctl.abort(); }
+    if (externalSignal) {
+      if (externalSignal.aborted) return Promise.reject(requestCancelled());
+      if (ctl) externalSignal.addEventListener("abort", abort, { once: true });
+    }
+    if (ctl && options.timeoutMs !== 0) {
+      timer = setTimeout(function () { timedOut = true; ctl.abort(); }, options.timeoutMs || 30000);
+    }
+    var unsubscribe = options._clusterScope && options._clusterScope.context.subscribe(function () { abort(); });
+    function cleanup() {
+      if (timer) clearTimeout(timer);
+      if (unsubscribe) unsubscribe();
+      if (externalSignal && ctl) externalSignal.removeEventListener("abort", abort);
     }
     var init = {
       method: options.method || "GET",
       headers: headers,
       body: body,
       credentials: options.credentials || "same-origin",
-      signal: ctl ? ctl.signal : undefined
+      signal: ctl ? ctl.signal : externalSignal
     };
-    return fetch(url(path, options.query), init).then(function (res) {
-      if (options._timer) clearTimeout(options._timer);
+    var response;
+    try { response = fetch(url(path, options.query), init); }
+    catch (err) { response = Promise.reject(err); }
+    return Promise.resolve(response).then(function (res) {
+      assertRequestScope(options);
       return parseBody(res).then(function (payload) {
+        assertRequestScope(options);
         var code = payload && typeof payload.code === "number" ? payload.code : 0;
         if (res.status === 202 && code === 40304) {
           var pending = new ApiError((payload && payload.message) || "已提交审批", res.status, code, payload && payload.data);
@@ -159,10 +208,12 @@
         return payload.data;
       });
     }, function (err) {
-      if (options._timer) clearTimeout(options._timer);
-      if (err && err.name === "AbortError") throw new ApiError("请求超时", 0, 0, null);
+      assertRequestScope(options);
+      if (err && err.name === "AbortError") {
+        throw timedOut ? new ApiError("请求超时", 0, 0, null) : requestCancelled();
+      }
       throw new ApiError("无法连接后端：" + (err && err.message ? err.message : "网络错误"), 0, 0, null);
-    });
+    }).finally(cleanup);
   }
 
   XS.refresh = function () {
@@ -184,10 +235,14 @@
 
   XS.api = function (path, options) {
     options = options || {};
-    return request(path, options).catch(function (err) {
-      if (XS.isAuth(err) && !options._retried && XS.refreshToken()) {
+    var prepared;
+    try { prepared = prepareScope(path, options); } catch (err) { return Promise.reject(err); }
+    return request(path, prepared).catch(function (err) {
+      assertRequestScope(prepared);
+      if (XS.isAuth(err) && !prepared._retried && XS.refreshToken()) {
         return XS.refresh().then(function () {
-          var retry = Object.assign({}, options, { _retried: true });
+          assertRequestScope(prepared);
+          var retry = Object.assign({}, prepared, { _retried: true });
           return request(path, retry);
         });
       }
@@ -200,6 +255,13 @@
   XS.put = function (path, body, opts) { return XS.api(path, Object.assign({ method: "PUT", body: body }, opts || {})); };
   XS.patch = function (path, body, opts) { return XS.api(path, Object.assign({ method: "PATCH", body: body }, opts || {})); };
   XS.del = function (path, opts) { return XS.api(path, Object.assign({ method: "DELETE" }, opts || {})); };
+  // Page callers pass { scope: "cluster", signal: requestScope.signal } to scoped requests.
+  XS.createRequestScope = function (options) {
+    var context = window.XSClusterContext;
+    if (context && typeof context.createRequestScope === "function") return context.createRequestScope(options);
+    var controller = new AbortController();
+    return { signal: controller.signal, cancel: function () { controller.abort(); } };
+  };
 
   XS.probe = function () {
     if (XS._probing) return XS._probing;
@@ -234,7 +296,7 @@
     me: function () { return XS.get("/auth/me").then(function (p) { XS.user = p; write(USER_KEY, JSON.stringify(p)); return p; }); },
     restore: function () {
       if (!XS.token() && !XS.refreshToken()) return Promise.resolve(null);
-      return XS.probe().then(function (mode) {
+      return (XS.ready || XS.probe()).then(function (mode) {
         if (mode !== "live") return null;
         return XS.api("/auth/me", { timeoutMs: 12000 }).then(function (p) {
           XS.user = p; write(USER_KEY, JSON.stringify(p)); XS.mode = "live"; return p;
@@ -265,18 +327,41 @@
   };
 
   // SSE：返回 abort 函数；用于运行日志/告警流。
-  XS.stream = function (path, handlers, query) {
+  XS.stream = function (path, handlers, query, options) {
     handlers = handlers || {};
+    var prepared;
+    try { prepared = prepareScope(path, Object.assign({}, options || {}, { query: query })); assertRequestScope(prepared); }
+    catch (err) {
+      if (handlers.error) handlers.error(err);
+      return function () {};
+    }
     var ctl = new AbortController();
     var headers = { "Accept": "text/event-stream" };
     if (XS.token()) headers.Authorization = "Bearer " + XS.token();
-    fetch(url(path, query), { headers: headers, signal: ctl.signal, credentials: "same-origin" }).then(function (res) {
+    var externalSignal = prepared.signal;
+    function abort() { ctl.abort(); }
+    if (externalSignal) externalSignal.addEventListener("abort", abort, { once: true });
+    var unsubscribe = prepared._clusterScope && prepared._clusterScope.context.subscribe(abort);
+    function cleanup() {
+      if (unsubscribe) unsubscribe();
+      if (externalSignal) externalSignal.removeEventListener("abort", abort);
+    }
+    function assertStreamScope() {
+      assertRequestScope(prepared);
+      if (ctl.signal.aborted) throw requestCancelled();
+    }
+    var response;
+    try { response = fetch(url(path, prepared.query), { headers: headers, signal: ctl.signal, credentials: "same-origin" }); }
+    catch (err) { response = Promise.reject(err); }
+    Promise.resolve(response).then(function (res) {
+      assertStreamScope();
       if (!res.ok) throw new ApiError("日志流连接失败（HTTP " + res.status + "）", res.status);
       var reader = res.body.getReader();
       var dec = new TextDecoder();
       var buf = "";
       function pump() {
         return reader.read().then(function (r) {
+          assertStreamScope();
           if (r.done) { if (handlers.end) handlers.end(); return; }
           buf += dec.decode(r.value, { stream: true });
           var idx;
@@ -287,7 +372,9 @@
               if (line.indexOf("event:") === 0) event = line.slice(6).trim();
               else if (line.indexOf("data:") === 0) data += line.slice(5).trim();
             });
+            assertStreamScope();
             if (handlers[event]) handlers[event](data);
+            assertStreamScope();
             if (handlers.message) handlers.message(event, data);
           }
           return pump();
@@ -295,35 +382,47 @@
       }
       return pump();
     }).catch(function (err) {
-      if (err && err.name === "AbortError") return;
+      if (ctl.signal.aborted || (err && err.name === "AbortError") || XS.isCancelled(err)) return;
       if (handlers.error) handlers.error(err);
-    });
+    }).finally(cleanup);
     return function () { try { ctl.abort(); } catch (e) {} };
   };
 
-  XS.ws = function (path, query) {
+  XS.ws = function (path, query, options) {
+    var prepared = prepareScope(path, Object.assign({}, options || {}, { query: query }));
+    assertRequestScope(prepared);
     var proto = location.protocol === "https:" ? "wss:" : "ws:";
-    var q = Object.assign({}, query || {});
+    var q = Object.assign({}, prepared.query || {});
     if (XS.token()) q.access_token = XS.token();
     var qs = Object.keys(q).filter(function (k) { return q[k] !== undefined && q[k] !== null && q[k] !== ""; })
       .map(function (k) { return encodeURIComponent(k) + "=" + encodeURIComponent(q[k]); }).join("&");
     var b = XS.base.replace(/^https?:/, proto);
-    return new WebSocket(b + (path.charAt(0) === "/" ? path : "/" + path) + (qs ? "?" + qs : ""));
+    var socket = new WebSocket(b + (path.charAt(0) === "/" ? path : "/" + path) + (qs ? (path.indexOf("?") >= 0 ? "&" : "?") + qs : ""));
+    var externalSignal = prepared.signal;
+    function close() { socket.close(); }
+    var unsubscribe = prepared._clusterScope && prepared._clusterScope.context.subscribe(close);
+    if (externalSignal) externalSignal.addEventListener("abort", close, { once: true });
+    function cleanup() {
+      if (unsubscribe) unsubscribe();
+      if (externalSignal) externalSignal.removeEventListener("abort", close);
+    }
+    if (typeof socket.addEventListener === "function") {
+      socket.addEventListener("close", cleanup, { once: true });
+      if (prepared._clusterScope) socket.addEventListener("message", function (event) {
+        if (prepared._clusterScope.context.isCurrent(prepared._clusterScope.snapshot) &&
+          !(externalSignal && externalSignal.aborted)) return;
+        if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+        close();
+      }, { capture: true });
+    }
+    return socket;
   };
 
   XS.online = function () { return navigator.onLine !== false; };
 
-  XS.ready = XS.probe().then(function (m) {
-    if (m === "live") {
-      // 如果已有 token，恢复用户资料（失败不阻塞页面）。
-      if (XS.token()) {
-        return XS.api("/auth/me", { timeoutMs: 10000 }).then(function (p) {
-          XS.user = p; write(USER_KEY, JSON.stringify(p)); return m;
-        }).catch(function () { return m; });
-      }
-    }
-    return m;
-  });
+  // Session restoration belongs to the application bootstrap. Keeping ready to
+  // API discovery prevents duplicate /auth/me calls and stale-token races.
+  XS.ready = XS.probe();
 
   window.XS = XS;
 })();

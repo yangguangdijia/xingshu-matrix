@@ -38,13 +38,21 @@ type Module struct {
 	recordDir string
 	guacdAddr string
 
-	mu     sync.Mutex
-	active map[int64]*liveSession
+	mu        sync.Mutex
+	active    map[int64]*liveSession
+	owner     string
+	stopping  bool
+	workers   sync.WaitGroup
+	sessions  sync.WaitGroup
+	stop      context.CancelFunc
+	store     lifecycleStore
+	storageID string
 }
 
 type liveSession struct {
 	cancel context.CancelFunc
-	killed bool
+	ref    sessionRef
+	reason string
 }
 
 func New() *Module {
@@ -56,7 +64,8 @@ func New() *Module {
 	if ga == "" {
 		ga = "127.0.0.1:4822"
 	}
-	return &Module{recordDir: dir, guacdAddr: ga, active: map[int64]*liveSession{}}
+	return &Module{recordDir: dir, guacdAddr: ga, active: map[int64]*liveSession{},
+		owner: newToken(), storageID: os.Getenv("MATRIX_BASTION_RECORDING_STORAGE_ID")}
 }
 
 func (m *Module) Name() string { return "bastion" }
@@ -121,13 +130,54 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	}
 }
 
-// Start marks sessions left "active" by a previous process as closed.
+// Start only recovers expired leases. A healthy replica's sessions are untouched.
 func (m *Module) Start(ctx context.Context, d *app.Deps) error {
-	if err := os.MkdirAll(m.recordDir, 0o750); err != nil {
-		d.Logger.Warn("bastion: cannot create record dir", "dir", m.recordDir, "err", err)
+	m.d = d
+	m.store = &pgLifecycleStore{db: d.DB}
+	run, cancel := context.WithCancel(ctx)
+	m.stop = cancel
+	if err := m.recordingReady(); err != nil {
+		d.Logger.Warn("bastion: SSH disabled until shared recording storage is ready", "error", err)
 	}
-	_, err := d.DB.Exec(ctx, `UPDATE bastion_sessions SET status='closed', error='server restarted', ended_at=now() WHERE status='active'`)
-	return err
+	if err := m.store.reap(ctx); err != nil {
+		return err
+	}
+	m.workers.Add(1)
+	go func() {
+		defer m.workers.Done()
+		tick := time.NewTicker(heartbeatInterval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-run.Done():
+				m.cancelOwned("shutdown")
+				return
+			case <-tick.C:
+				check, cancel := context.WithTimeout(run, databaseTimeout)
+				err := m.store.reap(check)
+				cancel()
+				if err != nil && run.Err() == nil {
+					d.Logger.Warn("bastion: stale session recovery failed")
+				}
+			}
+		}
+	}()
+	return nil
+}
+
+func (m *Module) Stop(ctx context.Context) error {
+	m.cancelOwned("shutdown")
+	if m.stop != nil {
+		m.stop()
+	}
+	done := make(chan struct{})
+	go func() { m.workers.Wait(); m.sessions.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (m *Module) guacdHealth(c *gin.Context) {
@@ -142,40 +192,70 @@ func (m *Module) guacdHealth(c *gin.Context) {
 	ok(c, res)
 }
 
-func (m *Module) register(id int64, cancel context.CancelFunc) {
+func (m *Module) register(ref sessionRef, cancel context.CancelFunc) bool {
 	m.mu.Lock()
-	m.active[id] = &liveSession{cancel: cancel}
-	m.mu.Unlock()
+	defer m.mu.Unlock()
+	if m.stopping {
+		return false
+	}
+	m.sessions.Add(1)
+	m.active[ref.ID] = &liveSession{cancel: cancel, ref: ref}
+	return true
 }
 
-func (m *Module) unregister(id int64) (killed bool) {
+func (m *Module) unregister(id int64) (reason string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s := m.active[id]; s != nil {
-		killed = s.killed
+		reason = s.reason
+		m.sessions.Done()
 	}
 	delete(m.active, id)
 	return
 }
 
 func (m *Module) kill(id int64) bool {
+	return m.cancelSession(id, "killed")
+}
+
+func (m *Module) cancelSession(id int64, reason string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := m.active[id]
 	if s == nil {
 		return false
 	}
-	s.killed = true
+	if s.reason != "" {
+		return s.reason == reason
+	}
+	s.reason = reason
 	s.cancel()
 	return true
+}
+
+func (m *Module) cancelOwned(reason string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stopping = true
+	for _, s := range m.active {
+		if s.ref.Owner == m.owner && s.reason == "" {
+			s.reason = reason
+			s.cancel()
+		}
+	}
+}
+
+func (m *Module) sessionReason(id int64) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s := m.active[id]; s != nil {
+		return s.reason
+	}
+	return ""
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
 func validProtocol(p string) bool {
-	switch strings.ToLower(p) {
-	case "ssh", "rdp", "vnc", "mysql", "postgres":
-		return true
-	}
-	return false
+	return strings.ToLower(p) == "ssh"
 }

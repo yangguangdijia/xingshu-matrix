@@ -15,8 +15,8 @@
   var VERSION = "1.0.0";
   var SHARED = (typeof window !== "undefined" && window.XS_LIVE && typeof window.XS_LIVE === "object") ? window.XS_LIVE : null;
   var MODE = "unknown";
-  var ST = { installed: false, seq: 0, originals: {}, badge: null, formSeq: 0, runStream: null, refresh: null };
-  var ROUTE_KEYS = ["cicd", "delivery", "release", "middleware", "oncall", "settings", "appstatus", "audit", "testing"];
+  var ST = { installed: false, seq: 0, originals: {}, badge: null, formSeq: 0, runStream: null, runStreamWatch: null, refresh: null, clusterConfigRefresh: null };
+  var ROUTE_KEYS = ["cicd", "delivery", "release", "middleware", "oncall", "settings", "appstatus", "audit", "testing", "observe"];
   var APPR_CODE = 40304;
 
   /* ---------------------------------------------------------------- bas 基础 */
@@ -69,7 +69,13 @@
     toast("已提交审批" + (t && t.id ? "（审批单 #" + t.id + "）" : ""));
   }
   function write(p, okMsg) {
-    return p.then(function (d) { toast(okMsg || "操作成功"); return d === undefined ? {} : d; }).catch(function (err) {
+    return p.then(function (d) {
+      if (isApproval(d)) { approvalToast(d); return { __approval: true }; }
+      if (d && (d.ok === false || d.success === false || Number(d.failed || 0) > 0 || d.error)) {
+        throw { message: d.error || d.message || "服务端未确认操作成功", details: d };
+      }
+      toast(okMsg || "操作成功"); return d === undefined ? {} : d;
+    }).catch(function (err) {
       if (isApproval(err)) { approvalToast(err); return { __approval: true }; }
       toast(errMsg(err));
       return null;
@@ -94,6 +100,149 @@
       if (err && (err.status === 404 || err.status === 405 || err.status === 501)) return GET("/observability/data-sources", query);
       throw err;
     });
+  }
+  function dsPayload(value) {
+    if (value && value.datasource) return value.datasource;
+    if (value && value.data && value.data.datasource) return value.data.datasource;
+    return value && value.data && !Array.isArray(value.data) ? value.data : value;
+  }
+  function dsArray(value) {
+    return asArray(value, ["items", "datasources"]).map(dsPayload).filter(function (x) { return x && x.id != null; });
+  }
+  function normalizeURL(value) {
+    try { return String(new URL(String(value || "").trim())).replace(/\/$/, ""); } catch (e) { return String(value || "").trim().replace(/\/$/, ""); }
+  }
+  function integrationState(value) {
+    var state = String(value || "unavailable").toLowerCase();
+    return ["available", "missing", "forbidden", "error", "unavailable"].indexOf(state) >= 0 ? state : "unavailable";
+  }
+  var INTEGRATION_STATE_LABEL = { available: "已发现", missing: "未发现", forbidden: "无权限", error: "发现失败", unavailable: "不可用" };
+  function integrationStateLabel(value) { return INTEGRATION_STATE_LABEL[integrationState(value)] || "不可用"; }
+  function integrationStateClass(value) { return { available: "x-green", missing: "x-grey", forbidden: "x-orange", error: "x-red", unavailable: "x-orange" }[integrationState(value)] || "x-grey"; }
+  function integrationCandidates(value, type) {
+    var outer = value && value.data ? value.data : value || {};
+    var result = outer.result && typeof outer.result === "object" ? outer.result : outer;
+    var items = asArray(result, ["items"]).filter(function (item) { return !type || item.type === type; });
+    var component = result.components && result.components[type] ? result.components[type] : {};
+    return { items: items, status: outer.status || "", discoveredAt: outer.discovered_at || "",
+      nextRefreshAt: outer.next_refresh_at || "", lastError: outer.last_error || "",
+      component: Object.assign({ state: items.length ? "available" : "missing" }, component), components: result.components || {}, sources: result.sources || {} };
+  }
+  function activeCluster() {
+    var controller = window.XSClusterContext;
+    if (!controller) return null;
+    var state = typeof controller.snapshot === "function" ? controller.snapshot() :
+      typeof controller.current === "function" ? controller.current() :
+      typeof controller.get === "function" ? controller.get() : controller.state || controller;
+    if (!state || (state.kind && state.kind !== "cluster") || state.mode === "all" || state.mode === "unselected") return null;
+    var cluster = state.cluster || {}, id = cluster.id != null ? cluster.id : state.cluster_id != null ? state.cluster_id : state.clusterId;
+    if (id == null || String(id) === "") return null;
+    return { id: id, name: cluster.name || state.name || state.cluster_name || state.clusterName || "", env: cluster.env || state.env || "", version: state.version || state.epoch || 0 };
+  }
+  function clusterKey() {
+    var cluster = activeCluster();
+    return cluster ? String(cluster.id) + ":" + String(cluster.version) : "unselected";
+  }
+  function ownedDatasource(list, clusters, cluster, types) {
+    if (!cluster || !window.XSObserve) return null;
+    return window.XSObserve.datasource(list, clusters, cluster, types);
+  }
+  function resolveDatasource(cluster, type) {
+    if (!cluster || cluster.id == null) return Promise.reject({ status: 400, message: "请选择目标集群" });
+    if (!window.XSObserve || typeof window.XSObserve.resolvedDatasource !== "function") {
+      return Promise.reject({ status: 0, message: "数据源解析器不可用" });
+    }
+    return GET("/observability/datasources/resolve", { type: type, cluster_id: cluster.id }).then(function (result) {
+      return window.XSObserve.resolvedDatasource(result, [cluster], cluster, type);
+    });
+  }
+  function resolutionErrorText(err) {
+    var status = Number(err && err.status) || 0;
+    return (status ? "HTTP " + status + " · " : "") + errMsg(err);
+  }
+  function alertMatchesCluster(alert, sources, clusters, cluster) {
+    if (!cluster || !alert || alert.datasource_id == null || !window.XSObserve) return false;
+    var source = sources.find(function (d) { return String(d.id) === String(alert.datasource_id); });
+    if (!source) return false;
+    var ownership;
+    try { ownership = ownedDatasource([source], clusters, cluster, [source.type]); } catch (e) { return false; }
+    if (!ownership) return false;
+    var labels = alert.labels || {}, id = labels.cluster_id || labels["k8s.cluster.uid"];
+    if (id && String(id) !== String(cluster.id)) return false;
+    if (ownership.scope === "cluster") {
+      var name = labels.cluster || labels.cluster_name || labels["k8s.cluster.name"];
+      return !name || name === cluster.name || String(name) === String(cluster.id);
+    }
+    return labels[ownership.clusterLabel] === ownership.clusterValue;
+  }
+  function silenceMatchesCluster(silence, scope) {
+    if (!scope) return false;
+    if (scope.scope === "cluster") return true;
+    var matchers = silence.matchers || [];
+    return matchers.some(function (m) {
+      return (m.name || m.Name) === scope.clusterLabel && (m.value || m.Value) === scope.clusterValue &&
+        !(m.isRegex || m.IsRegex) && m.isEqual !== false && m.IsEqual !== false;
+    });
+  }
+  function legacyDatasourceCandidate(source, cluster, scope) {
+    if (!source || !cluster || cluster.id == null) throw new Error("请选择目标集群");
+    var options = scope === "central" ? { scope: "central", cluster_label: "cluster", cluster_values: { [String(cluster.id)]: cluster.name } } :
+      { scope: "cluster", cluster_id: cluster.id, cluster_name: cluster.name };
+    return { name: source.name, type: source.type, url: source.url, env: scope === "central" ? "" : cluster.env, auth_type: "none", options: options };
+  }
+  function optionObject(fields, existing) {
+    var out = {};
+    Object.keys(existing || {}).forEach(function (key) { out[key] = existing[key]; });
+    Object.keys(fields || {}).forEach(function (key) {
+      var value = String(fields[key] == null ? "" : fields[key]).trim();
+      if (value) out[key] = value; else delete out[key];
+    });
+    return out;
+  }
+  function datasourceBody(values, existing) {
+    var current = existing || {}, oldOptions = current.options || {};
+    var options = optionObject({
+      cluster_id: values.cluster_id,
+      cluster_name: values.cluster_name,
+      org_id: values.org_id,
+      cluster_label: values.cluster_label,
+      log_selector: values.log_selector,
+      index: values.index,
+      time_field: values.time_field
+    }, oldOptions);
+    if (values.scope !== "cluster" && values.scope !== "central") throw new Error("请选择数据源归属类型");
+    options.scope = values.scope;
+    if (values.scope === "cluster") {
+      if (!values.cluster_id) throw new Error("专用数据源必须选择目标集群");
+      delete options.cluster_values;
+      delete options.cluster_label;
+    } else {
+      delete options.cluster_id;
+      delete options.cluster_name;
+      var mappings = {};
+      (values.cluster_values || []).forEach(function (row) {
+        var id = String(row.cluster_id || ""), value = String(row.value || "").trim();
+        if (!id || !value || Object.prototype.hasOwnProperty.call(mappings, id)) throw new Error("中央数据源集群映射不能为空或重复");
+        mappings[id] = value;
+      });
+      var validClusterLabel = /^(jaeger|tempo)$/.test(values.type) ? /^[a-zA-Z_][a-zA-Z0-9_.]*$/ : /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+      if (!Object.keys(mappings).length || !validClusterLabel.test(options.cluster_label || "")) throw new Error("中央数据源必须填写标签名和至少一个集群标签值");
+      options.cluster_values = mappings;
+    }
+    (values.advanced || []).forEach(function (row) {
+      var key = String(row.key || "").trim(), value = String(row.value || "").trim();
+      if (!key) return;
+      if (["scope", "cluster_id", "cluster_name", "cluster_values", "cluster_label"].indexOf(key) >= 0) throw new Error("归属字段请通过专用表单编辑");
+      if (value) options[key] = value; else delete options[key];
+    });
+    var body = {
+      name: values.name, type: values.type, url: values.url, env: values.env,
+      auth_type: values.auth_type || "none", username: values.username,
+      tls_skip_verify: !!values.tls_skip_verify, timeout_sec: +values.timeout_sec || 30,
+      options: options
+    };
+    if (values.secret) body.secret = values.secret;
+    return body;
   }
   // 单个区块失败不影响整页：统一包装为 {ok,value,error}，逐块渲染错误/空状态。
   function settle(p, fallback) {
@@ -204,6 +353,50 @@
     if (s < 86400) return (s / 3600).toFixed(1) + " 小时";
     return (s / 86400).toFixed(1) + " 天";
   }
+  function elapsed(start, finish, now) {
+    if (!start) return "未开始";
+    var from = new Date(start).getTime();
+    var to = finish ? new Date(finish).getTime() : (now == null ? Date.now() : Number(now));
+    if (!isFinite(from) || !isFinite(to)) return "—";
+    return dur(Math.max(0, Math.floor((to - from) / 1000)));
+  }
+  var RUN_STATUS_LABEL = {
+    pending: "等待中", queued: "排队中", running: "运行中", succeeded: "成功",
+    failed: "失败", skipped: "已跳过", cancelled: "已取消", cancelling: "取消中",
+    awaiting_approval: "等待审批", approved: "已批准", rejected: "已拒绝"
+  };
+  function runStatusLabel(status) { return RUN_STATUS_LABEL[String(status || "")] || String(status || "状态未知"); }
+  function pipelineRunStages(definitions, observed) {
+    var byIndex = Object.create(null), merged = [];
+    (Array.isArray(observed) ? observed : []).forEach(function (stage) {
+      var idx = Number(stage && stage.idx);
+      if (isFinite(idx) && idx >= 0) byIndex[idx] = stage;
+    });
+    (Array.isArray(definitions) ? definitions : []).forEach(function (stage, index) {
+      var actual = byIndex[index];
+      merged.push({
+        idx: index,
+        name: (actual && actual.name) || stage.name || ("阶段 " + (index + 1)),
+        type: (actual && actual.type) || stage.type || "",
+        status: actual ? String(actual.status || "") : "",
+        job_name: actual && actual.job_name || "",
+        error: actual && actual.error || "",
+        started_at: actual && actual.started_at || null,
+        finished_at: actual && actual.finished_at || null,
+        observed: !!actual
+      });
+      delete byIndex[index];
+    });
+    Object.keys(byIndex).map(Number).sort(function (a, b) { return a - b; }).forEach(function (idx) {
+      var stage = byIndex[idx];
+      merged.push({
+        idx: idx, name: stage.name || ("阶段 " + (idx + 1)), type: stage.type || "",
+        status: String(stage.status || ""), job_name: stage.job_name || "", error: stage.error || "",
+        started_at: stage.started_at || null, finished_at: stage.finished_at || null, observed: true
+      });
+    });
+    return merged;
+  }
   function num(v) {
     if (v == null || v === "") return "—";
     var n = Number(v);
@@ -240,6 +433,8 @@
     var s = document.createElement("style");
     s.id = "ops-live-css";
     s.textContent = ".ops-json{max-height:55vh;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-word}.ops-sub{color:var(--x-sub);font-size:12px;margin:8px 0 0}.ops-nowrap{white-space:nowrap}.ops-ro{max-height:60vh;overflow:auto;margin:0}" +
+      ".ops-pl-head{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap;margin:0 0 12px}.ops-pl-title{min-width:220px;flex:1}.ops-pl-title h2{font-size:18px;line-height:26px;margin:0;font-weight:600;word-break:break-word}.ops-pl-title p{margin:4px 0 0;color:var(--x-sub);font-size:12px}.ops-pl-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.ops-pl-meta{display:flex;gap:8px 18px;align-items:center;flex-wrap:wrap;margin:0 0 12px;padding:10px 12px;background:#fafbfc;border:1px solid var(--x-line);border-radius:6px;font-size:12px}.ops-pl-meta>span{min-width:0;overflow-wrap:anywhere}.ops-pl-meta b{font-weight:500}.ops-plflow{display:flex;align-items:center;gap:8px;overflow-x:auto;margin:0;padding:4px 0 8px;white-space:nowrap}.ops-plflow b{padding:6px 10px;border:1px solid var(--x-line);border-radius:5px;background:#f6f8fa;font-size:12px;font-weight:500}.ops-plflow .ops-pl-arrow{color:var(--x-sub);flex:none}.ops-pl-progress{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:8px}.ops-pl-stage{display:grid;gap:6px;min-width:0;min-height:84px;padding:10px 12px;text-align:left;border:1px solid var(--x-line);border-left:3px solid var(--ops-stage-color,#c9cdd4);border-radius:6px;background:#fff;color:var(--x-text);font:inherit;cursor:pointer}.ops-pl-stage:hover{background:#fafbfc;border-color:#b8c8df}.ops-pl-stage[aria-pressed=true]{background:#f5f8ff;box-shadow:inset 0 0 0 1px var(--x-blue,#1677ff)}.ops-pl-stage-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.ops-pl-stage-top strong{min-width:0;overflow-wrap:anywhere;font-size:13px;font-weight:600}.ops-pl-stage small{color:var(--x-sub);font-size:11px}.ops-pl-stage-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ops-pl-stage-error{color:#b42318;font-size:11px;overflow-wrap:anywhere}.ops-pl-section-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}.ops-pl-section-head .x-h2{margin:0}.ops-pl-section-head [role=status]{margin-left:auto;color:var(--x-sub);font-size:12px}.ops-pl-console{height:min(320px,45vh);max-height:none;min-height:140px;border-radius:5px}.ops-pl-history-wrap{overflow-x:auto}.ops-pl-history{min-width:850px}.ops-pl-history tbody tr{cursor:pointer}.ops-pl-history tbody tr[aria-current=true] td{background:#eef5ff}.ops-pl-history tbody tr:focus-visible{outline:2px solid var(--x-blue,#1677ff);outline-offset:-2px}.ops-pl-commit{max-width:220px;display:inline-block;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ops-pl-history .ops-nowrap{display:inline-flex;gap:4px}.ops-pl-history .x-btn{padding:3px 7px;min-height:28px}@media(max-width:640px){.ops-pl-actions{width:100%}.ops-pl-actions .x-btn{flex:1}.ops-pl-meta{gap:8px 12px}.ops-pl-section-head [role=status]{margin:0 0 0 auto}.ops-pl-console{height:38vh;min-height:120px}}"
+      +
       ".ops-stage{min-width:0;margin:0;padding:12px;border:1px solid var(--x-line);border-radius:6px}.ops-stage+.ops-stage{margin-top:10px}.ops-stage-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}.ops-stage-head strong{font-size:13px}.ops-stage-head .x-btn{margin-left:auto}.ops-stage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px 12px}.ops-stage-grid>label{display:grid;min-width:0;gap:5px;font-size:12px;color:var(--x-sub)}.ops-stage-grid .ops-stage-wide{grid-column:1/-1}.ops-stage-grid textarea{min-height:72px;resize:vertical}.ops-stage-actions{display:flex;justify-content:flex-start;margin-top:10px}.ops-jenkins-job{display:flex;gap:6px;min-width:0}.ops-jenkins-job .x-input{flex:1;min-width:0}.ops-jenkins-schema{grid-column:1/-1;margin:0;color:var(--x-sub);font-size:12px}.ops-jenkins-schema summary{cursor:pointer}";
     (document.head || document.documentElement).appendChild(s);
   }
@@ -297,19 +492,22 @@
   function banner(msg, cls) {
     return '<div class="x-warn" role="note" style="margin-bottom:12px">' + E(msg) + "</div>";
   }
-  function livePage(el, title, desc, tools, tabs) {
-    var p = { el: el, box: null, token: 0, seq: ++ST.seq, retry: null };
-    el.innerHTML = phead(E(title), desc || "", tools || "") + (tabs || "");
+  function livePage(el, title, desc, tools, scoped) {
+    scoped = scoped === true;
+    var p = { el: el, box: null, token: 0, seq: ++ST.seq, context: scoped ? clusterKey() : null, retry: null };
+    el.innerHTML = phead(E(title), desc || "", tools || "");
     var box = document.createElement("div");
     box.setAttribute("data-ops-body", "");
     box.innerHTML = loadingHTML();
     el.appendChild(box);
     p.box = box;
-    bindTabs(el);
     p.newToken = function () { return ++p.token; };
+    p.active = function (token) {
+      return (token == null || token === p.token) && p.seq === ST.seq &&
+        (!scoped || p.context === clusterKey()) && document.body.contains(el);
+    };
     p.paint = function (token, html) {
-      if (token != null && token !== p.token) return false;
-      if (!document.body.contains(el)) return false;
+      if (!p.active(token)) return false;
       p.box.innerHTML = html;
       return true;
     };
@@ -322,17 +520,6 @@
     return p;
   }
 
-  function tabsHTML(items, cur) {
-    return '<div class="x-bar"><div class="x-tabs" role="tablist">' + items.map(function (it) {
-      var on = it.h === cur;
-      return '<button type="button" role="tab" aria-selected="' + on + '" class="' + (on ? "on" : "") + '" data-ops-tab="' + E(it.h) + '">' + E(it.t) + "</button>";
-    }).join("") + "</div></div>";
-  }
-  function bindTabs(root) {
-    [].slice.call(root.querySelectorAll("[data-ops-tab]")).forEach(function (b) {
-      b.onclick = function () { try { window.navGo(b.getAttribute("data-ops-tab")); } catch (e) { location.hash = b.getAttribute("data-ops-tab"); } };
-    });
-  }
   function selHTML(name, label, options, cur, attrs) {
     return "<label><span>" + E(label || "") + '</span><select class="x-select" name="' + E(name) + '"' + (attrs || "") + ">" +
       options.map(function (o) {
@@ -345,11 +532,157 @@
   }
   function barHTML(parts) { return '<div class="x-tbar">' + parts.join("") + "</div>"; }
 
+  function appEnvRowHTML(row) {
+    row = row || {};
+    var field = function (key, label, value, placeholder) {
+      return '<td data-label="' + E(label) + '"><input class="x-input" data-app-env-field="' + key + '" value="' + E(value == null ? "" : value) +
+        '" placeholder="' + E(placeholder || "") + '" aria-label="' + E(label) + '" autocomplete="off" /></td>';
+    };
+    return '<tr data-app-env-row>' +
+      field("name", "环境", row.name, "test / prod") +
+      field("target_id", "执行集群 ID", row.target_id, "1") +
+      field("namespace", "命名空间", row.namespace, "web-test") +
+      field("deployment", "Deployment", row.deployment, "web") +
+      field("container", "容器", row.container, "app") +
+      field("helm_chart", "Helm Chart", row.helm_chart || row.helm && row.helm.chart, "repo/chart") +
+      field("helm_release", "Helm Release", row.helm_release || row.helm && row.helm.release, "web") +
+      '<td class="ops-nowrap"><button class="x-btn" type="button" data-app-env-remove aria-label="删除环境">×</button></td></tr>';
+  }
+
+  function appEnvsHTML(rows) {
+    return '<div data-app-envs><div style="overflow-x:auto"><table class="x-table"><thead><tr><th>环境</th><th>执行集群 ID</th><th>命名空间</th><th>Deployment</th><th>容器</th><th>Helm Chart</th><th>Helm Release</th><th>操作</th></tr></thead>' +
+      '<tbody data-app-env-rows>' + (rows || []).map(appEnvRowHTML).join("") + '</tbody></table></div>' +
+      '<div class="x-tbar" style="margin-top:8px"><button class="x-btn" type="button" data-app-env-add>+ 添加环境</button></div></div>';
+  }
+
+  function readAppEnvs(form) {
+    var rows = [];
+    [].slice.call(form.querySelectorAll("[data-app-env-row]")).forEach(function (row) {
+      var values = {};
+      [].slice.call(row.querySelectorAll("[data-app-env-field]")).forEach(function (input) {
+        var value = String(input.value || "").trim();
+        if (value) values[input.getAttribute("data-app-env-field")] = value;
+      });
+      if (!Object.keys(values).length) return;
+      if (!values.name || !values.namespace) throw new Error("每个环境都需要填写环境名称和命名空间");
+      if (!values.target_id || !/^\d+$/.test(values.target_id)) throw new Error("执行集群 ID 必须是正整数");
+      values.target_id = Number(values.target_id);
+      var chart = values.helm_chart, release = values.helm_release;
+      delete values.helm_chart;
+      delete values.helm_release;
+      if (chart || release) {
+        if (!chart || !release) throw new Error("Helm 环境需要同时填写 Chart 与 Release");
+        values.helm = { chart: chart, release: release };
+      } else if (!values.deployment || !values.container) {
+        throw new Error("非 Helm 环境需要填写 Deployment 和容器");
+      }
+      rows.push(values);
+    });
+    if (!rows.length) throw new Error("至少添加一个部署环境");
+    return rows;
+  }
+
+  function bindAppEnvs(form) {
+    var root = form.querySelector("[data-app-envs]");
+    if (!root) return;
+    var rows = root.querySelector("[data-app-env-rows]");
+    var add = root.querySelector("[data-app-env-add]");
+    if (add) add.onclick = function () {
+      rows.insertAdjacentHTML("beforeend", appEnvRowHTML({}));
+      var first = rows.lastElementChild && rows.lastElementChild.querySelector("input");
+      if (first) first.focus();
+    };
+    root.onclick = function (event) {
+      var remove = event.target.closest && event.target.closest("[data-app-env-remove]");
+      if (!remove) return;
+      var row = remove.closest("[data-app-env-row]");
+      if (row) row.remove();
+      if (!rows.children.length) rows.insertAdjacentHTML("beforeend", appEnvRowHTML({}));
+    };
+  }
+
+  function automationStepRowHTML(row) {
+    row = row || {};
+    var types = [
+      ["ansible.ping", "连通性检查"], ["ansible.package_present", "安装软件包"],
+      ["ansible.service_started", "启动服务"], ["ansible.directory", "创建目录"], ["noop", "空步骤"]
+    ];
+    var field = function (key, label, value) {
+      return '<td data-label="' + E(label) + '"><input class="x-input" data-auto-step-field="' + key + '" value="' + E(value == null ? "" : value) +
+        '" aria-label="' + E(label) + '" autocomplete="off" /></td>';
+    };
+    return '<tr data-auto-step-row>' +
+      '<td data-label="类型"><select class="x-select" data-auto-step-field="type">' + types.map(function (pair) {
+        return '<option value="' + pair[0] + '"' + ((row.type || "ansible.ping") === pair[0] ? " selected" : "") + ">" + pair[1] + "</option>";
+      }).join("") + "</select></td>" +
+      field("name", "名称", row.name) +
+      field("package", "软件包", row.package) +
+      field("service", "服务", row.service) +
+      field("path", "路径", row.path) +
+      field("mode", "权限", row.mode) +
+      '<td data-label="启用"><input type="checkbox" data-auto-step-field="enabled"' + (row.enabled !== false ? " checked" : "") + ' aria-label="启用" /></td>' +
+      '<td class="ops-nowrap"><button class="x-btn" type="button" data-auto-step-remove aria-label="删除步骤">×</button></td></tr>';
+  }
+
+  function automationStepsHTML(rows) {
+    return '<div data-auto-steps><div style="overflow-x:auto"><table class="x-table"><thead><tr><th>类型</th><th>名称</th><th>软件包</th><th>服务</th><th>路径</th><th>权限</th><th>启用</th><th>操作</th></tr></thead>' +
+      '<tbody data-auto-step-rows>' + (rows || []).map(automationStepRowHTML).join("") + '</tbody></table></div>' +
+      '<div class="x-tbar" style="margin-top:8px"><button class="x-btn" type="button" data-auto-step-add>+ 添加步骤</button></div></div>';
+  }
+
+  function readAutomationSteps(form) {
+    var rows = [];
+    [].slice.call(form.querySelectorAll("[data-auto-step-row]")).forEach(function (row, index) {
+      var value = {};
+      [].slice.call(row.querySelectorAll("[data-auto-step-field]")).forEach(function (input) {
+        var key = input.getAttribute("data-auto-step-field");
+        if (key === "enabled") value.enabled = !!input.checked;
+        else if (String(input.value || "").trim()) value[key] = String(input.value).trim();
+      });
+      if (!value.type) throw new Error("第 " + (index + 1) + " 个步骤缺少类型");
+      if (value.type === "ansible.package_present" && !value.package) throw new Error("安装软件包步骤需要软件包名");
+      if (value.type === "ansible.service_started" && !value.service) throw new Error("启动服务步骤需要服务名");
+      if (value.type === "ansible.directory" && !value.path) throw new Error("创建目录步骤需要绝对路径");
+      rows.push(value);
+    });
+    if (rows.length > 25) throw new Error("流程最多包含 25 个步骤");
+    return rows;
+  }
+
+  function bindAutomationSteps(form) {
+    var root = form.querySelector("[data-auto-steps]");
+    if (!root) return;
+    var rows = root.querySelector("[data-auto-step-rows]");
+    var add = root.querySelector("[data-auto-step-add]");
+    if (add) add.onclick = function () {
+      rows.insertAdjacentHTML("beforeend", automationStepRowHTML({}));
+      var first = rows.lastElementChild && rows.lastElementChild.querySelector("select");
+      if (first) first.focus();
+    };
+    root.onclick = function (event) {
+      var remove = event.target.closest && event.target.closest("[data-auto-step-remove]");
+      if (!remove) return;
+      var row = remove.closest("[data-auto-step-row]");
+      if (row) row.remove();
+      if (!rows.children.length) rows.insertAdjacentHTML("beforeend", automationStepRowHTML({}));
+    };
+  }
+
   function fieldHTML(f) {
     var attrs = f.required ? ' required aria-required="true"' : "";
     var span = "<span>" + (f.required ? '<b class="x-req">*</b> ' : "") + E(f.label || f.k) + "</span>";
     var ctl;
-    if (f.kind === "select") {
+    if (f.kind === "appEnvs") {
+      return '<div class="x-sf-group x-full">' + span + appEnvsHTML(f.value || []) + "</div>";
+    } else if (f.kind === "automationSteps") {
+      return '<div class="x-sf-group x-full">' + span + automationStepsHTML(f.value || []) + "</div>";
+    } else if (f.kind === "structured") {
+      if (!window.XSStructuredForms || typeof window.XSStructuredForms[f.structuredKind] !== "function") {
+        return '<div class="x-aerr" role="alert">结构化表单组件未加载</div>';
+      }
+      return '<div class="x-sf-group x-full" data-structured-field="' + E(f.k) + '">' + span +
+        window.XSStructuredForms[f.structuredKind](f.value, Object.assign({ name: f.k }, f.options || {})) + "</div>";
+    } else if (f.kind === "select") {
       ctl = '<select class="x-select" name="' + E(f.k) + '"' + attrs + ">" + (f.options || []).map(function (o) {
         var v = typeof o === "object" ? o.v : o, t = typeof o === "object" ? o.t : o;
         return '<option value="' + E(v) + '"' + (String(v) === String(f.value) ? " selected" : "") + ">" + E(t) + "</option>";
@@ -377,6 +710,27 @@
       err.hidden = true;
       var vals = {}, bad = "";
       fields.forEach(function (fd) {
+        if (fd.kind === "appEnvs") {
+          try { vals[fd.k] = readAppEnvs(f); }
+          catch (err) { bad = bad || ((fd.label || fd.k) + "：" + err.message); }
+          return;
+        }
+        if (fd.kind === "automationSteps") {
+          try { vals[fd.k] = readAutomationSteps(f); }
+          catch (err) { bad = bad || ((fd.label || fd.k) + "：" + err.message); }
+          return;
+        }
+        if (fd.kind === "structured") {
+          var section = null;
+          [].slice.call(f.querySelectorAll("[data-xsf-name]")).some(function (node) {
+            if (node.getAttribute("data-xsf-name") === fd.k) { section = node; return true; }
+            return false;
+          });
+          if (!section) { bad = bad || ("结构化表单缺失：" + (fd.label || fd.k)); return; }
+          try { vals[fd.k] = window.XSStructuredForms.read(section); }
+          catch (err) { bad = bad || ((fd.label || fd.k) + "：" + err.message); }
+          return;
+        }
         var node = f.elements[fd.k];
         if (!node) return;
         var v = fd.kind === "checkbox" ? !!node.checked : String(node.value || "").trim();
@@ -386,6 +740,11 @@
       if (bad) { err.textContent = bad; err.hidden = false; return; }
       onSubmit(vals, f, err);
     };
+    if (window.XSStructuredForms && typeof window.XSStructuredForms.bind === "function") {
+      try { window.XSStructuredForms.bind(f); } catch (err) { var formError = q(id + "err"); if (formError) { formError.textContent = err.message; formError.hidden = false; } }
+    }
+    bindAppEnvs(f);
+    bindAutomationSteps(f);
     if (f.elements && f.elements.length) { try { f.elements[0].focus(); } catch (e) {} }
     return f;
   }
@@ -395,7 +754,8 @@
   function obPage() {
     var seg = (location.hash || "").split("/")[2] || "metrics";
     if (seg === "alerts") return "events";
-    return ["metrics", "rules", "events", "channels"].indexOf(seg) >= 0 ? seg : "metrics";
+    if (seg === "datasource" || seg === "data-sources") return "datasources";
+    return ["metrics", "rules", "events", "channels", "datasources"].indexOf(seg) >= 0 ? seg : "metrics";
   }
   function alertDeepLink() {
     var parts = (location.hash || "").split("?")[0].split("/");
@@ -405,38 +765,207 @@
     history.replaceState(null, "", "#/observe/events");
     return id;
   }
-  var OBS_TABS = [
-    { t: "指标监控", h: "#/observe" },
-    { t: "告警规则", h: "#/observe/rules" },
-    { t: "告警事件", h: "#/observe/events" },
-    { t: "通知渠道", h: "#/observe/channels" }
-  ];
   var OB = { promId: 0, range: "1h", query: "up" };
 
   function renderObserveLive(el) {
     var pg = obPage();
+    if (pg === "datasources") {
+      location.hash = "#/cluster/integrations";
+      return;
+    }
     if (pg === "rules") return obsRules(el);
     if (pg === "events") return obsEvents(el, alertDeepLink());
     if (pg === "channels") return obsChannels(el);
     return obsMetrics(el);
   }
 
+  var DS_TYPES = ["prometheus", "loki", "elasticsearch", "alertmanager", "jaeger", "tempo"];
+  var DS_TYPE_LABELS = { prometheus: "Prometheus", loki: "Loki", elasticsearch: "Elasticsearch", alertmanager: "Alertmanager", jaeger: "Jaeger", tempo: "Tempo" };
+  function datasourceScopeText(d) {
+    var o = d.options || {};
+    if (o.scope === "cluster") return "集群专用   " + (o.cluster_name || (o.cluster_id ? "#" + o.cluster_id : "未绑定"));
+    if (o.scope === "central") return "中央共享   " + Object.keys(o.cluster_values || {}).length + " 个集群";
+    return "未指定归属（不可查询）";
+  }
+  function obsDatasources(el) {
+    var p = livePage(el, "可观测数据源", "", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn" type="button" data-import-old>从旧设置导入</button><button class="x-btn x-btn--pri" type="button" data-newds>+ 新建数据源</button>');
+    var CLUSTERS = [], SETTINGS = [], SOURCES = [], detailSeq = 0, collectorSeq = 0;
+    el.querySelector("[data-refresh]").onclick = load;
+    el.querySelector("[data-newds]").onclick = function () { dsModal(load, null, CLUSTERS); };
+    el.querySelector("[data-import-old]").onclick = importOldSettings;
+    function load() {
+      var token = p.newToken();
+      Promise.all([settle(dsList({ page_size: 500 }), null), settle(GET("/clusters?page_size=500"), null), settle(GET("/settings"), null)]).then(function (rs) {
+        if (!rs[0].ok) { p.error(token, rs[0].error); return; }
+        SOURCES = dsArray(rs[0].value);
+        CLUSTERS = rs[1].ok ? asArray(rs[1].value, ["items", "clusters"]) : [];
+        SETTINGS = rs[2].ok ? asArray(rs[2].value, ["items", "settings"]) : [];
+        var warning = [];
+        if (!rs[1].ok) warning.push("集群发现不可用：" + errMsg(rs[1].error));
+        if (!rs[2].ok) warning.push("旧设置读取失败，导入入口不可用。");
+        var html = warning.length ? banner(warning.join(" ")) : "";
+        html += panelHTML("数据源", dsTable(SOURCES), '<button class="x-btn x-btn--pri" type="button" data-newds2>+ 新建数据源</button>');
+        html += panelHTML("采集器", collectorPanel());
+        if (!p.paint(token, html)) return;
+        bind();
+        if (ST.discoveryPrefill) {
+          var prefill = ST.discoveryPrefill;
+          ST.discoveryPrefill = null;
+          dsModal(load, null, CLUSTERS, prefill);
+        }
+      }).catch(function (err) { p.error(token, err); });
+    }
+    p.retry = load;
+    function collectorPanel() {
+      if (!CLUSTERS.length) return emptyHTML("没有可读取的集群；Fluent Bit 仅作为采集器状态显示，不作为查询数据源。");
+      return '<div class="x-tbar"><label><span>集群</span><select class="x-select" data-collector-cluster>' + CLUSTERS.map(function (c) {
+        return '<option value="' + E(c.id) + '">' + E(c.name || ("#" + c.id)) + "   " + E(c.env || "") + "</option>";
+      }).join("") + '</select></label><span data-collector-state role="status">尚未发现</span></div>';
+    }
+    function dsTable(list) {
+      if (!list.length) return emptyHTML("尚未配置数据源。");
+      return tbl(["名称", "类型", "环境", "地址", "归属", "认证", "操作"], list.map(function (d) {
+        return [E(d.name || "—"), tag(DS_TYPE_LABELS[d.type] || d.type, d.type === "prometheus" ? "x-blue" : "x-grey"), E(d.env || "跨环境"), code(d.url || "", 52), E(datasourceScopeText(d)), E(d.auth_type || "none"),
+          '<span class="ops-nowrap"><button class="x-btn" type="button" data-viewds="' + E(d.id) + '">查看</button><button class="x-btn" type="button" data-editds="' + E(d.id) + '">编辑</button><button class="x-btn" type="button" data-testds="' + E(d.id) + '">测试</button><button class="x-btn" type="button" data-delds="' + E(d.id) + '">删除</button></span>'];
+      }));
+    }
+    function byId(id) { return SOURCES.filter(function (d) { return String(d.id) === String(id); })[0] || null; }
+    function bind() {
+      var newBtn = p.box.querySelector("[data-newds2]"); if (newBtn) newBtn.onclick = function () { dsModal(load, null, CLUSTERS); };
+      function freshDetail(id, editing) {
+        if (!byId(id)) return;
+        var request = ++detailSeq, token = p.token;
+        GET("/observability/datasources/" + encodeURIComponent(id)).then(function (result) {
+          if (request !== detailSeq || !p.active(token)) return;
+          var detail = dsPayload(result);
+          if (!detail || String(detail.id) !== String(id)) throw new Error("数据源详情与所选 ID 不一致");
+          if (editing) dsModal(load, detail, CLUSTERS);
+          else infoModal("数据源详情   " + detail.name, '<dl class="ops-ds-detail">' + dsDetailRows(detail) + '</dl>');
+        }).catch(function (err) { if (request === detailSeq && p.active(token)) toast(errMsg(err)); });
+      }
+      [].slice.call(p.box.querySelectorAll("[data-viewds]")).forEach(function (b) { b.onclick = function () { freshDetail(b.getAttribute("data-viewds"), false); }; });
+      [].slice.call(p.box.querySelectorAll("[data-editds]")).forEach(function (b) { b.onclick = function () { freshDetail(b.getAttribute("data-editds"), true); }; });
+      [].slice.call(p.box.querySelectorAll("[data-testds]")).forEach(function (b) { b.onclick = function () {
+        b.disabled = true;
+        POST("/observability/datasources/" + encodeURIComponent(b.getAttribute("data-testds")) + "/test").then(function (r) {
+          b.disabled = false;
+          if (r && r.ok) toast("连接成功" + (r.latency_ms != null ? "（" + r.latency_ms + " ms）" : ""));
+          else toast("连接失败：" + ((r && r.error) || "上游不可用"));
+        }).catch(function (err) { b.disabled = false; toast(errMsg(err)); });
+      }; });
+      [].slice.call(p.box.querySelectorAll("[data-delds]")).forEach(function (b) { b.onclick = function () {
+        var id = b.getAttribute("data-delds");
+        confirmDo("删除数据源", "确定删除数据源 <b>#" + E(id) + "</b>？", "删除", function () {
+          write(DEL("/observability/datasources/" + encodeURIComponent(id)), "数据源已删除").then(function (r) { if (r && !r.__approval) load(); });
+        });
+      }; });
+      var collector = p.box.querySelector("[data-collector-cluster]");
+      if (collector) { collector.onchange = loadCollector; loadCollector(); }
+    }
+    function loadCollector() {
+      var select = p.box.querySelector("[data-collector-cluster]"), state = p.box.querySelector("[data-collector-state]");
+      if (!select || !state) return;
+      var id = select.value, request = ++collectorSeq, token = p.token; state.textContent = "读取中…";
+      GET("/clusters/" + encodeURIComponent(id) + "/integration-candidates", { types: "fluent-bit" }).then(function (result) {
+        if (request !== collectorSeq || !p.active(token) || select.value !== id) return;
+        var discovery = integrationCandidates(result, "fluent-bit"), status = discovery.component;
+        state.textContent = integrationStateLabel(status.state) + (discovery.items.length ? "   " + discovery.items.map(function (item) { return item.namespace + "/" + item.name; }).join("、") : "");
+        state.className = "x-tag " + integrationStateClass(status.state);
+      }).catch(function (err) { if (request === collectorSeq && p.active(token)) { state.textContent = "发现失败：" + errMsg(err); state.className = "x-tag x-red"; } });
+    }
+    function importOldSettings() {
+      var old = oldSettingSources(SETTINGS);
+      if (!old.length) { toast("没有可导入的旧 Prometheus / Loki 设置"); return; }
+      if (!CLUSTERS.length) { toast("请先读取目标集群，再导入旧设置"); return; }
+      var rows = old.map(function (d) {
+        return '<tr data-import-row="' + E(d.type) + '"><td><input type="checkbox" data-import-id="' + E(d.type) + '" checked></td><td>' + E(DS_TYPE_LABELS[d.type]) + '</td><td>' + E(d.url) + '</td><td><select class="x-select" data-import-cluster aria-label="导入目标集群"><option value="">选择集群</option>' + CLUSTERS.map(function (c) { return '<option value="' + E(c.id) + '">' + E(c.name + "   " + c.env) + '</option>'; }).join("") + '</select></td><td><select class="x-select" data-import-scope aria-label="导入归属类型"><option value="cluster">集群专用</option><option value="central">中央共享</option></select></td><td data-import-status>请选择集群后检查重复</td></tr>';
+      }).join("");
+      var id = "opsImportDs" + (++ST.formSeq);
+      dlg("导入旧可观测设置", '<div class="x-form"><p class="x-desc">逐项选择归属并查重；中央共享将当前集群名称作为标签值，须由后端验证数据覆盖。旧设置不会被删除或视为已连接。</p><table class="x-table"><thead><tr><th>导入</th><th>类型</th><th>地址</th><th>集群</th><th>归属</th><th>状态</th></tr></thead><tbody>' + rows + '</tbody></table><span class="x-err" id="' + id + 'err" hidden></span></div>', '<button class="x-btn" type="button" data-close>取消</button><button class="x-btn x-btn--pri" type="button" data-confirm-import>导入所选</button>');
+      var confirm = document.querySelector("[data-confirm-import]");
+      if (!confirm) return;
+      var entries = [].slice.call(document.querySelectorAll("[data-import-row]"));
+      function candidateFor(row) {
+        var source = old.find(function (d) { return d.type === row.getAttribute("data-import-row"); });
+        var cluster = CLUSTERS.find(function (c) { return String(c.id) === row.querySelector("[data-import-cluster]").value; });
+        return cluster ? legacyDatasourceCandidate(source, cluster, row.querySelector("[data-import-scope]").value) : null;
+      }
+      entries.forEach(function (row) {
+        function preview() {
+          var candidate = candidateFor(row);
+          row.querySelector("[data-import-status]").textContent = !candidate ? "请选择集群" : hasDatasource(SOURCES, candidate) ? "已存在，跳过" : "待导入（尚未验证连接）";
+        }
+        row.querySelector("[data-import-cluster]").onchange = preview;
+        row.querySelector("[data-import-scope]").onchange = preview;
+      });
+      confirm.onclick = function () {
+        var selected = entries.filter(function (row) { return row.querySelector("[data-import-id]").checked; });
+        if (!selected.length) { toast("没有待导入的项目"); return; }
+        if (selected.some(function (row) { return !candidateFor(row); })) { toast("请选择每项旧设置的目标集群"); return; }
+        var queue = selected.map(candidateFor).filter(function (candidate) { return !hasDatasource(SOURCES, candidate); });
+        if (!queue.length) { toast("所选数据源均已存在"); return; }
+        confirm.disabled = true;
+        var failed = [];
+        queue.reduce(function (chain, source) {
+          return chain.then(function () {
+            return POST("/observability/datasources", source)
+              .then(function (result) { if (result && (result.ok === false || result.success === false)) throw { message: result.message || "服务端未确认创建" }; })
+              .catch(function (err) { if (isApproval(err)) { approvalToast(err); failed.push(source.type + "（等待审批）"); } else failed.push(source.type + "（" + errMsg(err) + "）"); });
+          });
+        }, Promise.resolve()).then(function () {
+          closeAll();
+          if (failed.length) toast("导入未全部完成：" + failed.join("；"));
+          else toast("旧设置已导入为数据源");
+          load();
+        });
+      };
+    }
+    load();
+  }
+  function dsDetailRows(d) {
+    var o = d.options || {};
+    var mappings = Object.entries(o.cluster_values || {}).map(function (pair) { return "#" + pair[0] + " → " + pair[1]; }).join("；") || "—";
+    var extra = Object.keys(o).sort().filter(function (k) { return ["scope", "cluster_id", "cluster_name", "cluster_values", "cluster_label"].indexOf(k) < 0 && !/secret|token|password|authorization|key/i.test(k); }).map(function (k) { return k + "=" + o[k]; }).join("；") || "—";
+    return [["类型", DS_TYPE_LABELS[d.type] || d.type], ["名称", d.name], ["地址", d.url], ["环境", d.env || "跨环境"], ["归属", datasourceScopeText(d)], ["集群标签名", o.cluster_label || "—"], ["集群映射", mappings], ["认证", d.auth_type || "none"], ["用户名", d.username || "—"], ["密钥", d.has_secret ? "已配置，不回显" : "未配置"], ["超时", (d.timeout_sec || 30) + " 秒"], ["其他 Options", extra]].map(function (row) { return "<dt>" + E(row[0]) + "</dt><dd>" + E(row[1]) + "</dd>"; }).join("");
+  }
+  function oldSettingSources(settings) {
+    var out = [];
+    (settings || []).forEach(function (setting) {
+      var type = setting.key === "obs.prom" ? "prometheus" : setting.key === "obs.log" ? "loki" : "";
+      if (!type || setting.secret || !setting.has_value) return;
+      var url = normalizeURL(typeof setting.value === "string" ? setting.value : "");
+      if (!/^https?:\/\//i.test(url)) return;
+      out.push({ type: type, name: "legacy-" + type, url: url, env: "" });
+    });
+    return out;
+  }
+  function hasDatasource(list, candidate) {
+    return (list || []).some(function (d) {
+      var a = d.options || {}, b = candidate.options || {};
+      return d.type === candidate.type && normalizeURL(d.url) === normalizeURL(candidate.url) && String(d.env || "") === String(candidate.env || "") && a.scope === b.scope && String(a.cluster_id || "") === String(b.cluster_id || "") && JSON.stringify(a.cluster_values || {}) === JSON.stringify(b.cluster_values || {});
+    });
+  }
+
   function obsMetrics(el) {
-    var p = livePage(el, "指标监控", "可观测数据源与 PromQL 查询", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newds>+ 新建数据源</button>', tabsHTML(OBS_TABS, "#/observe"));
+    var p = livePage(el, "指标监控", "", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn" type="button" data-config-ds>配置数据源</button>', true);
     el.querySelector("[data-refresh]").onclick = function () { obsMetrics(el); };
-    el.querySelector("[data-newds]").onclick = function () { dsModal(function () { obsMetrics(el); }); };
+    el.querySelector("[data-config-ds]").onclick = function () { location.hash = "#/cluster/integrations"; };
     function load() {
       var t = p.newToken();
-      dsList().then(function (data) {
-        var list = Array.isArray(data) ? data : asArray(data, ["items", "datasources"]);
-        var proms = list.filter(function (d) { return d.type === "prometheus"; });
-        if (OB.promId && !proms.some(function (d) { return String(d.id) === String(OB.promId); })) OB.promId = 0;
-        if (!OB.promId && proms.length) OB.promId = proms[0].id;
-        var html = panelHTML("数据源", dsTable(list), '<button class="x-btn" type="button" data-act="newds" style="margin-left:auto">+ 新建</button>');
-        html += promPanel(proms);
+      var cluster = activeCluster();
+      if (!cluster || !window.XSObserve) { p.paint(t, panelHTML("指标监控", emptyHTML("请选择一个目标集群后查看指标。"))); return; }
+      settle(resolveDatasource(cluster, "prometheus"), null).then(function (result) {
+        if (!p.active(t)) return;
+        if (!result.ok && Number(result.error && result.error.status) !== 404) { p.error(t, result.error); return; }
+        OB.scope = result.ok ? result.value : null;
+        OB.context = clusterKey();
+        var proms = OB.scope ? [OB.scope.ds] : [];
+        OB.promId = proms.length ? proms[0].id : 0;
+        var html = proms.length ? promPanel(proms) : panelHTML("PromQL 查询", emptyHTML("当前集群未绑定 Prometheus 数据源。") + '<div data-discovery-result></div>');
         if (!p.paint(t, html)) return;
-        bindMetrics(list, proms);
-      }).catch(function (err) { p.error(t, err); });
+        bindMetrics([], proms);
+        if (!proms.length) showDiscovery(p, cluster, "prometheus");
+      });
     }
     p.retry = load;
     load();
@@ -454,12 +983,71 @@
       if (!proms.length) return panelHTML("PromQL 查询", emptyHTML("未接入 Prometheus 数据源，无法执行查询。"));
       var opts = proms.map(function (d) { return { v: d.id, t: (d.name || ("#" + d.id)) + (d.env ? "   " + d.env : "") }; });
       var ranges = [{ v: "15m", t: "近 15 分钟" }, { v: "1h", t: "近 1 小时" }, { v: "6h", t: "近 6 小时" }, { v: "24h", t: "近 24 小时" }, { v: "7d", t: "近 7 天" }];
-      return panelHTML("PromQL 查询", barHTML([
+      return panelHTML("集群指标", '<div data-obsm-dashboard aria-live="polite">' + loadingHTML("正在读取当前集群指标…") + "</div>") +
+        panelHTML("PromQL 查询", barHTML([
         '<select class="x-select" data-promds aria-label="Prometheus 数据源" style="width:auto">' + opts.map(function (o) { return '<option value="' + E(o.v) + '"' + (String(o.v) === String(OB.promId) ? " selected" : "") + ">" + E(o.t) + "</option>"; }).join("") + "</select>",
         '<select class="x-select" data-promrange aria-label="时间范围" style="width:auto">' + ranges.map(function (r) { return '<option value="' + r.v + '"' + (r.v === OB.range ? " selected" : "") + ">" + r.t + "</option>"; }).join("") + "</select>",
         '<input class="x-input x-search" data-promq value="' + E(OB.query) + '" placeholder="PromQL，如 up 或 rate(http_requests_total[5m])" aria-label="PromQL 查询语句" />',
         '<button class="x-btn x-btn--pri" type="button" data-promrun>查询</button>'
       ]) + '<div data-promres>' + emptyHTML("输入 PromQL 后点击查询") + "</div>");
+    }
+    function latestMetric(res) {
+      var payload = res && res.data ? res.data : res || {};
+      var result = payload && Array.isArray(payload.result) ? payload.result : [];
+      if (!result.length) return null;
+      var row = result[0], value = row.value;
+      if (!value && Array.isArray(row.values) && row.values.length) value = row.values[row.values.length - 1];
+      var parsed = value && parseFloat(value[1]);
+      return isFinite(parsed) ? parsed : null;
+    }
+    function metricCard(item, res) {
+      var value = latestMetric(res);
+      var shown = value == null ? "—" : (item.decimals == null ? num(value) : Number(value).toFixed(item.decimals));
+      var trend = res && res.data && res.data.result && res.data.result[0] && Array.isArray(res.data.result[0].values) ? spark(res.data.result[0].values) : "";
+      return '<div class="x-card ops-metric-card"><p>' + E(item.title) + "</p><strong>" + E(shown) +
+        (value == null ? "" : '<small>' + E(item.unit || "") + "</small>") + "</strong>" +
+        (trend || '<span class="x-frac">当前窗口无数据</span>') + "</div>";
+    }
+    function loadMetricSummary(cluster, source) {
+      var box = p.box.querySelector("[data-obsm-dashboard]");
+      if (!box) return;
+      var items = [
+        { title: "CPU 使用率", unit: "%", decimals: 1, query: '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])))' },
+        { title: "内存使用率", unit: "%", decimals: 1, query: '100 * (1 - sum(node_memory_MemAvailable_bytes{}) / sum(node_memory_MemTotal_bytes{}))' },
+        { title: "磁盘使用率", unit: "%", decimals: 1, query: '100 * (1 - sum(node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}) / sum(node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}))' },
+        { title: "Ready 节点", decimals: 0, query: 'sum(kube_node_status_condition{condition="Ready",status="true"} == 1)' },
+        { title: "运行中 Pod", decimals: 0, query: 'sum(kube_pod_status_phase{phase="Running"} == 1)' },
+        { title: "1h 容器重启", decimals: 0, query: 'sum(increase(kube_pod_container_status_restarts_total{}[1h]))' },
+        { title: "API QPS", unit: "/s", decimals: 2, query: 'sum(rate(apiserver_request_total{}[5m]))' },
+        { title: "API 5xx", unit: "/s", decimals: 2, query: 'sum(rate(apiserver_request_total{code=~"5.."}[5m]))' },
+        { title: "在线采集目标", decimals: 0, query: 'sum(up{})' },
+        { title: "网络接收", unit: "MiB/s", decimals: 2, query: 'sum(rate(node_network_receive_bytes_total{device!="lo"}[5m])) / 1048576' },
+        { title: "网络发送", unit: "MiB/s", decimals: 2, query: 'sum(rate(node_network_transmit_bytes_total{device!="lo"}[5m])) / 1048576' }
+      ];
+      var context = clusterKey();
+      var step = OB.range === "15m" ? "15s" : OB.range === "6h" ? "2m" : OB.range === "24h" ? "5m" : "30s";
+      Promise.all(items.map(function (item) {
+        var query;
+        try { query = window.XSObserve.scopedPromQuery(item.query, source, true); }
+        catch (err) { return Promise.resolve({ ok: false, error: err }); }
+        return settle(GET("/observability/prometheus/" + encodeURIComponent(source.ds.id) + "/query_range", {
+          cluster_id: cluster.id, query: query, start: "now-" + OB.range, end: "now", step: step
+        }), null);
+      })).then(function (results) {
+        if (!p.active() || context !== clusterKey() || !box.isConnected) return;
+        var failures = results.filter(function (result) { return !result.ok; }).length;
+        box.innerHTML = (failures ? '<p class="x-aerr" role="status">' + failures + ' 项指标查询失败，其余结果仍可查看。<button class="x-btn" type="button" data-metric-retry>重试</button></p>' : "") +
+          '<div class="ops-metric-grid">' + items.map(function (item, index) {
+            return results[index].ok ? metricCard(item, results[index].value) : '<div class="x-card ops-metric-card"><p>' + E(item.title) + '</p><strong>—</strong><span class="x-frac">查询失败：' + E(errMsg(results[index].error)) + '</span></div>';
+          }).join("") + "</div>";
+        var retry = box.querySelector('[data-metric-retry]');
+        if (retry) retry.onclick = function () { loadMetricSummary(cluster, source); };
+      }).catch(function (err) {
+        if (!p.active() || context !== clusterKey() || !box.isConnected) return;
+        box.innerHTML = errorHTML(err);
+        var retry = box.querySelector("[data-opretry]");
+        if (retry) retry.onclick = function () { loadMetricSummary(cluster, source); };
+      });
     }
     function bindMetrics(list, proms) {
       [].slice.call(p.box.querySelectorAll("[data-testds]")).forEach(function (b) {
@@ -482,13 +1070,17 @@
       });
       var sel = p.box.querySelector("[data-promds]"), range = p.box.querySelector("[data-promrange]");
       if (sel) sel.onchange = function () { OB.promId = +sel.value; };
-      if (range) range.onchange = function () { OB.range = range.value; };
+      if (range) range.onchange = function () {
+        OB.range = range.value;
+        if (OB.scope) loadMetricSummary(OB.scope.cluster, OB.scope);
+      };
+      if (OB.scope && OB.scope.ds) loadMetricSummary(OB.scope.cluster, OB.scope);
       var run = p.box.querySelector("[data-promrun]");
-      if (run) run.onclick = function () { runProm(p.box); };
+      if (run) run.onclick = function () { runProm(p.box); if (OB.scope) loadMetricSummary(OB.scope.cluster, OB.scope); };
       var inp = p.box.querySelector("[data-promq]");
       if (inp) inp.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); runProm(p.box); } };
       var nw = p.box.querySelector('[data-act="newds"]');
-      if (nw) nw.onclick = function () { dsModal(function () { obsMetrics(el); }); };
+      if (nw) nw.onclick = function () { location.hash = "#/cluster/integrations"; };
     }
   }
 
@@ -498,14 +1090,19 @@
     var inp = root.querySelector("[data-promq]");
     var box = root.querySelector("[data-promres]");
     if (!ds || !box) return;
+    var cluster = activeCluster(), context = clusterKey(), scope = OB.scope;
+    if (!cluster || !scope || String(scope.cluster.id) !== String(cluster.id) || OB.context !== context || String(ds.value) !== String(scope.ds.id)) { box.innerHTML = emptyHTML("当前集群没有该数据源的访问权限"); return; }
     OB.promId = ds.value; OB.range = range ? range.value : "1h"; OB.query = inp ? inp.value.trim() : "";
     if (!OB.query) { box.innerHTML = emptyHTML("请输入 PromQL 查询语句"); return; }
     var steps = { "15m": "15s", "1h": "30s", "6h": "2m", "24h": "5m", "7d": "30m" };
+    var query;
+    try { query = window.XSObserve.scopedPromQuery(OB.query, scope); } catch (err) { box.innerHTML = errorHTML(err); return; }
     box.innerHTML = loadingHTML("查询中…");
     GET("/observability/prometheus/" + encodeURIComponent(OB.promId) + "/query_range", {
-      query: OB.query, start: "now-" + OB.range, end: "now", step: steps[OB.range] || "30s"
-    }).then(function (res) { box.innerHTML = promHTML(res); })
+      cluster_id: cluster.id, query: query, start: "now-" + OB.range, end: "now", step: steps[OB.range] || "30s"
+    }).then(function (res) { if (context === clusterKey() && box.isConnected) box.innerHTML = promHTML(res); })
       .catch(function (err) {
+        if (context !== clusterKey() || !box.isConnected) return;
         box.innerHTML = errorHTML(err);
         var b = box.querySelector("[data-opretry]");
         if (b) b.onclick = function () { runProm(root); };
@@ -548,45 +1145,352 @@
     return preBlock(res);
   }
 
-  function dsModal(done) {
-    formModal("新建数据源", [
-      { k: "name", label: "名称", required: true, placeholder: "prom-prod" },
-      { k: "type", label: "类型", kind: "select", required: true, options: ["prometheus", "loki", "elasticsearch", "alertmanager", "jaeger", "tempo"], value: "prometheus" },
-      { k: "url", label: "地址", required: true, placeholder: "https://prometheus:9090" },
-      { k: "env", label: "环境", placeholder: "prod / test / dev（可留空）" },
-      { k: "auth_type", label: "认证方式", kind: "select", options: ["none", "basic", "bearer"], value: "none" },
-      { k: "username", label: "用户名（basic）" },
-      { k: "secret", label: "密码 / Bearer Token", kind: "password" },
-      { k: "tls_skip_verify", label: "跳过 TLS 校验", kind: "checkbox", value: false, hint: "跳过" },
-      { k: "timeout_sec", label: "超时（秒）", kind: "number", value: "30" },
-      { k: "options", label: "options JSON（ES: index/time_field；Loki: org_id）", kind: "textarea", rows: 3, value: "{}" }
-    ], "创建", function (v) {
-      var opts;
-      try { opts = parseJSON(v.options || "{}", {}); } catch (err) { toast(errMsg(err)); return; }
-      var body = {
-        name: v.name, type: v.type, url: v.url, env: v.env, auth_type: v.auth_type, username: v.username,
-        secret: v.secret, tls_skip_verify: v.tls_skip_verify, timeout_sec: +v.timeout_sec || 30, options: opts
-      };
-      write(POST("/observability/datasources", body), "数据源已创建").then(function (r) {
-        if (!r) return;
+  function dsModal(done, existing, clusters, defaults) {
+    var editing = !!existing, id = "opsds" + (++ST.formSeq), options = existing && existing.options || {};
+    clusters = clusters || [];
+    defaults = defaults || {};
+    var clusterValue = options.cluster_id != null ? String(options.cluster_id) : defaults.cluster_id != null ? String(defaults.cluster_id) : Object.keys(options.cluster_values || {})[0] || "";
+    var currentCluster = clusters.find(function (c) { return String(c.id) === clusterValue; });
+    var scopeType = options.scope || defaults.scope || "cluster";
+    var clusterOptions = '<option value="">不关联集群</option>' + clusters.map(function (c) {
+      return '<option value="' + E(c.id) + '"' + (String(c.id) === clusterValue ? " selected" : "") + '>' + E(c.name || ("#" + c.id)) + "   " + E(c.env || "") + "</option>";
+    }).join("");
+    var advancedKeys = Object.keys(options).filter(function (key) { return ["scope", "cluster_id", "cluster_name", "cluster_values", "org_id", "cluster_label", "log_selector", "index", "time_field"].indexOf(key) < 0 && !/secret|token|password|authorization|key/i.test(key); });
+    var advancedRows = advancedKeys.map(function (key) { return dsOptionRow(key, options[key]); }).join("");
+    var mappings = Object.entries(options.cluster_values || {}).map(function (pair) { return dsMappingRow(pair[0], pair[1], clusters); }).join("");
+    if (!mappings && scopeType === "central" && currentCluster) mappings = dsMappingRow(currentCluster.id, currentCluster.name, clusters);
+    var html = '<form class="x-form" id="' + id + '" novalidate>' +
+      '<label><span>名称</span><input class="x-input" name="name" required value="' + E(existing && existing.name || "") + '" placeholder="prom-prod" /></label>' +
+      '<label><span>类型</span><select class="x-select" name="type"' + (editing ? " disabled" : "") + '>' + DS_TYPES.map(function (type) { return '<option value="' + type + '"' + ((existing ? existing.type : defaults.type || "prometheus") === type ? " selected" : "") + '>' + E(DS_TYPE_LABELS[type]) + "</option>"; }).join("") + "</select></label>" +
+      '<label><span>数据归属</span><select class="x-select" name="scope"><option value="cluster"' + (scopeType === "cluster" ? " selected" : "") + '>集群专用</option><option value="central"' + (scopeType === "central" ? " selected" : "") + '>中央共享（显式映射）</option></select></label>' +
+      '<label class="x-full"><span>集群发现组件</span><select class="x-select" data-ds-candidate><option value="">选择已发现地址，或手动填写</option></select><span class="x-frac" data-ds-discovery role="status">选择集群后读取候选；发现不代表连接成功。</span></label>' +
+      '<label><span>集群专用绑定 / 发现所在集群</span><select class="x-select" name="cluster_id">' + clusterOptions + "</select></label>" +
+      '<label><span>集群名称</span><input class="x-input" name="cluster_name" value="' + E(options.cluster_name || (currentCluster && currentCluster.name) || "") + '" readonly /></label>' +
+      '<div class="x-full" data-ds-central><div class="x-tbar"><strong>中央源覆盖集群与标签值</strong><button class="x-btn" type="button" data-ds-map-add>添加集群</button></div><div data-ds-mappings>' + mappings + '</div></div>' +
+      '<label class="x-full"><span>服务地址</span><input class="x-input" name="url" required value="' + E(existing && existing.url || "") + '" placeholder="https://prometheus.example.com" /></label>' +
+      '<label><span>环境（中央源可跨环境）</span><input class="x-input" name="env" value="' + E(existing && existing.env || (currentCluster && scopeType === "cluster" ? currentCluster.env : "")) + '" placeholder="prod / test / dev" /></label>' +
+      '<label><span>认证方式</span><select class="x-select" name="auth_type">' + ["none", "basic", "bearer"].map(function (type) { return '<option value="' + type + '"' + ((existing && existing.auth_type || "none") === type ? " selected" : "") + '>' + type + "</option>"; }).join("") + "</select></label>" +
+      '<label><span>用户名</span><input class="x-input" name="username" value="' + E(existing && existing.username || "") + '" /></label>' +
+      '<label><span>密码 / Token</span><input class="x-input" type="password" name="secret" value="" autocomplete="new-password" placeholder="' + E(editing && existing.has_secret ? "已配置，留空保留" : "") + '" /></label>' +
+      '<label><span>超时（秒）</span><input class="x-input" type="number" min="1" max="300" name="timeout_sec" value="' + E(existing && existing.timeout_sec || 30) + '" /></label>' +
+      '<label><span>跳过 TLS 校验</span><input type="checkbox" name="tls_skip_verify"' + (existing && existing.tls_skip_verify ? " checked" : "") + ' /></label>' +
+      '<label><span>组织 ID</span><input class="x-input" name="org_id" value="' + E(options.org_id || "") + '" placeholder="Loki 可选" /></label>' +
+      '<label><span>中央源集群标签名</span><input class="x-input" name="cluster_label" value="' + E(options.cluster_label || (scopeType === "central" ? "cluster" : "")) + '" placeholder="cluster" /></label>' +
+      '<label class="x-full"><span>日志筛选器</span><input class="x-input" name="log_selector" value="' + E(options.log_selector || "") + '" placeholder="{job=\"fluent-bit\"}" /></label>' +
+      '<label><span>索引</span><input class="x-input" name="index" value="' + E(options.index || "") + '" placeholder="Elasticsearch index" /></label>' +
+      '<label><span>时间字段</span><input class="x-input" name="time_field" value="' + E(options.time_field || "") + '" placeholder="@timestamp" /></label>' +
+      '<div class="x-full"><div class="x-tbar"><strong>高级 Options</strong><button class="x-btn" type="button" data-ds-option-add>添加字段</button></div><div data-ds-options>' + advancedRows + "</div></div>" +
+      '<span class="x-err" id="' + id + 'err" hidden></span></form>';
+    dlg(editing ? "编辑数据源   " + E(existing.name) : "新建数据源", html,
+      '<button class="x-btn" type="button" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="' + id + '">' + (editing ? "保存" : "创建") + "</button>");
+    var form = q(id); if (!form) return null;
+    var cluster = form.elements.cluster_id, component = form.querySelector("[data-ds-candidate]"), state = form.querySelector("[data-ds-discovery]"), seq = 0;
+    var mapWrap = form.querySelector("[data-ds-mappings]"), central = form.querySelector("[data-ds-central]");
+    function toggleScope() {
+      var shared = form.elements.scope.value === "central";
+      central.hidden = !shared;
+      if (shared && !mapWrap.querySelector("[data-ds-map-row]") && cluster.value) {
+        var chosen = clusters.find(function (c) { return String(c.id) === cluster.value; });
+        if (chosen) mapWrap.insertAdjacentHTML("beforeend", dsMappingRow(chosen.id, chosen.name, clusters));
+      }
+    }
+    function discover() {
+      var request = ++seq, selected = clusters.filter(function (c) { return String(c.id) === String(cluster.value); })[0];
+      form.elements.cluster_name.value = selected ? selected.name || "" : "";
+      if (selected && !form.elements.env.value) form.elements.env.value = selected.env || "";
+      component.innerHTML = '<option value="">正在读取候选…</option>';
+      if (!cluster.value) { component.innerHTML = '<option value="">未选择集群，可手动填写</option>'; state.textContent = "未选择集群；地址可手动填写。"; return; }
+      if (["prometheus", "loki", "jaeger", "tempo"].indexOf(form.elements.type.value) < 0) {
+        component.innerHTML = '<option value="">该类型暂无自动发现，可手动填写</option>';
+        state.textContent = "该类型暂无组件候选接口；地址可手动填写。";
+        return;
+      }
+      GET("/clusters/" + encodeURIComponent(cluster.value) + "/integration-discovery").then(function (data) {
+        if (request !== seq || !form.isConnected && document.body.contains(form) === false) return;
+        var result = integrationCandidates(data, form.elements.type.value), status = result.component;
+        var choices = result.items.filter(function (item) { return item.type === form.elements.type.value && Array.isArray(item.url_candidates) && item.url_candidates.length; });
+        component.innerHTML = '<option value="">手动填写地址</option>' + choices.map(function (item) {
+          return item.url_candidates.map(function (url) { return '<option value="' + E(url) + '" data-name="' + E(item.name) + '" data-namespace="' + E(item.namespace) + '">' + E(item.namespace + "/" + item.name + "   " + url + (item.connection_verified === true && item.auth_type === "none" ? "   已验证连接" : "   未验证连接")) + "</option>"; }).join("");
+        }).join("");
+        state.textContent = integrationStateLabel(status.state) + (status.error ? "：" + status.error : "") + (choices.length === 1 && choices[0].url_candidates.length === 1 && choices[0].connection_verified === true && choices[0].auth_type === "none" ? "；唯一且已验证的无认证候选，可选择绑定。" : "；发现不代表连接成功，选择后仍需验证。 ");
+        state.setAttribute("data-state", integrationState(status.state));
+        if (editing && existing.url) component.value = "";
+      }).catch(function (err) {
+        if (request !== seq) return;
+        component.innerHTML = '<option value="">手动填写地址</option>';
+        state.textContent = (err && err.status === 403 ? "无权限" : "发现失败") + "：" + errMsg(err) + "；仍可手动填写地址。";
+        state.setAttribute("data-state", err && err.status === 403 ? "forbidden" : "error");
+      });
+    }
+    cluster.onchange = function () { discover(); toggleScope(); };
+    form.elements.type.onchange = discover;
+    form.elements.scope.onchange = toggleScope;
+    form.querySelector("[data-ds-map-add]").onclick = function () { mapWrap.insertAdjacentHTML("beforeend", dsMappingRow("", "", clusters)); };
+    mapWrap.onclick = function (event) { var target = event.target; if (target && target.matches && target.matches("[data-ds-map-del]")) target.parentNode.remove(); };
+    component.onchange = function () {
+      var option = component.options[component.selectedIndex];
+      if (!component.value || !option) return;
+      form.elements.url.value = component.value;
+      if (option.getAttribute("data-name")) form.elements.cluster_name.value = option.getAttribute("data-name") ? (clusters.filter(function (c) { return String(c.id) === String(cluster.value); })[0] || {}).name || "" : "";
+    };
+    var addOption = form.querySelector("[data-ds-option-add]"), optionWrap = form.querySelector("[data-ds-options]");
+    if (addOption) addOption.onclick = function () { optionWrap.insertAdjacentHTML("beforeend", dsOptionRow("", "")); };
+    optionWrap.onclick = function (event) { var target = event.target; if (target && target.matches && target.matches("[data-ds-option-del]")) target.parentNode.remove(); };
+    form.onsubmit = function (event) {
+      event.preventDefault();
+      var err = q(id + "err"); err.hidden = true;
+      var url = normalizeURL(form.elements.url.value);
+      if (!/^https?:\/\//i.test(url)) { err.textContent = "请填写有效的 http(s) 服务地址"; err.hidden = false; form.elements.url.focus(); return; }
+      var advanced = [].slice.call(optionWrap.querySelectorAll("[data-ds-option-row]")).map(function (row) { return { key: row.querySelector("[data-ds-option-key]").value, value: row.querySelector("[data-ds-option-value]").value }; });
+      var body;
+      try { body = datasourceBody({
+        name: form.elements.name.value.trim(), type: form.elements.type.value, url: url, env: form.elements.env.value.trim(),
+        auth_type: form.elements.auth_type.value, username: form.elements.username.value.trim(), secret: form.elements.secret.value,
+        tls_skip_verify: form.elements.tls_skip_verify.checked, timeout_sec: form.elements.timeout_sec.value,
+        scope: form.elements.scope.value,
+        cluster_id: form.elements.cluster_id.value, cluster_name: form.elements.cluster_name.value.trim(),
+        cluster_values: [].slice.call(mapWrap.querySelectorAll("[data-ds-map-row]")).map(function (row) { return { cluster_id: row.querySelector("[data-ds-map-cluster]").value, value: row.querySelector("[data-ds-map-value]").value }; }),
+        org_id: form.elements.org_id.value, cluster_label: form.elements.cluster_label.value,
+        log_selector: form.elements.log_selector.value, index: form.elements.index.value, time_field: form.elements.time_field.value,
+        advanced: advanced
+      }, existing); } catch (e) { err.textContent = errMsg(e); err.hidden = false; return; }
+      if (body.options.scope === "cluster") {
+        var selected = clusters.find(function (c) { return String(c.id) === String(body.options.cluster_id); });
+        if (!selected || selected.name !== body.options.cluster_name || (window.XSObserve && window.XSObserve.env(body.env) !== window.XSObserve.env(selected.env))) { err.textContent = "集群 ID、名称与环境必须一致"; err.hidden = false; return; }
+      } else if (Object.keys(body.options.cluster_values).some(function (key) { return !clusters.some(function (c) { return String(c.id) === key; }); })) { err.textContent = "中央映射必须选择已接入集群"; err.hidden = false; return; }
+      if (body.auth_type === "basic" && !body.username) { err.textContent = "Basic 认证需要用户名"; err.hidden = false; return; }
+      var submit = form.querySelector('[type="submit"]'); if (submit) submit.disabled = true;
+      var request = editing ? PUT("/observability/datasources/" + encodeURIComponent(existing.id), body) : POST("/observability/datasources", body);
+      write(request, editing ? "数据源已保存" : "数据源已创建").then(function (result) {
+        if (!result || result.__approval) { if (submit) submit.disabled = false; return; }
         closeAll();
-        if (r.webhook_token) infoModal("Alertmanager Webhook（仅显示一次）", '<p class="x-desc">请立即复制保存，关闭后不可再次查看：</p>' + preBlock("URL: " + (r.webhook_path || "") + "\nToken: " + r.webhook_token));
+        var created = dsPayload(result);
+        if (!editing && (created.webhook_token || result.webhook_token)) {
+          var token = created.webhook_token || result.webhook_token;
+          infoModal("Alertmanager Webhook（仅显示一次）", '<p class="x-desc">请立即复制保存，关闭后不可再次查看：</p>' + preBlock("URL: " + (created.webhook_path || result.webhook_path || "") + "\nToken: " + token));
+        }
         if (done) done();
       });
-    }, "URL 必须是 http(s) 绝对地址；secret 会加密存储，接口只返回掩码。");
+    };
+    toggleScope(); discover();
+    return form;
+  }
+  function dsMappingRow(clusterId, value, clusters) {
+    return '<div data-ds-map-row style="display:flex;gap:8px;margin-top:8px"><select class="x-select" data-ds-map-cluster aria-label="映射集群"><option value="">选择集群</option>' + clusters.map(function (c) { return '<option value="' + E(c.id) + '"' + (String(c.id) === String(clusterId) ? " selected" : "") + '>' + E(c.name + "   " + c.env) + '</option>'; }).join("") + '</select><input class="x-input" data-ds-map-value value="' + E(value || "") + '" placeholder="该集群在后端中的真实标签值" aria-label="集群标签值" /><button class="x-btn" type="button" data-ds-map-del aria-label="删除映射">删除</button></div>';
+  }
+  function showDiscovery(p, cluster, type) {
+    var target = p.box.querySelector("[data-discovery-result]");
+    if (!target || !p.active()) return;
+    var requestKey = clusterKey(), supported = ["prometheus", "loki", "jaeger", "tempo"].indexOf(type) >= 0;
+    function bindAction() {
+      var button = p.box.querySelector("[data-discovery-bind]");
+      if (button) button.onclick = function () {
+        location.hash = "#/cluster/integrations";
+      };
+    }
+    if (!supported) {
+      target.innerHTML = emptyHTML("此类型尚无集群自动发现接口；可手动绑定服务地址。") + '<button type="button" class="x-btn" data-discovery-bind>手动绑定</button>';
+      bindAction(); return;
+    }
+    target.innerHTML = loadingHTML("正在发现当前集群组件…");
+    GET("/clusters/" + encodeURIComponent(cluster.id) + "/integration-discovery").then(function (result) {
+      if (!p.active() || requestKey !== clusterKey()) return;
+      var found = integrationCandidates(result, type), choices = found.items.filter(function (item) { return Array.isArray(item.url_candidates) && item.url_candidates.length; });
+      var verified = choices.length === 1 && choices[0].url_candidates.length === 1 && choices[0].connection_verified === true && choices[0].auth_type === "none";
+      target.innerHTML = '<p role="status">' + E(integrationStateLabel(found.component.state)) + (found.component.error ? "   " + E(found.component.error) : "") + (choices.length ? "   " + choices.map(function (item) { return E(item.namespace + "/" + item.name); }).join("、") : "") + (verified ? "   唯一无认证候选已由服务端验证，可选择绑定。" : "   候选地址尚未验证连接或归属，不自动绑定。") + '</p><button type="button" class="x-btn" data-discovery-bind>选择地址或手动绑定</button>';
+      bindAction();
+    }).catch(function (err) {
+      if (!p.active() || requestKey !== clusterKey()) return;
+      target.innerHTML = '<p role="status">' + E(err && err.status === 403 ? "无权限发现" : "发现失败") + "   " + E(errMsg(err)) + '</p><button type="button" class="x-btn" data-discovery-bind>手动绑定</button>';
+      bindAction();
+    });
+  }
+  function clusterDatasourceRowsHTML(entries, cluster, expandedType) {
+    return entries.map(function (entry) {
+      var type = entry.type, resolution = entry.resolution, discovery = entry.discovery;
+      var source = resolution.ok ? resolution.value : null;
+      var found = discovery.ok ? integrationCandidates(discovery.value, type) : null;
+      var candidates = found ? found.items.filter(function (item) {
+        return item.type === type && Array.isArray(item.url_candidates) && item.url_candidates.length;
+      }) : [];
+      var componentState = discovery.ok ? integrationState(found.component.state) :
+        Number(discovery.error && discovery.error.status) === 403 ? "forbidden" : "error";
+      var bindStatus = source ? "已绑定" : !resolution.ok && Number(resolution.error && resolution.error.status) === 404 ? "未绑定" : resolutionErrorText(resolution.error);
+      var candidateStatus = !discovery.ok ? (Number(discovery.error && discovery.error.status) === 403 ? "无权限" : resolutionErrorText(discovery.error)) :
+        componentState === "missing" ? "缺失" :
+          componentState === "forbidden" ? "无权限" :
+            componentState === "error" || componentState === "unavailable" ? integrationStateLabel(componentState) :
+              candidates.some(function (item) { return item.connection_verified === true; }) ? "已发现 · 已验证" :
+                candidates.length ? "已发现 · 未验证" : "已发现 · 无候选地址";
+      var candidateName = candidates.length ? candidates.slice(0, 2).map(function (item) {
+        return item.namespace + "/" + item.name;
+      }).join("、") + (candidates.length > 2 ? " 等 " + candidates.length + " 个" : "") : "—";
+      var currentAddress = source ? code(source.ds.url || "—", 48) : "—";
+      var scopeText = source ? (source.scope === "central" ? "中央共享" : "集群专用") :
+        !resolution.ok && Number(resolution.error && resolution.error.status) !== 404 ? "解析失败" : "未配置";
+      var candidateSource = candidates.length ? "集群发现" :
+        found && found.sources && found.sources[type] ? String(found.sources[type]) : "—";
+      var row = '<tr data-cluster-source-row="' + E(type) + '">' +
+        "<td><strong>" + E(DS_TYPE_LABELS[type] || type) + "</strong></td>" +
+        '<td><span class="x-tag ' + (source ? "x-green" : "x-grey") + '">' + E(bindStatus) + "</span><div>" + currentAddress + "</div></td>" +
+        "<td>" + E(candidateName) + (candidates.length ? '<small class="x-cluster-source-url">' + E(candidates.length + " 个候选地址，配置时可选择或手填") + "</small>" : "") + "</td>" +
+        '<td><span class="x-tag ' + integrationStateClass(componentState) + '">' + E(candidateStatus) + "</span></td>" +
+        "<td>" + E(candidateSource) + (source ? '<small>' + E(scopeText) + "</small>" : "") + "</td>" +
+        '<td class="ops-nowrap"><button class="x-btn" type="button" data-cluster-source-config="' + E(type) + '">' + (source ? "配置/替换" : "配置") + "</button>" +
+        (componentState === "missing" ? '<button class="x-btn" type="button" data-cluster-source-wizard="' + E(type) + '">安装组件</button>' : "") + "</td></tr>";
+      if (expandedType !== type) return row;
+      var options = candidates.map(function (item) {
+        return item.url_candidates.map(function (url) {
+          var verified = item.connection_verified === true && item.auth_type === "none";
+          return '<option value="' + E(url) + '">' + E(item.namespace + "/" + item.name + " · " + url + (verified ? " · 已验证" : " · 未验证")) + "</option>";
+        }).join("");
+      }).join("");
+      var existing = source && source.ds;
+      var drawer = '<tr class="x-cluster-source-drawer"><td colspan="6"><form data-cluster-source-form="' + E(type) + '">' +
+        '<div class="x-cluster-source-form">' +
+        '<label><span>数据源名称</span><input class="x-input" name="name" required value="' + E(existing && existing.name || (cluster.name + "-" + type)) + '" /></label>' +
+        '<label><span>发现候选</span><select class="x-select" data-cluster-source-candidate><option value="">手动填写</option>' + options + "</select></label>" +
+        '<label class="x-cluster-source-wide"><span>服务地址</span><input class="x-input" name="url" type="url" required value="' + E(existing && existing.url || "") + '" placeholder="https://service.example" /></label>' +
+        '<label><span>认证方式</span><select class="x-select" name="auth_type">' + ["none", "basic", "bearer"].map(function (auth) {
+          return '<option value="' + auth + '"' + ((existing && existing.auth_type || "none") === auth ? " selected" : "") + ">" + auth + "</option>";
+        }).join("") + "</select></label>" +
+        '<label><span>用户名</span><input class="x-input" name="username" value="' + E(existing && existing.username || "") + '" /></label>' +
+        '<label><span>密码 / Token</span><input class="x-input" name="secret" type="password" autocomplete="new-password" placeholder="' + E(existing && existing.has_secret ? "已配置，留空保留" : "") + '" /></label>' +
+        '<label><span>超时（秒）</span><input class="x-input" name="timeout_sec" type="number" min="1" max="300" value="' + E(existing && existing.timeout_sec || 30) + '" /></label>' +
+        '<label class="x-cluster-source-check"><span>跳过 TLS 校验</span><input name="tls_skip_verify" type="checkbox"' + (existing && existing.tls_skip_verify ? " checked" : "") + " /></label>" +
+        '<div class="x-cluster-source-actions"><span class="x-err" data-cluster-source-error role="alert" hidden></span><button class="x-btn" type="button" data-cluster-source-cancel>取消</button><button class="x-btn x-btn--pri" type="submit">保存</button></div>' +
+        "</div></form></td></tr>";
+      return row + drawer;
+    }).join("");
+  }
+  function renderClusterConfig(el) {
+    if (!el) return;
+    var sequence = 0, expandedType = "", cluster = activeCluster();
+    el.innerHTML = '<div class="x-tbar x-cluster-source-toolbar"><strong>集群数据源</strong><span class="x-grow"></span><button class="x-btn" type="button" data-cluster-source-refresh>刷新</button><button class="x-btn" type="button" data-cluster-discovery-refresh>刷新发现</button></div><div data-cluster-source-body>' +
+      (cluster ? loadingHTML("正在读取当前集群数据源…") : emptyHTML("请先选择目标集群")) + "</div>";
+    var body = el.querySelector("[data-cluster-source-body]");
+    if (!cluster) return;
+    function load(refreshDiscovery) {
+      var request = ++sequence, context = clusterKey(), target = activeCluster();
+      if (!target) { body.innerHTML = emptyHTML("请先选择目标集群"); return; }
+      body.innerHTML = loadingHTML("正在读取当前集群数据源…");
+      var refresh = refreshDiscovery
+        ? POST("/clusters/" + encodeURIComponent(target.id) + "/integration-discovery/refresh", {}).then(function () { return null; }, function (err) { return err; })
+        : Promise.resolve(null);
+      refresh.then(function (refreshError) {
+        return Promise.all([
+          settle(GET("/clusters/" + encodeURIComponent(target.id) + "/integration-discovery"), null),
+          Promise.all(DS_TYPES.map(function (type) { return settle(resolveDatasource(target, type), null); }))
+        ]).then(function (results) {
+          var discovery = results[0];
+          var entries = DS_TYPES.map(function (type, index) {
+            return { type: type, resolution: results[1][index], discovery: discovery };
+          });
+          return { entries: entries, refreshError: refreshError };
+        });
+      }).then(function (result) {
+        if (request !== sequence || context !== clusterKey() || !el.isConnected) return;
+        var note = result.refreshError ? banner("发现刷新失败：" + resolutionErrorText(result.refreshError)) : "";
+        body.innerHTML = note + '<div class="x-cluster-source-table-wrap"><table class="x-table x-cluster-source-table"><thead><tr><th>数据源</th><th>当前绑定</th><th>候选地址</th><th>状态</th><th>来源</th><th>操作</th></tr></thead><tbody>' +
+          clusterDatasourceRowsHTML(result.entries, target, expandedType) + "</tbody></table></div>";
+        bind(result.entries, target);
+      }).catch(function (err) {
+        if (request === sequence && context === clusterKey() && el.isConnected) body.innerHTML = errorHTML(err);
+      });
+    }
+    function bind(entries, target) {
+      [].slice.call(body.querySelectorAll("[data-cluster-source-config]")).forEach(function (button) {
+        button.onclick = function () {
+          var type = button.getAttribute("data-cluster-source-config");
+          expandedType = expandedType === type ? "" : type;
+          body.innerHTML = '<div class="x-cluster-source-table-wrap"><table class="x-table x-cluster-source-table"><thead><tr><th>数据源</th><th>当前绑定</th><th>候选地址</th><th>状态</th><th>来源</th><th>操作</th></tr></thead><tbody>' +
+            clusterDatasourceRowsHTML(entries, target, expandedType) + "</tbody></table></div>";
+          bind(entries, target);
+        };
+      });
+      [].slice.call(body.querySelectorAll("[data-cluster-source-wizard]")).forEach(function (button) {
+        button.onclick = function () {
+          location.hash = "#/cluster/components/" + encodeURIComponent(target.id);
+        };
+      });
+      [].slice.call(body.querySelectorAll("[data-cluster-source-cancel]")).forEach(function (button) {
+        button.onclick = function () { expandedType = ""; load(false); };
+      });
+      [].slice.call(body.querySelectorAll("[data-cluster-source-form]")).forEach(function (form) {
+        var type = form.getAttribute("data-cluster-source-form");
+        var entry = entries.filter(function (item) { return item.type === type; })[0];
+        var candidate = form.querySelector("[data-cluster-source-candidate]");
+        var url = form.elements.url;
+        if (candidate) candidate.onchange = function () { if (candidate.value) url.value = candidate.value; };
+        form.onsubmit = function (event) {
+          event.preventDefault();
+          var error = form.querySelector("[data-cluster-source-error]");
+          var name = form.elements.name.value.trim(), address = form.elements.url.value.trim();
+          var parsed;
+          try { parsed = new URL(address); } catch (e) { parsed = null; }
+          if (!name || !parsed || !/^https?:$/.test(parsed.protocol)) {
+            error.textContent = "请填写名称和有效的 HTTP(S) 地址";
+            error.hidden = false;
+            return;
+          }
+          if (form.elements.auth_type.value === "basic" && !form.elements.username.value.trim()) {
+            error.textContent = "Basic 认证需要用户名";
+            error.hidden = false;
+            return;
+          }
+          var currentSource = entry.resolution.ok ? entry.resolution.value : null;
+          var body;
+          try {
+            body = datasourceBody({
+              name: name, type: type, url: address, env: target.env,
+              auth_type: form.elements.auth_type.value, username: form.elements.username.value,
+              secret: form.elements.secret.value, tls_skip_verify: form.elements.tls_skip_verify.checked,
+              timeout_sec: form.elements.timeout_sec.value, scope: "cluster",
+              cluster_id: String(target.id), cluster_name: target.name
+            }, currentSource && currentSource.ds);
+          } catch (err) {
+            error.textContent = errMsg(err);
+            error.hidden = false;
+            return;
+          }
+          var update = currentSource && currentSource.scope === "cluster";
+          var request = update
+            ? PUT("/observability/datasources/" + encodeURIComponent(currentSource.ds.id), body)
+            : POST("/observability/datasources", body);
+          var submit = form.querySelector('[type="submit"]');
+          if (submit) submit.disabled = true;
+          write(request, update ? "数据源已更新" : "集群数据源已接入").then(function (result) {
+            if (!result || result.__approval) { if (submit) submit.disabled = false; return; }
+            expandedType = "";
+            load(false);
+          });
+        };
+      });
+    }
+    el.querySelector("[data-cluster-source-refresh]").onclick = function () { load(false); };
+    el.querySelector("[data-cluster-discovery-refresh]").onclick = function () { load(true); };
+    ST.clusterConfigRefresh = function () { if (el.isConnected) load(false); };
+    load(false);
+  }
+  function dsOptionRow(key, value) {
+    return '<div data-ds-option-row style="display:flex;gap:8px;margin-top:8px"><input class="x-input" data-ds-option-key value="' + E(key || "") + '" placeholder="键" aria-label="高级 option 键" /><input class="x-input" data-ds-option-value value="' + E(value == null ? "" : value) + '" placeholder="值" aria-label="高级 option 值" /><button class="x-btn" type="button" data-ds-option-del aria-label="删除字段">删除</button></div>';
   }
 
   function obsRules(el) {
-    var p = livePage(el, "告警规则", "Prometheus 告警 / 记录规则与状态", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-rulenew disabled>+ 新建规则</button>', tabsHTML(OBS_TABS, "#/observe/rules"));
-    var PROMS = [], CLUSTERS = [];
+    var p = livePage(el, "告警规则", "", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-rulenew disabled>+ 新建规则</button>', true);
+    var PROMS = [], CLUSTERS = [], selectedSource = null, rulesSeq = 0;
     function load() {
       var t = p.newToken();
-      Promise.all([settle(dsList({ type: "prometheus" }), []), settle(GET("/observability/aiops/config"), null), settle(GET("/clusters?page_size=500"), [])]).then(function (result) {
-        var data = result[0].value, config = result[1].value;
-        CLUSTERS = result[2].ok ? asArray(result[2].value, ["items", "clusters"]) : [];
+      var cluster = activeCluster();
+      if (!cluster) { p.paint(t, panelHTML("告警规则", emptyHTML("请选择一个目标集群后查看规则。"))); return; }
+      Promise.all([settle(resolveDatasource(cluster, "prometheus"), null), settle(GET("/observability/aiops/config"), null)]).then(function (result) {
+        if (!p.active(t)) return;
+        var resolution = result[0], config = result[1].value;
+        if (!resolution.ok && Number(resolution.error && resolution.error.status) !== 404) { p.error(t, resolution.error); return; }
+        CLUSTERS = [cluster];
         var policyPanel = panelHTML("Kubernetes 健康巡检与 AI 诊断", config ? '<p class="ops-sub">自动巡检：' + (config.enabled ? "已启用" : "未启用") +
           '   自动 AI 分析：' + (config.auto_diagnose ? "已启用" : "未启用") + '   巡检间隔：' + E(config.interval_sec || 60) +
-          ' 秒</p><p class="ops-sub">检测节点就绪 / 资源压力、Pod 启动异常、控制器不可用和 PVC 未绑定；处置由运维选择，生产变更走环境审批。</p>' :
+          " 秒</p>" :
           banner("AIOps 配置读取失败：" + errMsg(result[1].error)),
           config ? '<button class="x-btn" type="button" data-aiops-policy style="margin-left:auto">配置</button>' : "");
         function bindPolicy() {
@@ -599,8 +1503,12 @@
           create.title = CLUSTERS.length ? "" : "请先接入 Kubernetes 集群";
           create.onclick = function () { newAlertRule(); };
         }
-        PROMS = Array.isArray(data) ? data : asArray(data, ["items"]);
-        if (!PROMS.length) { if (p.paint(t, panelHTML("告警规则", emptyHTML("未接入 Prometheus 数据源，无法读取告警规则。")) + policyPanel)) bindPolicy(); return; }
+        selectedSource = resolution.ok ? resolution.value : null;
+        PROMS = selectedSource ? [selectedSource.ds] : [];
+        if (!PROMS.length) {
+          if (p.paint(t, panelHTML("告警规则", emptyHTML("当前集群未绑定 Prometheus 数据源。") + '<div data-discovery-result></div>') + policyPanel)) { bindPolicy(); showDiscovery(p, cluster, "prometheus"); }
+          return;
+        }
         var sel = '<div class="x-tbar"><select class="x-select" data-ruleds style="width:auto">' + PROMS.map(function (d) { return '<option value="' + E(d.id) + '">' + E(d.name || ("#" + d.id)) + "   " + E(d.env || "*") + "</option>"; }).join("") + '</select><span class="x-frac" data-rulemeta></span></div>';
         if (!p.paint(t, panelHTML("告警规则", sel + '<div data-ruleres>' + loadingHTML("读取规则中…") + "</div>") + policyPanel)) return;
         bindPolicy();
@@ -622,6 +1530,7 @@
         { k: "severity", label: "级别", kind: "select", value: "warning", options: [{ v: "critical", t: "严重" }, { v: "warning", t: "警告" }, { v: "info", t: "提示" }] },
         { k: "summary", label: "告警摘要", placeholder: "节点 CPU 使用率持续偏高" }
       ], "创建规则", function (v, form, err) {
+        if (!activeCluster() || String(activeCluster().id) !== String(v.cluster_id)) { err.textContent = "当前集群已切换，请重新打开表单"; err.hidden = false; return; }
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v.name)) {
           err.textContent = "告警名称仅支持字母、数字和下划线，且不能以数字开头";
           err.hidden = false;
@@ -634,14 +1543,19 @@
           closeAll();
           load();
         });
-      }, "规则将写入所选集群的 monitoring.coreos.com/v1 PrometheusRule；需具备集群管理权限，并由 Prometheus Operator 加载。");
+      });
     }
     function loadRules(id) {
       var box = p.box.querySelector("[data-ruleres]");
       if (!box) return;
+      var request = ++rulesSeq, context = clusterKey();
       box.innerHTML = loadingHTML("读取规则中…");
-      GET("/observability/prometheus/" + encodeURIComponent(id) + "/rules").then(function (res) {
+      GET("/observability/prometheus/" + encodeURIComponent(id) + "/rules", { cluster_id: CLUSTERS[0].id }).then(function (res) {
+        if (request !== rulesSeq || !p.active() || context !== clusterKey() || !box.isConnected) return;
         var groups = res && res.data && Array.isArray(res.data.groups) ? res.data.groups : [];
+        if (selectedSource && selectedSource.scope === "central") {
+          groups = groups.map(function (g) { return Object.assign({}, g, { rules: (g.rules || []).filter(function (r) { return (r.labels || {})[selectedSource.clusterLabel] === selectedSource.clusterValue; }) }); }).filter(function (g) { return g.rules.length; });
+        }
         var total = groups.reduce(function (n, g) { return n + ((g.rules || []).length); }, 0);
         var meta = p.box.querySelector("[data-rulemeta]");
         if (meta) meta.textContent = "共 " + groups.length + " 组 / " + total + " 条规则";
@@ -656,6 +1570,7 @@
             tbl(["规则", "表达式", "持续时间", "级别", "状态", "类型"], rows);
         }).join("");
       }).catch(function (err) {
+        if (request !== rulesSeq || !p.active() || context !== clusterKey() || !box.isConnected) return;
         box.innerHTML = errorHTML(err);
         var b = box.querySelector("[data-opretry]");
         if (b) b.onclick = function () { loadRules(id); };
@@ -680,7 +1595,7 @@
       }
       write(PUT("/observability/aiops/config", { enabled: v.enabled, auto_diagnose: v.auto_diagnose, host_diagnostics: v.host_diagnostics, interval_sec: interval, model_id: model, public_url: v.public_url }),
         "AIOps 配置已保存").then(function (r) { if (r) { closeAll(); done(); } });
-    }, "主机采集仅运行平台固定的只读命令，结果会限长、脱敏并随诊断证据发送给已配置模型。自动分析只生成建议，不直接执行变更；人工选择 AI 处理后仍需通过权限、资源身份校验和环境审批。");
+    });
   }
 
   // 告警路径 key：优先数字 id（同一 fingerprint 可能存在于多个 Alertmanager 数据源，
@@ -693,6 +1608,8 @@
     event.preventDefault();
     event.stopImmediatePropagation();
     var id = link.getAttribute("data-alert-open");
+    var owner = link.getAttribute("data-alert-cluster"), active = activeCluster();
+    if (owner && (!active || String(active.id) !== owner)) { toast("当前集群已切换，请刷新告警列表"); return; }
     if (id && typeof window.XSOpenAlertDetail === "function") window.XSOpenAlertDetail(id);
     else toast("告警详情暂不可用，请刷新页面重试");
   }, true);
@@ -703,29 +1620,40 @@
   }
 
   function obsEvents(el, openAlertId) {
-    var p = livePage(el, "告警事件", "Alertmanager 告警的认领、关闭与静默", '<button class="x-btn" type="button" data-refresh>刷新</button>', tabsHTML(OBS_TABS, "#/observe/events"));
+    var p = livePage(el, "告警事件", "", '<button class="x-btn" type="button" data-refresh>刷新</button>', true);
     var F = { status: "", handle: "", severity: "", q: "" };
-    var AMS = [];
+    var AMS = [], AM_SCOPE = null, AM_ERROR = null, current = null, silenceSeq = 0;
     function load() {
       var t = p.newToken();
-      var qy = { page: 1, page_size: 50 };
+      var cluster = activeCluster();
+      if (!cluster) { p.paint(t, panelHTML("告警事件", emptyHTML("请选择一个目标集群后查看告警与静默。"))); return; }
+      var qy = { page: 1, page_size: 50, cluster_id: cluster.id };
       if (F.status) qy.status = F.status;
       if (F.handle) qy.handle_status = F.handle;
       if (F.severity) qy.severity = F.severity;
       if (F.q) qy.q = F.q;
       Promise.all([
         GET("/observability/alerts", qy),
-        settle(dsList({ type: "alertmanager" }), [])
+        settle(resolveDatasource(cluster, "alertmanager"), null)
       ]).then(function (rs) {
-        var data = rs[0] || {}, items = Array.isArray(data) ? data : asArray(data, ["items"]);
-        AMS = rs[1].ok ? (Array.isArray(rs[1].value) ? rs[1].value : asArray(rs[1].value, ["items"])) : [];
-        if (!p.paint(t, evHTML(items, data))) return;
+        if (!p.active(t)) return;
+        if (!window.XSObserve) { p.error(t, new Error("集群数据源解析器不可用")); return; }
+        var data = rs[0] || {};
+        current = cluster;
+        var raw = Array.isArray(data) ? data : asArray(data, ["items"]);
+        var items = raw;
+        var resolution = rs[1];
+        AM_SCOPE = resolution.ok ? resolution.value : null;
+        AM_ERROR = !resolution.ok && Number(resolution.error && resolution.error.status) !== 404 ? resolution.error : null;
+        AMS = AM_SCOPE ? [AM_SCOPE.ds] : [];
+        if (!p.paint(t, evHTML(items, { total: items.length }))) return;
         bindEvents(items);
+        if (!AMS.length) showDiscovery(p, cluster, "alertmanager");
         if (openAlertId) {
           var id = openAlertId;
           openAlertId = "";
-          if (typeof window.XSOpenAlertDetail === "function") window.XSOpenAlertDetail(id);
-          else toast("告警详情暂不可用，请刷新页面重试");
+          if (items.some(function (a) { return alertKey(a) === id; }) && typeof window.XSOpenAlertDetail === "function") window.XSOpenAlertDetail(id);
+          else toast("当前集群未发现对应告警");
         }
       }).catch(function (err) { p.error(t, err); });
     }
@@ -743,7 +1671,7 @@
         var labels = a.labels || {}, anno = a.annotations || {};
         var summary = anno.summary || anno.description || a.message || "";
         var closed = String(a.handle_status) === "closed";
-        return [stTag(a.status), sevTag(a.severity || labels.severity), '<button class="x-tlink x-alert-open" type="button" data-alert-open="' + E(alertKey(a)) + '">' + E(a.alertname || labels.alertname || "—") + "</button>",
+        return [stTag(a.status), sevTag(a.severity || labels.severity), '<button class="x-tlink x-alert-open" type="button" data-alert-open="' + E(alertKey(a)) + '" data-alert-cluster="' + E(current.id) + '">' + E(a.alertname || labels.alertname || "—") + "</button>",
           E(a.env || "—"), code(summary, 90), fmtMin(a.starts_at || a.startsAt), stTag(a.handle_status || "open"),
           E(a.acked_by || a.closed_by || "—"),
           '<span class="ops-nowrap"><button class="x-btn" type="button" data-claim="' + i + '"' + (closed ? " disabled" : "") + ">认领</button>" +
@@ -754,7 +1682,12 @@
       return alertPanel + silencePanel();
     }
     function silencePanel() {
-      if (!AMS.length) return panelHTML("静默", emptyHTML("未接入 Alertmanager 数据源，无法管理静默。"));
+      if (!AMS.length) {
+        var state = AM_ERROR
+          ? '<p class="x-aerr" role="alert">' + E(resolutionErrorText(AM_ERROR)) + "</p>"
+          : emptyHTML("当前集群未绑定 Alertmanager 数据源。");
+        return panelHTML("静默", state + '<div data-discovery-result></div>');
+      }
       var sel = '<select class="x-select" data-silds style="width:auto">' + AMS.map(function (d) { return '<option value="' + E(d.id) + '">' + E(d.name || ("#" + d.id)) + "</option>"; }).join("") + "</select>";
       return panelHTML("静默", barHTML([sel, '<button class="x-btn" type="button" data-newsil>+ 新建静默</button>', '<span class="x-frac" data-silmeta style="margin-left:auto"></span>']) + '<div data-silres>' + loadingHTML("读取静默中…") + "</div>");
     }
@@ -785,9 +1718,13 @@
     function loadSilences(dsId) {
       var box = p.box.querySelector("[data-silres]");
       if (!box || !dsId) return;
+      var request = ++silenceSeq, context = clusterKey();
+      var scope = AM_SCOPE;
+      if (!scope || String(scope.ds.id) !== String(dsId)) { box.innerHTML = emptyHTML("当前集群没有该数据源的访问权限"); return; }
       box.innerHTML = loadingHTML("读取静默中…");
-      GET("/observability/silences", { datasource: dsId }).then(function (data) {
-        var list = Array.isArray(data) ? data : asArray(data, ["silences", "items"]);
+      GET("/observability/silences", { datasource: dsId, cluster_id: current.id }).then(function (data) {
+        if (request !== silenceSeq || !p.active() || context !== clusterKey() || !box.isConnected) return;
+        var list = (Array.isArray(data) ? data : asArray(data, ["silences", "items"])).filter(function (silence) { return silenceMatchesCluster(silence, scope); });
         var meta = p.box.querySelector("[data-silmeta]");
         if (meta) meta.textContent = "共 " + list.length + " 条静默";
         if (!list.length) { box.innerHTML = emptyHTML("当前没有生效中的静默"); return; }
@@ -799,14 +1736,14 @@
         });
         box.innerHTML = tbl(["状态", "匹配器", "开始", "结束", "创建人", "备注", "操作"], rows);
         bindSilenceList();
-      }).catch(function (err) { box.innerHTML = errorHTML(err); });
+      }).catch(function (err) { if (request === silenceSeq && p.active() && context === clusterKey() && box.isConnected) box.innerHTML = errorHTML(err); });
     }
     function bindSilenceList() {
       [].slice.call(p.box.querySelectorAll("[data-delsil]")).forEach(function (b) {
         b.onclick = function () {
           var dsId = p.box.querySelector("[data-silds]").value;
           confirmDo("删除静默", "确定删除该 Alertmanager 静默？", "删除", function () {
-            write(DEL("/observability/silences/" + encodeURIComponent(b.getAttribute("data-delsil")), { datasource: dsId }), "静默已删除").then(function (r) { if (r) loadSilences(dsId); });
+            write(DEL("/observability/silences/" + encodeURIComponent(b.getAttribute("data-delsil")), { datasource: dsId, cluster_id: current.id }), "静默已删除").then(function (r) { if (r && p.active()) loadSilences(dsId); });
           });
         };
       });
@@ -821,11 +1758,15 @@
       "认领后由后端在 Alertmanager 创建静默；若该环境未配置 Alertmanager 会提示是否只认领。");
     }
     function doClaim(a, comment, duration, silence) {
-      POST("/observability/alerts/" + encodeURIComponent(alertKey(a)) + "/claim", claimPayload(a, comment, duration, silence)).then(function (r) {
+      var cluster = activeCluster(); if (!cluster || !current || String(cluster.id) !== String(current.id)) { toast("当前集群已切换，请刷新告警列表"); return; }
+      POST("/observability/alerts/" + encodeURIComponent(alertKey(a)) + "/claim", claimPayload(a, comment, duration, silence),
+        { query: { cluster_id: current.id }, scope: "cluster" }).then(function (r) {
+        if (!p.active()) return;
         closeAll();
         toast(r && r.silenced === false ? "已认领（未创建静默）" : "已认领并创建静默");
         load();
       }).catch(function (err) {
+        if (!p.active()) return;
         if (err && err.status === 412 && silence) {
           closeAll();
           confirmDo("未创建静默", E(errMsg(err)) + "<br />是否只认领告警（不创建静默）？", "只认领", function () { doClaim(a, comment, duration, false); });
@@ -840,11 +1781,15 @@
       }, "关闭会先删除认领时创建的 Alertmanager 静默；删除失败时不会假装关闭。");
     }
     function doClose(a, comment, force) {
-      POST("/observability/alerts/" + encodeURIComponent(alertKey(a)) + "/close", { comment: comment || "", force: !!force }).then(function (r) {
+      var cluster = activeCluster(); if (!cluster || !current || String(cluster.id) !== String(current.id)) { toast("当前集群已切换，请刷新告警列表"); return; }
+      POST("/observability/alerts/" + encodeURIComponent(alertKey(a)) + "/close", { comment: comment || "", force: !!force },
+        { query: { cluster_id: current.id }, scope: "cluster" }).then(function (r) {
+        if (!p.active()) return;
         closeAll();
         toast("告警已关闭" + (r && r.silence_deleted === false ? "（静默删除失败，已记录时间线）" : ""));
         load();
       }).catch(function (err) {
+        if (!p.active()) return;
         if (err && err.status === 502 && !force) {
           closeAll();
           confirmDo("静默删除失败", E(errMsg(err)) + "<br />确需关闭可强制关闭（保留上游静默并记录失败）。", "强制关闭", function () { doClose(a, comment, true); });
@@ -854,14 +1799,16 @@
       });
     }
     function timelineModal(a) {
-      GET("/observability/alerts/" + encodeURIComponent(alertKey(a)) + "/timeline").then(function (data) {
+      var cluster = activeCluster(); if (!cluster || !current || String(cluster.id) !== String(current.id)) return;
+      GET("/observability/alerts/" + encodeURIComponent(alertKey(a)) + "/timeline", { cluster_id: current.id }, { scope: "cluster" }).then(function (data) {
+        if (!p.active()) return;
         var list = asArray(data, ["items", "events", "timeline"]);
         if (!list.length) { infoModal("告警时间线", emptyHTML("暂无时间线记录")); return; }
         var rows = list.map(function (e) {
           return [fmtTime(e.created_at || e.at || e.time), stTag(e.kind || e.type || "—"), E(e.actor || e.username || "—"), E(e.message || e.comment || e.detail || "—")];
         });
         infoModal("告警时间线", tbl(["时间", "事件", "操作人", "说明"], rows));
-      }).catch(function (err) { toast(errMsg(err)); });
+      }).catch(function (err) { if (p.active()) toast(errMsg(err)); });
     }
     function silenceModal(dsId, done) {
       if (!dsId) { toast("请先配置 Alertmanager 数据源"); return; }
@@ -870,21 +1817,31 @@
         { k: "duration", label: "静默时长", kind: "select", options: [{ v: "30m", t: "30 分钟" }, { v: "1h", t: "1 小时" }, { v: "2h", t: "2 小时" }, { v: "6h", t: "6 小时" }, { v: "24h", t: "24 小时" }], value: "2h" },
         { k: "comment", label: "备注", required: true, placeholder: "计划维护 / 已知问题" }
       ], "创建静默", function (v) {
+        if (!p.active() || !current || !activeCluster() || String(activeCluster().id) !== String(current.id)) { toast("当前集群已切换，请重新打开表单"); return; }
         var matchers = String(v.matcher).split(",").map(function (s) { return s.trim(); }).filter(Boolean).map(function (s) {
           var i = s.indexOf("=");
           if (i < 1) throw { message: "匹配器格式应为 name=value：" + s };
           return { name: s.slice(0, i).trim(), value: s.slice(i + 1).trim(), isRegex: false, isEqual: true };
         });
-        write(POST("/observability/silences", { datasource: +dsId, startsAt: "now", matchers: matchers, duration: v.duration, comment: v.comment }), "静默已创建").then(function (r) { if (r) { closeAll(); if (done) done(); } });
+        var scope = AM_SCOPE;
+        if (!scope || String(scope.ds.id) !== String(dsId)) { toast("当前集群没有该数据源的访问权限"); return; }
+        if (scope.scope === "central") {
+          if (matchers.some(function (m) { return m.name === scope.clusterLabel && m.value !== scope.clusterValue; })) { toast("静默匹配器与当前集群冲突"); return; }
+          if (!matchers.some(function (m) { return m.name === scope.clusterLabel; })) matchers.push({ name: scope.clusterLabel, value: scope.clusterValue, isRegex: false, isEqual: true });
+        }
+        write(POST("/observability/silences", { datasource: +dsId, cluster_id: current.id, startsAt: "now", matchers: matchers, duration: v.duration, comment: v.comment }), "静默已创建").then(function (r) { if (r && p.active()) { closeAll(); if (done) done(); } });
       });
     }
     load();
   }
 
   function obsChannels(el) {
-    var p = livePage(el, "通知渠道", "告警通知渠道与测试发送", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newch>+ 新建渠道</button>', tabsHTML(OBS_TABS, "#/observe/channels"));
+    var p = livePage(el, "通知渠道", "", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newch>+ 新建渠道</button>');
     el.querySelector("[data-refresh]").onclick = function () { obsChannels(el); };
-    el.querySelector("[data-newch]").onclick = function () { channelModal(function () { obsChannels(el); }); };
+    el.querySelector("[data-newch]").onclick = function () {
+      if (window.XSChannelForm && typeof window.XSChannelForm.open === "function") window.XSChannelForm.open(null, function () { obsChannels(el); });
+      else channelModal(function () { obsChannels(el); });
+    };
     function load() {
       var t = p.newToken();
       GET("/observability/channels").then(function (data) {
@@ -895,7 +1852,7 @@
           var name = (logo ? '<img src="' + logo + '" alt="" aria-hidden="true" style="width:24px;height:24px;object-fit:contain;vertical-align:middle;margin-right:8px" />' : "") + E(c.name || "—");
           return [name, tag(c.type || "—", "x-blue"), c.enabled ? tag("启用", "x-green") : tag("停用", "x-grey"),
             E((c.severities || []).join(", ") || "全部"), E((c.envs || []).join(", ") || "全部"),
-            fmtMin(c.updated_at), '<span class="ops-nowrap"><button class="x-btn" type="button" data-chtest="' + E(c.id) + '">测试</button>' +
+             fmtMin(c.updated_at), '<span class="ops-nowrap"><button class="x-btn" type="button" data-chedit="' + E(c.id) + '">编辑</button><button class="x-btn" type="button" data-chtest="' + E(c.id) + '">测试</button>' +
             '<button class="x-btn" type="button" data-chtoggle="' + E(c.id) + '">' + (c.enabled ? "停用" : "启用") + "</button>" +
             '<button class="x-btn" type="button" data-chdel="' + E(c.id) + '">删除</button></span>'];
         });
@@ -907,6 +1864,13 @@
     p.retry = load;
     function bindChannels(list) {
       function byId(id) { for (var i = 0; i < list.length; i++) if (String(list[i].id) === String(id)) return list[i]; return null; }
+      [].slice.call(p.box.querySelectorAll("[data-chedit]")).forEach(function (b) {
+        b.onclick = function () {
+          var existing = byId(b.getAttribute("data-chedit"));
+          if (window.XSChannelForm && typeof window.XSChannelForm.open === "function") window.XSChannelForm.open(existing, function () { obsChannels(el); });
+          else toast("渠道编辑模块未加载，请刷新页面后重试");
+        };
+      });
       [].slice.call(p.box.querySelectorAll("[data-chtest]")).forEach(function (b) {
         b.onclick = function () {
           b.disabled = true;
@@ -957,18 +1921,31 @@
   var LG = { dsId: 0, win: 60, limit: 100, level: "", q: "", index: "" };
 
   function renderLogsLive(el) {
-    var p = livePage(el, "日志检索", "Loki / Elasticsearch 统一日志查询", '<button class="x-btn" type="button" data-refresh>刷新</button>', "");
-    var DSTS = [];
+    var p = livePage(el, "日志检索", "", '<button class="x-btn" type="button" data-refresh>刷新</button>', true);
+    var DSTS = [], scope = null, scopesById = Object.create(null), resolverWarnings = [], logSeq = 0;
     function load() {
       var t = p.newToken();
-      dsList().then(function (data) {
-        var list = (Array.isArray(data) ? data : asArray(data, ["items"])).filter(function (d) { return d.type === "loki" || d.type === "elasticsearch"; });
-        DSTS = list;
-        if (!list.length) {
-          p.paint(t, '<div class="x-panel">' + emptyHTML("未接入 Loki 或 Elasticsearch 数据源，无法查询日志。请先在「监控告警 › 指标监控」中添加数据源。") + "</div>");
+      var cluster = activeCluster();
+      if (!cluster || !window.XSObserve) { p.paint(t, panelHTML("日志检索", emptyHTML("请选择一个目标集群后检索日志。"))); return; }
+      Promise.all([
+        settle(resolveDatasource(cluster, "loki"), null),
+        settle(resolveDatasource(cluster, "elasticsearch"), null)
+      ]).then(function (rs) {
+        if (!p.active(t)) return;
+        resolverWarnings = rs.filter(function (result) {
+          return !result.ok && Number(result.error && result.error.status) !== 404;
+        }).map(function (result) { return resolutionErrorText(result.error); });
+        var resolved = rs.filter(function (result) { return result.ok; }).map(function (result) { return result.value; });
+        if (!resolved.length && resolverWarnings.length) { p.error(t, rs.filter(function (result) { return !result.ok && Number(result.error && result.error.status) !== 404; })[0].error); return; }
+        scopesById = Object.create(null);
+        resolved.forEach(function (item) { scopesById[String(item.ds.id)] = item; });
+        scope = resolved.filter(function (item) { return String(item.ds.id) === String(LG.dsId); })[0] || resolved[0] || null;
+        DSTS = resolved.map(function (item) { return item.ds; });
+        if (!DSTS.length) {
+          if (p.paint(t, panelHTML("日志检索", emptyHTML("当前集群未绑定日志数据源。") + '<div data-discovery-result></div>'))) showDiscovery(p, cluster, "loki");
           return;
         }
-        if (!list.some(function (d) { return String(d.id) === String(LG.dsId); })) LG.dsId = list[0].id;
+        LG.dsId = scope.ds.id;
         if (!p.paint(t, formHTML())) return;
         bindForm();
         runQuery();
@@ -981,7 +1958,7 @@
     }
     function formHTML() {
       var ds = curDs(), isES = ds && ds.type === "elasticsearch";
-      return panelHTML("查询条件", barHTML([
+      return panelHTML("查询条件", (resolverWarnings.length ? banner("部分日志数据源解析失败：" + resolverWarnings.join("；")) : "") + barHTML([
         '<select class="x-select" data-lgds style="width:auto">' + DSTS.map(function (d) { return '<option value="' + E(d.id) + '"' + (String(d.id) === String(LG.dsId) ? " selected" : "") + ">" + E(d.name) + "   " + E(d.type) + "</option>"; }).join("") + "</select>",
         '<select class="x-select" data-lgwin style="width:auto">' + [{ v: 15, t: "近 15 分钟" }, { v: 60, t: "近 1 小时" }, { v: 360, t: "近 6 小时" }, { v: 1440, t: "近 24 小时" }].map(function (w) { return '<option value="' + w.v + '"' + (+LG.win === w.v ? " selected" : "") + ">" + w.t + "</option>"; }).join("") + "</select>",
         '<input class="x-input x-search" data-lgq value="' + E(LG.q) + '" placeholder="' + (isES ? "Lucene/KQL，如 level:error and service:api" : "LogQL，如 {app=\"api\"} |= \"error\"") + '" aria-label="日志查询语句" />',
@@ -992,7 +1969,13 @@
     }
     function bindForm() {
       var ds = p.box.querySelector("[data-lgds]");
-      if (ds) ds.onchange = function () { LG.dsId = +ds.value; if (!p.paint(null, formHTML())) return; bindForm(); runQuery(); };
+      if (ds) ds.onchange = function () {
+        LG.dsId = ds.value;
+        scope = scopesById[String(ds.value)] || null;
+        if (!p.paint(null, formHTML())) return;
+        bindForm();
+        runQuery();
+      };
       var win = p.box.querySelector("[data-lgwin]");
       if (win) win.onchange = function () { LG.win = +win.value; };
       var lim = p.box.querySelector("[data-lglimit]");
@@ -1016,11 +1999,19 @@
       var box = p.box.querySelector("[data-lgres]");
       if (!box) return;
       if (p._readLogInputs) p._readLogInputs();
+      var context = clusterKey(), cluster = activeCluster(), request = ++logSeq;
+      if (!cluster || !scope || String(scope.cluster.id) !== String(cluster.id) || String(LG.dsId) !== String(scope.ds.id)) { box.innerHTML = emptyHTML("当前集群没有该数据源的访问权限"); return; }
+      var query = LG.q;
+      if (scope.scope === "central") {
+        if (scope.ds.type === "elasticsearch") { box.innerHTML = emptyHTML("中央 Elasticsearch 查询需要服务端集群隔离，当前不可执行。"); return; }
+        try { query = window.XSObserve.scopedLogQuery(query, scope); } catch (err) { box.innerHTML = errorHTML(err); return; }
+      }
       box.innerHTML = loadingHTML("查询日志中…");
-      var body = { datasource: +LG.dsId, query: LG.q, from: "now-" + (LG.win >= 1440 ? LG.win / 60 + "d" : LG.win + "m"), to: "now", limit: +LG.limit };
+      var body = { datasource: +LG.dsId, cluster_id: cluster.id, query: query, from: "now-" + (LG.win >= 1440 ? LG.win / 60 + "d" : LG.win + "m"), to: "now", limit: +LG.limit };
       if (LG.index) body.index = LG.index;
-      POST("/observability/logs/query", body).then(function (data) { paintLogs(box, data || {}); })
+      POST("/observability/logs/query", body).then(function (data) { if (request === logSeq && p.active() && context === clusterKey() && box.isConnected) paintLogs(box, data || {}); })
         .catch(function (err) {
+          if (request !== logSeq || !p.active() || context !== clusterKey() || !box.isConnected) return;
           box.innerHTML = errorHTML(err);
           var b = box.querySelector("[data-opretry]");
           if (b) b.onclick = function () { runQuery(); };
@@ -1083,7 +2074,7 @@
   }
   function renderCicdLive(el) {
     var seg = (location.hash || "").split("/")[2] || "build";
-    if (seg === "pipeline") return cicdPipelines(el);
+    if (seg === "pipeline") return window.XSCICDPipelineView && typeof window.XSCICDPipelineView.render === "function" ? window.XSCICDPipelineView.render(el) : cicdPipelines(el);
     if (seg === "artifact") return cicdArtifacts(el);
     return cicdBuilds(el);
   }
@@ -1230,6 +2221,13 @@
   function stopRunStream() {
     if (typeof ST.runStream === "function") { try { ST.runStream(); } catch (e) {} }
     ST.runStream = null;
+    if (ST.runStreamWatch) { clearInterval(ST.runStreamWatch); ST.runStreamWatch = null; }
+  }
+  function watchRunStream(pre) {
+    if (ST.runStreamWatch) clearInterval(ST.runStreamWatch);
+    ST.runStreamWatch = setInterval(function () {
+      if (!pre || !document.body.contains(pre)) stopRunStream();
+    }, 800);
   }
   function openRunLog(runId, stageNames) {
     stopRunStream();
@@ -1274,9 +2272,7 @@
       }
       poll();
     }
-    var watch = setInterval(function () {
-      if (!pre || !document.body.contains(pre)) { stopRunStream(); clearInterval(watch); }
-    }, 800);
+    watchRunStream(pre);
   }
 
   function cicdArtifacts(el) {
@@ -1302,8 +2298,95 @@
     var routeParts = (location.hash || "").split("/");
     var detailID = routeParts[3] ? decodeURIComponent(routeParts[3].split("?")[0]) : "";
     var p = livePage(el, "流水线", "流水线定义、执行集群与 Jenkins 接入", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newpl>+ 新建流水线</button>', "");
+    if (detailID) stopRunStream();
     el.querySelector("[data-refresh]").onclick = function () { cicdPipelines(el); };
     el.querySelector("[data-newpl]").onclick = function () { pipelineModal(function () { cicdPipelines(el); }); };
+    var detailRuns = [], selectedRunId = "", selectedRun = null, selectedPipeline = null;
+    function isRunActive(status) { return ["queued", "pending", "running", "cancelling"].indexOf(String(status || "")) >= 0; }
+    function stageTime(stage) {
+      if (!stage.started_at) return "未开始";
+      var value = elapsed(stage.started_at, stage.finished_at);
+      return stage.finished_at ? value : "运行中 · " + value;
+    }
+    function runTime(run) {
+      if (!run || !run.started_at) return run && isRunActive(run.status) ? "排队中" : "—";
+      var value = elapsed(run.started_at, run.finished_at);
+      return run.finished_at ? value : "运行中 · " + value;
+    }
+    function renderPipelineDetail(token, selected) {
+      stopRunStream();
+      var definitions = Array.isArray(selectedPipeline.stages) ? selectedPipeline.stages : [];
+      var mergedStages = pipelineRunStages(definitions, selected && selected.stages);
+      var stageNames = definitions.map(function (stage) { return stage.name || ("阶段 " + (stage.idx + 1)); });
+      var flow = definitions.length
+        ? '<p class="x-plflow" aria-label="流水线执行阶段">' + definitions.map(function (stage, index) {
+          return '<b>' + E(stage.name || ("阶段 " + (index + 1))) + "</b>";
+        }).join('<span aria-hidden="true">→</span>') + "</p>"
+        : emptyHTML("此流水线没有阶段配置。");
+      var stageStrip = selected && mergedStages.length
+        ? '<ol class="x-plstrip">' + mergedStages.map(function (stage) {
+          var colors = { succeeded: "#12b76a", running: "#2c66f5", failed: "#f04438", cancelled: "#98a2b3", skipped: "#d0d5dd", rejected: "#f79009", pending: "#d0d5dd" };
+          var status = stage.status || "pending";
+          return '<li><button class="x-plst' + (status === "running" ? " run" : "") + '" style="--c:' + (colors[status] || "#d0d5dd") +
+            '" type="button" data-stage-run="' + E(selected.id) + '" aria-label="' + E(stage.name + "：" + status) + '">' +
+            "<b>" + E(stage.name) + "</b><small>" + stTag(status) + (stage.job_name ? "   " + E(stage.job_name) : "") +
+            (stage.error ? "   " + E(stage.error) : "") + "</small></button></li>";
+        }).join("") + "</ol>"
+        : emptyHTML(selected ? "后端尚未返回阶段执行记录。" : "暂无运行记录，运行后将显示真实阶段状态。");
+      var active = selected && isRunActive(selected.status);
+      var historyRows = detailRuns.map(function (run) {
+        var canCancel = isRunActive(run.status);
+        return '<tr data-plrun-row="' + E(run.id) + '"' + (String(run.id) === String(selectedRunId) ? ' aria-current="true"' : "") + ">" +
+          "<td>" + mono("#" + E(run.id)) + "</td><td>" + stTag(run.status) + "</td><td>" + E(run.triggered_by || run.trigger || "—") +
+          '</td><td><span class="x-mono ops-pl-commit" title="' + E(run.commit || "—") + '">' + E(run.commit || "—") +
+          "</span></td><td>" + E(run.branch || "—") + "</td><td>" + E(fmtMin(run.started_at || run.created_at)) + "</td><td>" + E(runTime(run)) +
+          '</td><td><span class="ops-nowrap"><button class="x-btn" type="button" data-plrund="' + E(run.id) + '">详情</button>' +
+          '<button class="x-btn" type="button" data-plrunlog="' + E(run.id) + '">日志</button>' +
+          (canCancel ? '<button class="x-btn" type="button" data-plruncancel="' + E(run.id) + '">取消</button>' : "") + "</span></td></tr>";
+      }).join("");
+      var html = '<p class="x-crumb">CI/CD<i>/</i><a class="x-tlink" href="#/cicd/pipeline">流水线</a><i>/</i><b>' + E(selectedPipeline.name) + "</b></p>" +
+        '<div class="x-tbar"><a class="x-btn" href="#/cicd/pipeline">返回列表</a><span class="x-grow"></span>' +
+        '<button class="x-btn" type="button" data-detail-edit="' + E(selectedPipeline.id) + '">编辑</button>' +
+        '<button class="x-btn x-btn--pri" type="button" data-detail-run="' + E(selectedPipeline.id) + '">运行</button>' +
+        (active ? '<button class="x-btn" type="button" data-detail-cancel="' + E(selected.id) + '">取消当前运行</button>' : "") + "</div>" +
+        panelHTML("流水线信息", '<dl class="x-sum" style="margin:0">' +
+          [["应用", E(appName(selectedPipeline.app_id))], ["执行集群", E(targetName(selectedPipeline.runner_target_id))],
+            ["触发方式", selectedPipeline.on_push ? "代码推送" : "手动"], ["阶段", E(definitions.length + " 个")],
+            ["最近更新", fmtMin(selectedPipeline.updated_at)]].map(function (item) {
+              return "<dt>" + item[0] + "</dt><dd>" + item[1] + "</dd>";
+            }).join("") + '</dl><div class="x-sethead" style="margin-top:16px"><h2 class="x-h2">执行顺序</h2></div>' + flow) +
+        panelHTML("最近运行阶段", selected
+          ? '<p class="x-frac">' + mono("#" + E(selected.id)) + "   " + stTag(selected.status) + "   " +
+            E(fmtMin(selected.started_at || selected.created_at)) + "</p>" + stageStrip
+          : emptyHTML("该流水线暂无运行记录。")) +
+        panelHTML("运行记录", historyRows
+          ? '<div style="overflow-x:auto"><table class="x-table x-table--plain"><thead><tr><th>运行</th><th>状态</th><th>触发人</th><th>提交</th><th>分支</th><th>开始时间</th><th>耗时</th><th>操作</th></tr></thead><tbody>' +
+            historyRows + "</tbody></table></div>"
+          : emptyHTML("该流水线暂无运行记录。"));
+      if (!p.paint(token, html)) return;
+      var edit = p.box.querySelector("[data-detail-edit]"), runButton = p.box.querySelector("[data-detail-run]");
+      if (edit) edit.onclick = function () { pipelineModal(function () { cicdPipelines(el); }, selectedPipeline); };
+      if (runButton) runButton.onclick = function () { runPipelineModal(function () { cicdPipelines(el); }, [selectedPipeline]); };
+      function cancelRun(id) {
+        confirmDo("取消运行", "确定取消流水线运行 #" + E(id) + "？", "取消运行", function () {
+          write(POST("/cicd/runs/" + encodeURIComponent(id) + "/cancel"), "已请求取消").then(function (result) { if (result) load(id); });
+        });
+      }
+      var cancelCurrent = p.box.querySelector("[data-detail-cancel]");
+      if (cancelCurrent) cancelCurrent.onclick = function () { cancelRun(cancelCurrent.getAttribute("data-detail-cancel")); };
+      [].slice.call(p.box.querySelectorAll("[data-stage-run]")).forEach(function (button) {
+        button.onclick = function () { runDetailModal(button.getAttribute("data-stage-run")); };
+      });
+      [].slice.call(p.box.querySelectorAll("[data-plrund]")).forEach(function (button) {
+        button.onclick = function () { runDetailModal(button.getAttribute("data-plrund")); };
+      });
+      [].slice.call(p.box.querySelectorAll("[data-plrunlog]")).forEach(function (button) {
+        button.onclick = function () { openRunLog(button.getAttribute("data-plrunlog"), stageNames); };
+      });
+      [].slice.call(p.box.querySelectorAll("[data-plruncancel]")).forEach(function (button) {
+        button.onclick = function () { cancelRun(button.getAttribute("data-plruncancel")); };
+      });
+    }
     function load() {
       var t = p.newToken();
       Promise.all([GET("/cicd/pipelines"), settle(GET("/cicd/targets"), []), settle(GET("/cicd/jenkins"), []), settle(appsLoad(), []), settle(GET("/cicd/argocd"), [])]).then(function (rs) {
@@ -1312,82 +2395,21 @@
         CICD_JK = asArray(rs[2].value, ["items", "jenkins"]);
         CICD_APPS = rs[3].value || [];
         if (detailID) {
-          var selected = CICD_PL.filter(function (pl) { return String(pl.id) === String(detailID); })[0];
-          if (!selected) {
-            p.paint(t, '<p class="x-crumb">应用交付<i>/</i><a class="x-tlink" href="#/cicd/pipeline">流水线</a></p>' +
+          selectedPipeline = CICD_PL.filter(function (pl) { return String(pl.id) === String(detailID); })[0];
+          if (!selectedPipeline) {
+            p.paint(t, '<p class="x-crumb">CI/CD<i>/</i><a class="x-tlink" href="#/cicd/pipeline">流水线</a></p>' +
               panelHTML("流水线", emptyHTML("流水线不存在或已被删除。")));
             return;
           }
-          GET("/cicd/runs", { pipeline_id: selected.id, page: 1, page_size: 50 }).then(function (runData) {
+          GET("/cicd/runs", { pipeline_id: selectedPipeline.id, page: 1, page_size: 50 }).then(function (runData) {
             if (t !== p.token) return;
-            var runItems = Array.isArray(runData) ? runData : asArray(runData, ["items", "runs"]);
-            var newest = runItems[0] || null;
-            var detailRequest = newest ? settle(GET("/cicd/runs/" + encodeURIComponent(newest.id)), null) : Promise.resolve({ ok: true, value: null });
+            detailRuns = Array.isArray(runData) ? runData : asArray(runData, ["items", "runs"]);
+            var chosen = detailRuns.filter(function (run) { return String(run.id) === String(selectedRunId); })[0] || detailRuns[0] || null;
+            selectedRunId = chosen ? String(chosen.id) : "";
+            var detailRequest = chosen ? settle(GET("/cicd/runs/" + encodeURIComponent(chosen.id)), null) : Promise.resolve({ ok: true, value: null });
             detailRequest.then(function (runResult) {
-              var runDetail = runResult.value;
-              var stages = Array.isArray(selected.stages) ? selected.stages : [];
-              var statusByIndex = {};
-              (runDetail && Array.isArray(runDetail.stages) ? runDetail.stages : []).forEach(function (stage) { statusByIndex[stage.idx] = stage; });
-              var flow = stages.length
-                ? '<p class="x-plflow" aria-label="流水线执行阶段">' + stages.map(function (stage, index) {
-                  var observed = statusByIndex[index], cls = observed && observed.status === "skipped" ? "off" : "";
-                  return '<b class="' + cls + '">' + E(stage.name || ("阶段 " + (index + 1))) + '</b>';
-                }).join('<span aria-hidden="true">→</span>') + "</p>"
-                : emptyHTML("此流水线没有阶段配置。");
-              var runStages = runDetail && Array.isArray(runDetail.stages) ? runDetail.stages : [];
-              var strip = runStages.length
-                ? '<ol class="x-plstrip">' + runStages.map(function (stage) {
-                  var colors = { succeeded: "#12b76a", running: "#2c66f5", failed: "#f04438", cancelled: "#98a2b3", skipped: "#d0d5dd", rejected: "#f79009", pending: "#d0d5dd" };
-                  return '<li><button class="x-plst' + (stage.status === "running" ? " run" : "") + '" style="--c:' + (colors[stage.status] || "#d0d5dd") +
-                    '" type="button" data-stage-run="' + E(runDetail.id) + '" aria-label="' + E(stage.name + "：" + stage.status) + '">' +
-                    "<b>" + E(stage.name) + "</b><small>" + stTag(stage.status) + (stage.job_name ? "   " + E(stage.job_name) : "") + "</small></button></li>";
-                }).join("") + "</ol>"
-                : emptyHTML("该流水线暂无运行记录。");
-              var runRows = runItems.map(function (run) {
-                var active = ["queued", "running", "cancelling"].indexOf(String(run.status)) >= 0;
-                return [mono("#" + run.id), stTag(run.status), code(run.branch || "—", 20), code(run.commit || "—", 14),
-                  E(run.triggered_by || "—"), fmtMin(run.started_at || run.created_at),
-                  '<span class="ops-nowrap"><button class="x-btn" type="button" data-plrund="' + E(run.id) + '">详情</button>' +
-                  '<button class="x-btn" type="button" data-plrunlog="' + E(run.id) + '">日志</button>' +
-                  (active ? '<button class="x-btn" type="button" data-plruncancel="' + E(run.id) + '">取消</button>' : "") + "</span>"];
-              });
-              var flowNames = stages.map(function (stage) { return E(stage.name); }).join(" → ");
-              var html = '<p class="x-crumb">应用交付<i>/</i><a class="x-tlink" href="#/cicd/pipeline">流水线</a><i>/</i><b>' + E(selected.name) + "</b></p>" +
-                '<div class="x-tbar"><a class="x-btn" href="#/cicd/pipeline">返回流水线列表</a><span class="x-grow"></span>' +
-                '<button class="x-btn" type="button" data-detail-edit="' + E(selected.id) + '">编辑</button>' +
-                '<button class="x-btn" type="button" data-detail-run="' + E(selected.id) + '">运行</button></div>' +
-                panelHTML("流水线信息", '<dl class="x-sum" style="margin:0">' +
-                  [["应用", E(appName(selected.app_id))], ["执行集群", E(targetName(selected.runner_target_id))],
-                    ["触发方式", selected.on_push ? "代码推送" : "手动"], ["阶段", E(stages.length + " 个")],
-                    ["最近更新", fmtMin(selected.updated_at)]].map(function (item) { return "<dt>" + item[0] + "</dt><dd>" + item[1] + "</dd>"; }).join("") +
-                  "</dl><div class=\"x-sethead\" style=\"margin-top:16px\"><h2 class=\"x-h2\">执行顺序</h2></div>" + flow +
-                  (flowNames ? '<p class="x-frac" style="margin-top:8px">' + flowNames + "</p>" : "")) +
-                panelHTML("最近运行阶段", runDetail ? '<p class="x-frac">' + mono("#" + runDetail.id) + "   " + stTag(runDetail.status) + "   " + fmtMin(runDetail.started_at || runDetail.created_at) + "</p>" + strip :
-                  emptyHTML("该流水线暂无运行记录。")) +
-                panelHTML("运行记录", runRows.length ? tbl(["运行", "状态", "分支", "提交", "触发人", "开始时间", "操作"], runRows) :
-                  emptyHTML("该流水线暂无运行记录。"));
-              if (!p.paint(t, html)) return;
-              var edit = p.box.querySelector("[data-detail-edit]");
-              if (edit) edit.onclick = function () { pipelineModal(function () { cicdPipelines(el); }, selected); };
-              var run = p.box.querySelector("[data-detail-run]");
-              if (run) run.onclick = function () { runPipelineModal(function () { cicdPipelines(el); }, [selected]); };
-              [].slice.call(p.box.querySelectorAll("[data-stage-run]")).forEach(function (button) {
-                button.onclick = function () { runDetailModal(button.getAttribute("data-stage-run")); };
-              });
-              [].slice.call(p.box.querySelectorAll("[data-plrund]")).forEach(function (button) {
-                button.onclick = function () { runDetailModal(button.getAttribute("data-plrund")); };
-              });
-              [].slice.call(p.box.querySelectorAll("[data-plrunlog]")).forEach(function (button) {
-                button.onclick = function () { openRunLog(button.getAttribute("data-plrunlog")); };
-              });
-              [].slice.call(p.box.querySelectorAll("[data-plruncancel]")).forEach(function (button) {
-                button.onclick = function () {
-                  var id = button.getAttribute("data-plruncancel");
-                  confirmDo("取消运行", "确定取消流水线运行 #" + E(id) + "？", "取消运行", function () {
-                    write(POST("/cicd/runs/" + encodeURIComponent(id) + "/cancel"), "已请求取消").then(function (result) { if (result) load(); });
-                  });
-                };
-              });
+              selectedRun = runResult.value || null;
+              renderPipelineDetail(t, selectedRun);
             });
           }).catch(function (err) { p.error(t, err); });
           return;
@@ -1832,20 +2854,20 @@
       { k: "image_repo", label: "镜像仓库地址", required: true, placeholder: "harbor.example.com/team/web" },
       { k: "git_username", label: "Git 用户名" },
       { k: "git_token", label: "Git Token", kind: "password" },
-      { k: "envs", label: "环境 JSON（name/target_id/namespace/deployment/container 或 helm）", kind: "textarea", rows: 5, required: true, value: '[\n  {"name": "test", "target_id": 1, "namespace": "web-test", "deployment": "web", "container": "app"}\n]' }
+      { k: "envs", label: "部署环境", kind: "appEnvs", required: true, value: [
+        { name: "test", target_id: 1, namespace: "web-test", deployment: "web", container: "app" }
+      ] }
     ], "创建", function (v) {
-      var envs;
-      try { envs = parseJSON(v.envs, []); } catch (err) { toast(errMsg(err)); return; }
       write(POST("/cicd/applications", {
         name: v.name, repo_url: v.repo_url, branch: v.branch, dockerfile: v.dockerfile, context_dir: v.context_dir,
-        image_repo: v.image_repo, git_username: v.git_username, git_token: v.git_token, envs: envs
+        image_repo: v.image_repo, git_username: v.git_username, git_token: v.git_token, envs: v.envs
       }), "应用已创建").then(function (r) {
         if (!r) return;
         closeAll();
         if (r.webhook_secret) infoModal("Webhook 密钥（仅显示一次）", '<p class="x-desc">请立即配置到 Git 仓库 Webhook：</p>' + preBlock((r.webhook_url || ("/api/v1/cicd/webhooks/" + (r.id || ""))) + "\nSecret: " + r.webhook_secret));
         if (done) done();
       });
-    }, "每个环境要么 deployment+container，要么 helm；target_id 指向执行集群。");
+    }, "每个环境填写 Deployment+容器，或 Helm Chart+Release；执行集群 ID 指向目标集群。");
   }
 
   function deliveryDetail(el, name) {
@@ -1903,7 +2925,7 @@
           ["上下文目录", code(a.context_dir || ".", 40)], ["镜像仓库", code(a.image_repo, 60)], ["创建", fmtMin(a.created_at)]]
           .map(function (kv) { return "<dt>" + kv[0] + "</dt><dd>" + kv[1] + "</dd>"; }).join("") + "</dl>" +
         panelHTML("环境", envRows.length ? tbl(["环境", "部署对象", "命名空间", "执行集群", "操作"], envRows) : emptyHTML("该应用未配置环境")) +
-        panelHTML("流水线", pipeRows.length ? tbl(["ID", "名称", "执行集群", "触发方式", "阶段", "更新时间", "操作"], pipeRows) : emptyHTML("该应用尚未配置流水线。可在「应用交付 › 流水线」创建并关联此应用。")) +
+        panelHTML("流水线", pipeRows.length ? tbl(["ID", "名称", "执行集群", "触发方式", "阶段", "更新时间", "操作"], pipeRows) : emptyHTML("该应用尚未配置流水线。可在「CI/CD › 流水线」创建并关联此应用。")) +
         panelHTML("构建记录", runRows.length ? tbl(["运行", "流水线", "状态", "分支", "镜像标签", "开始时间", "操作"], runRows) : emptyHTML("该应用暂无构建运行记录。")) +
         panelHTML("发布记录", barHTML([envSel, '<span class="x-frac" style="margin-left:auto">共 ' + RELS.length + " 条</span>"]) + (RELS.length ? tbl(["ID", "环境", "类型", "镜像", "上一镜像", "状态", "操作人", "创建", "完成", "操作"], rows) : emptyHTML("暂无发布记录")));
     }
@@ -1984,7 +3006,7 @@
       var token = p.newToken();
       appsLoad().then(function (items) {
         app = items.filter(function (a) { return a.name === name; })[0] || null;
-        if (!app) { p.paint(token, '<p class="x-crumb">应用交付<i>/</i>应用</p>' + emptyHTML("应用「" + name + "」不存在或已被删除。")); return; }
+        if (!app) { p.paint(token, '<p class="x-crumb">CI/CD<i>/</i>应用</p>' + emptyHTML("应用「" + name + "」不存在或已被删除。")); return; }
         var envs = Array.isArray(app.envs) ? app.envs : [];
         if (!envs.some(function (e) { return e.name === selectedEnv; })) selectedEnv = envs.length ? envs[0].name : "";
         return loadPane(token);
@@ -2000,13 +3022,15 @@
         needFlow ? GET("/cicd/runs", { page: 1, page_size: 100, app_id: app.id }) : Promise.resolve([]),
         needFlow ? GET("/cicd/pipelines", { app_id: app.id }) : Promise.resolve([]),
         ["导览", "服务列表", "实例列表", "监控告警"].indexOf(pane) >= 0 && env ? GET(base + "/inventory", { env: env.name }) : Promise.resolve(null),
-        pane === "监控告警" ? GET("/observability/alerts", { page: 1, page_size: 500 }) : Promise.resolve([]),
+        pane === "监控告警" && activeCluster() ? GET("/observability/alerts", { page: 1, page_size: 200, cluster_id: activeCluster().id }) : Promise.resolve([]),
         pane === "操作记录" ? GET("/audit-logs", { page: 1, page_size: 100, resource: "cicd_application", q: String(app.id) }) : Promise.resolve([]),
         pane === "监控告警" ? GET("/clusters", { page_size: 500 }) : Promise.resolve([]),
         pane === "监控告警" ? GET("/observability/datasources", { page_size: 500 }) : Promise.resolve([])
       ];
-      Promise.all(requests).then(function (data) {
+      Promise.all(requests.map(function (request) { return settle(request, null); })).then(function (results) {
         if (token !== p.token) return;
+        var data = results.map(function (result) { return result.value; });
+        var failures = results.map(function (result, index) { return result.ok ? "" : ["发布", "运行", "流水线", "资源", "告警", "审计", "集群", "数据源"][index] + "：" + errMsg(result.error); }).filter(Boolean);
         releases = Array.isArray(data[0]) ? data[0] : asArray(data[0], ["items", "releases"]);
         runs = asArray(data[1], ["items", "runs"]);
         pipes = Array.isArray(data[2]) ? data[2] : asArray(data[2], ["items", "pipelines"]);
@@ -2015,7 +3039,7 @@
         auditRows = asArray(data[5], ["items"]);
         appClusters = asArray(data[6], ["items", "clusters"]);
         appDatasources = asArray(data[7], ["items", "datasources"]);
-        if (!p.paint(token, workspaceHTML())) return;
+        if (!p.paint(token, (failures.length ? '<p class="x-aerr" role="alert">部分面板读取失败：' + E(failures.join("；")) + '</p>' : "") + workspaceHTML())) return;
         bindWorkspace();
       }).catch(function (err) { p.error(token, err); });
     }
@@ -2041,7 +3065,7 @@
         if (!env || (a.env && envMatches(a.env) !== envMatches(env.name))) return false;
         return window.XSObserve && window.XSObserve.alertBelongsToScope(a, {
           appName: app.name, namespace: env.namespace, targetId: targetId, targetCluster: targetCluster,
-          environmentClusterCount: sameEnvClusters.length, datasources: appDatasources,
+          environmentClusterCount: sameEnvClusters.length, clusters: appClusters, datasources: appDatasources,
           pods: podNames, services: serviceNames, workloads: workloadNames
         });
       });
@@ -2085,6 +3109,7 @@
       }
       if (pane === "监控告警") {
         if (!env) return emptyHTML("该应用没有环境配置。");
+        if (!activeCluster()) return envBar() + emptyHTML("请先从顶栏选择目标集群，再读取该集群的告警。");
         var appAlertRows = appAlerts().map(function (a) { var lb = a.labels || {}, an = a.annotations || {}; return [sevTag(a.severity || lb.severity),
           '<button class="x-tlink x-alert-open" type="button" data-app-alert="' + E(alertKey(a)) + '">' + E(a.alertname || lb.alertname || "告警") + "</button>",
           E(lb.namespace || env.namespace), E(lb.pod || lb.deployment || lb.service || lb.app || "—"), stTag(a.status || "未知"), fmtMin(a.starts_at), E(an.summary || an.description || "—")]; });
@@ -2108,7 +3133,7 @@
         (runRows.length ? tbl(["运行", "流水线", "状态", "分支", "镜像标签", "开始时间", "操作"], runRows) : emptyHTML("该应用暂无流水线运行记录。"));
     }
     function workspaceHTML() {
-      var crumbs = '<p class="x-crumb">应用交付<i>/</i>' + E(app.name) + '<i>/</i><b>' + E(pane) + "</b></p>";
+      var crumbs = '<p class="x-crumb">CI/CD<i>/</i>' + E(app.name) + '<i>/</i><b>' + E(pane) + "</b></p>";
       var nav = '<nav class="x-menu" aria-label="应用菜单"><a href="#/delivery/apps" class="x-back">← 返回应用列表</a><p class="x-appname">' + E(app.name) + "</p>" +
         DELIVERY_MENU.map(function (item) { return '<button type="button" data-pane="' + E(item) + '"' + (item === pane ? ' class="on" aria-current="page"' : "") + ">" + E(item) + "</button>"; }).join("") + "</nav>";
       return '<div class="x-appv">' + nav + '<section class="x-panel">' + crumbs + paneContent() + "</section></div>";
@@ -2237,9 +3262,10 @@
       if (tab) qy.type = tab;
       GET("/middleware/instances", qy).then(function (data) {
         var items = Array.isArray(data) ? data : asArray(data, ["items"]);
-        var tabs = '<div class="x-bar"><div class="x-tabs" role="tablist">' +
-          '<button type="button" role="tab" class="' + (tab ? "" : "on") + '" data-mwtab="">全部</button>' +
-          MW_TYPES.map(function (x) { return '<button type="button" role="tab" class="' + (tab === x.v ? "on" : "") + '" data-mwtab="' + x.v + '">' + x.t + "</button>"; }).join("") + "</div></div>";
+        var typeFilter = '<div class="x-tbar"><label><span>类型</span><select class="x-select" data-mwtype>' +
+          '<option value=""' + (tab ? "" : " selected") + '>全部</option>' +
+          MW_TYPES.map(function (x) { return '<option value="' + x.v + '"' + (tab === x.v ? " selected" : "") + '>' + x.t + "</option>"; }).join("") +
+          "</select></label></div>";
         var rows = items.map(function (it) {
           var types = it.type, isMQ = mwIsMQ(types), isDB = mwIsDB(types), isRedis = types === "redis";
           return [E(it.name || "—"), tag(mwTypeLabel(types), "x-blue"), E(it.env || "*"), code((it.endpoints || []).join(", "), 60),
@@ -2250,7 +3276,7 @@
             '<button class="x-btn" type="button" data-mwdet="' + E(it.id) + '">详情</button>' +
             '<button class="x-btn" type="button" data-mwdel="' + E(it.id) + '">删除</button></span>'];
         });
-        var html = panelHTML("实例", tabs + (items.length ? tbl(["名称", "类型", "环境", "地址", "用户", "库/主库", "操作"], rows) : emptyHTML("暂无中间件实例。点击右上角「+ 新建实例」接入 Kafka / RabbitMQ / RocketMQ / MySQL / PostgreSQL / Redis。")));
+        var html = panelHTML("实例", typeFilter + (items.length ? tbl(["名称", "类型", "环境", "地址", "用户", "库/主库", "操作"], rows) : emptyHTML("暂无中间件实例。点击右上角「+ 新建实例」接入 Kafka / RabbitMQ / RocketMQ / MySQL / PostgreSQL / Redis。")));
         if (!p.paint(t, html)) return;
         bind(items);
       }).catch(function (err) { p.error(t, err); });
@@ -2258,9 +3284,12 @@
     p.retry = load;
     function byId(items, id) { for (var i = 0; i < items.length; i++) if (String(items[i].id) === String(id)) return items[i]; return null; }
     function bind(items) {
-      [].slice.call(p.box.querySelectorAll("[data-mwtab]")).forEach(function (b) {
-        b.onclick = function () { var v = b.getAttribute("data-mwtab"); try { window.navGo(v ? "#/middleware/" + v : "#/middleware"); } catch (e) { location.hash = v ? "#/middleware/" + v : "#/middleware"; } };
-      });
+      var typeSelect = p.box.querySelector("[data-mwtype]");
+      if (typeSelect) typeSelect.onchange = function () {
+        var value = typeSelect.value;
+        try { window.navGo(value ? "#/middleware/" + value : "#/middleware"); }
+        catch (e) { location.hash = value ? "#/middleware/" + value : "#/middleware"; }
+      };
       [].slice.call(p.box.querySelectorAll("[data-mwtest]")).forEach(function (b) {
         b.onclick = function () {
           b.disabled = true;
@@ -2311,15 +3340,13 @@
         { k: "password", label: "密码", kind: "password" },
         { k: "tls", label: "启用 TLS", kind: "checkbox", value: false, hint: "TLS" },
         { k: "tls_skip_verify", label: "跳过 TLS 校验", kind: "checkbox", value: false, hint: "跳过校验" },
-        { k: "options", label: "options JSON（DB: database；Redis: db/master_name；Postgres: sslmode）", kind: "textarea", rows: 2, value: "{}" },
+        { k: "options", label: "连接选项（DB: database；Redis: db/master_name；Postgres: sslmode）", kind: "structured", structuredKind: "keyValue", value: {}, options: { typed: false } },
         { k: "description", label: "描述", kind: "textarea", rows: 2 }
       ], "创建", function (v) {
         var endpoints = String(v.endpoints).split(/[\n,]+/).map(function (s) { return s.trim(); }).filter(Boolean);
-        var opts;
-        try { opts = parseJSON(v.options || "{}", {}); } catch (err) { toast(errMsg(err)); return; }
         var body = {
           name: v.name, type: v.type, env: v.env, endpoints: endpoints, description: v.description,
-          auth: { username: v.username, password: v.password, tls: v.tls, tls_skip_verify: v.tls_skip_verify }, options: opts
+          auth: { username: v.username, password: v.password, tls: v.tls, tls_skip_verify: v.tls_skip_verify }, options: v.options || {}
         };
         write(POST("/middleware/instances", body), "实例已创建").then(function (r) { if (r) { closeAll(); if (done) done(); } });
       }, "密码会加密存储；接口只返回掩码。");
@@ -2522,6 +3549,7 @@
       '</div>');
   }
   function renderSettingsLive(el) {
+    if (window.XSPlatformSettings && typeof window.XSPlatformSettings.render === "function") return window.XSPlatformSettings.render(el);
     var p = livePage(el, "系统设置", "基础信息、代码仓库、镜像仓库、集群与可观测性配置", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newset>+ 新建设置</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { renderSettingsLive(el); };
     var newSettingButton = el.querySelector("[data-newset]");
@@ -2721,10 +3749,21 @@
     }
     function settingModal(st, done) {
       var isEdit = !!st;
-      var valText = st ? (st.secret ? "" : JSON.stringify(st.value)) : '""';
+      var current = st && !st.secret ? st.value : "";
+      var valueType = Array.isArray(current) ? "list" : typeof current === "number" ? "number" :
+        typeof current === "boolean" ? "boolean" : current && typeof current === "object" ? "object" : "text";
+      var objectValue = current && typeof current === "object" && !Array.isArray(current) ? current : {};
+      var listValue = Array.isArray(current) ? current.map(function (v) { return typeof v === "string" ? v : JSON.stringify(v); }).join("\n") : "";
       formModal(isEdit ? "编辑设置   " + st.key : "新建设置", [
         { k: "key", label: "键（小写点分名称）", required: true, value: st ? st.key : "", placeholder: "public.site_name" },
-        { k: "value", label: "值（JSON，例如 \"https://...\" 或 {\"k\":1}）", kind: "textarea", rows: 4, required: true, value: valText },
+        { k: "value_type", label: "值类型", kind: "select", value: valueType, options: [
+          { v: "text", t: "文本" }, { v: "number", t: "数值" }, { v: "boolean", t: "布尔" },
+          { v: "object", t: "键值对象" }, { v: "list", t: "列表" }
+        ] },
+        { k: "value_text", label: "文本 / 数值", value: st && !st.secret && (typeof current === "string" || typeof current === "number") ? String(current) : "", placeholder: "根据值类型填写" },
+        { k: "value_boolean", label: "布尔值", kind: "checkbox", value: current === true, hint: "启用" },
+        { k: "value_object", label: "键值对象", kind: "structured", structuredKind: "keyValue", value: objectValue, options: { typed: true } },
+        { k: "value_list", label: "列表（每行一项）", kind: "textarea", rows: 4, value: listValue },
         { k: "secret", label: "加密存储", kind: "checkbox", value: !!(st && st.secret), hint: "加密" },
         { k: "description", label: "说明", value: st ? st.description || "" : "" }
       ], isEdit ? "保存" : "创建", function (v) {
@@ -2733,9 +3772,15 @@
           return;
         }
         var value;
-        try { value = parseJSON(v.value, ""); } catch (err) { toast(errMsg(err)); return; }
+        if (v.value_type === "number") {
+          if (!v.value_text || !Number.isFinite(Number(v.value_text))) return toast("请填写有效数值");
+          value = Number(v.value_text);
+        } else if (v.value_type === "boolean") value = v.value_boolean;
+        else if (v.value_type === "object") value = v.value_object || {};
+        else if (v.value_type === "list") value = String(v.value_list || "").split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean);
+        else value = v.value_text;
         write(PUT("/settings/" + encodeURIComponent(v.key), { value: value, secret: v.secret, description: v.description }), "设置已保存").then(function (r) { if (r) { closeAll(); if (done) done(); } });
-      }, isEdit ? "secret 类型编辑时不会回显原值；留空将保存 JSON 空字符串。" : "值必须是合法 JSON；secret=true 时整体加密存储并在读取时掩码。");
+      }, isEdit ? "secret 类型编辑时不会回显原值；请按值类型填写替换内容。" : "加密设置的整体值会加密存储，读取时只显示掩码。");
     }
     function envPolicyModal(env, cur, done) {
       formModal("环境策略   " + env, [
@@ -2945,13 +3990,11 @@
         { k: "max_tokens", label: "Max Tokens", kind: "number", value: m && m.max_tokens ? m.max_tokens : "2048" },
         { k: "enabled", label: "启用", kind: "checkbox", value: m ? !!m.enabled : true, hint: "启用" },
         { k: "is_default", label: "设为默认模型", kind: "checkbox", value: m ? !!m.is_default : false, hint: "默认" },
-        { k: "extra_headers", label: "额外请求头 JSON", kind: "textarea", rows: 2, value: m ? JSON.stringify(m.extra_headers || {}) : "{}" }
+        { k: "extra_headers", label: "额外请求头", kind: "structured", structuredKind: "keyValue", value: m ? m.extra_headers || {} : {}, options: { typed: false } }
       ], m ? "保存" : "创建", function (v) {
-        var headers;
-        try { headers = parseJSON(v.extra_headers || "{}", {}); } catch (err) { toast(errMsg(err)); return; }
         var body = {
           name: v.name, provider: v.provider, base_url: v.base_url, model: v.model,
-          temperature: +v.temperature || 0, max_tokens: +v.max_tokens || 0, extra_headers: headers,
+          temperature: +v.temperature || 0, max_tokens: +v.max_tokens || 0, extra_headers: v.extra_headers || {},
           enabled: v.enabled, is_default: v.is_default
         };
         if (v.api_key) body.api_key = v.api_key;
@@ -2982,9 +4025,6 @@
   function ocPageKey() {
     var seg = (location.hash || "").split("/")[2] || "sched";
     return ["inc", "review", "slo"].indexOf(seg) >= 0 ? seg : "sched";
-  }
-  function ocTabs(cur) {
-    return tabsHTML([{ t: "值班排班", h: "#/oncall" }, { t: "故障管理", h: "#/oncall/inc" }, { t: "故障复盘", h: "#/oncall/review" }, { t: "SLO", h: "#/oncall/slo" }], cur);
   }
   function renderOncallLive(el) {
     var pg = ocPageKey();
@@ -3024,7 +4064,7 @@
   }
 
   function ocSchedules(el) {
-    var p = livePage(el, "值班排班", "分层轮值、代班与当前值班", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newsch>+ 新建排班</button>', ocTabs("#/oncall"));
+    var p = livePage(el, "值班排班", "分层轮值、代班与当前值班", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newsch>+ 新建排班</button>');
     el.querySelector("[data-refresh]").onclick = function () { ocSchedules(el); };
     el.querySelector("[data-newsch]").onclick = function () { ocScheduleModal(null, function () { ocSchedules(el); }); };
     function load() {
@@ -3167,7 +4207,7 @@
   }
 
   function ocIncidents(el) {
-    var p = livePage(el, "故障管理", "故障声明、认领、解决与时间线", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newinc>+ 发起故障</button>', ocTabs("#/oncall/inc"));
+    var p = livePage(el, "故障管理", "故障声明、认领、解决与时间线", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newinc>+ 发起故障</button>');
     el.querySelector("[data-refresh]").onclick = function () { ocIncidents(el); };
     el.querySelector("[data-newinc]").onclick = function () { incidentModal(function () { ocIncidents(el); }); };
     function load() {
@@ -3247,7 +4287,7 @@
     }).catch(function (err) { toast(errMsg(err)); });
   }
   function ocIncidentDetail(el, id) {
-    var p = livePage(el, "故障详情", "INC-" + id + " 的状态、时间线与处理动作", '<button class="x-btn" type="button" data-refresh>刷新</button>', ocTabs("#/oncall/inc"));
+    var p = livePage(el, "故障详情", "INC-" + id + " 的状态、时间线与处理动作", '<button class="x-btn" type="button" data-refresh>刷新</button>');
     el.querySelector("[data-refresh]").onclick = function () { renderOncallLive(el); };
     function load() {
       var t = p.newToken();
@@ -3276,7 +4316,7 @@
     load();
   }
   function ocReview(el) {
-    var p = livePage(el, "故障复盘", "已解决故障与处理时间线", '<button class="x-btn" type="button" data-refresh>刷新</button>', ocTabs("#/oncall/review"));
+    var p = livePage(el, "故障复盘", "已解决故障与处理时间线", '<button class="x-btn" type="button" data-refresh>刷新</button>');
     el.querySelector("[data-refresh]").onclick = function () { ocReview(el); };
     function load() {
       var t = p.newToken();
@@ -3297,7 +4337,7 @@
   }
 
   function ocSlos(el) {
-    var p = livePage(el, "SLO", "目标、错误预算与手工 SLI 录入", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newslo>+ 新建 SLO</button>', ocTabs("#/oncall/slo"));
+    var p = livePage(el, "SLO", "目标、错误预算与手工 SLI 录入", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newslo>+ 新建 SLO</button>');
     el.querySelector("[data-refresh]").onclick = function () { ocSlos(el); };
     el.querySelector("[data-newslo]").onclick = function () { sloModal(null, function () { ocSlos(el); }); };
     var SLOS = [];
@@ -3530,6 +4570,7 @@
     middleware: renderMiddlewareLive,
     oncall: renderOncallLive,
     settings: renderSettingsLive,
+    observe: renderObserveLive,
     audit: renderAuditLive,
     appstatus: renderDeliveryLive,
     testing: renderTestingLive
@@ -3574,6 +4615,14 @@
       var h = opsHash();
       if (ROUTE_KEYS.indexOf(h) >= 0 || h === "automation") { if (typeof render === "function") render(); }
     } catch (e) {}
+  }
+  function onClusterChange() {
+    OB.scope = null; OB.promId = 0; OB.context = null;
+    LG.dsId = 0; LG.q = ""; LG.level = "";
+    if (typeof ST.clusterConfigRefresh === "function") {
+      try { ST.clusterConfigRefresh(); } catch (e) {}
+    }
+    if (opsHash() === "observe" && obPage() !== "datasources" && obPage() !== "channels") repaint();
   }
   function setMode(m) { MODE = m; updateBadge(); }
 
@@ -3693,22 +4742,22 @@
         { k: "name", label: "名称", required: true, placeholder: "夜间巡检" },
         { k: "description", label: "描述", kind: "textarea", rows: 3 },
         { k: "trigger", label: "触发方式", kind: "select", options: [{ v: "manual", t: "手动" }, { v: "schedule", t: "定时" }, { v: "event", t: "事件" }], value: "manual" },
-        { k: "steps", label: "简化步骤（Ansible builtin 模块）", kind: "textarea", rows: 8, value: '[\n  {"type": "ansible.ping", "name": "连通性检查"},\n  {"type": "ansible.package_present", "name": "确保 nginx 已安装", "package": "nginx"},\n  {"type": "ansible.service_started", "name": "确保 nginx 运行", "service": "nginx", "enabled": true}\n]' },
+        { k: "steps", label: "流程步骤", kind: "automationSteps", value: [
+          { type: "ansible.ping", name: "连通性检查", enabled: true },
+          { type: "ansible.package_present", name: "确保 nginx 已安装", package: "nginx", enabled: true },
+          { type: "ansible.service_started", name: "确保 nginx 运行", service: "nginx", enabled: true }
+        ] },
         { k: "playbook", label: "自定义 playbook.yml（填写后优先于简化步骤）", kind: "textarea", rows: 10, placeholder: '- name: Configure target hosts\n  hosts: all\n  gather_facts: false\n  tasks:\n    - name: Check connectivity\n      ansible.builtin.ping: {}' }
       ], "创建", function (v) {
-        var steps;
-        try { steps = parseJSON(v.steps || "[]", []); } catch (err) { toast(errMsg(err)); return; }
-        write(POST("/automation/workflows", { name: v.name, description: v.description, trigger: v.trigger, steps: steps, playbook: v.playbook }), "流程已创建（v1）").then(function (r) { if (r) { closeAll(); if (done) done(); } });
+        write(POST("/automation/workflows", { name: v.name, description: v.description, trigger: v.trigger, steps: v.steps, playbook: v.playbook }), "流程已创建（v1）").then(function (r) { if (r) { closeAll(); if (done) done(); } });
       });
     }
     function versionModal(id, done) {
       formModal("创建新版本", [
-        { k: "steps", label: "简化步骤（Ansible builtin 模块）", kind: "textarea", rows: 8, value: '[\n  {"type": "ansible.ping", "name": "连通性检查"}\n]' },
+        { k: "steps", label: "流程步骤", kind: "automationSteps", value: [{ type: "ansible.ping", name: "连通性检查", enabled: true }] },
         { k: "playbook", label: "自定义 playbook.yml（填写后优先于简化步骤）", kind: "textarea", rows: 10 }
       ], "创建版本", function (v) {
-        var steps;
-        try { steps = parseJSON(v.steps || "[]", []); } catch (err) { toast(errMsg(err)); return; }
-        write(POST("/automation/workflows/" + encodeURIComponent(id) + "/versions", { steps: steps, playbook: v.playbook }), "新版本已创建").then(function (r) { if (r) { closeAll(); if (done) done(); } });
+        write(POST("/automation/workflows/" + encodeURIComponent(id) + "/versions", { steps: v.steps, playbook: v.playbook }), "新版本已创建").then(function (r) { if (r) { closeAll(); if (done) done(); } });
       });
     }
     function ansibleRunModal(wf, done) {
@@ -3757,28 +4806,40 @@
     } catch (e) {}
   }
   window.XSLiveOpsAutomation = renderAutomationLive;
+  window.XSLiveOpsClusterConfig = renderClusterConfig;
+  window.XSLiveOpsCICD = { argoConnectionsHTML: argoConnectionsHTML, bindArgoConnections: bindArgoConnections };
   window.XSLiveOpsRules = obsRules;
+  window.XSLiveOpsLogs = renderLogsLive;
   window.XSLiveOps = {
     version: VERSION,
     live: live,
     mode: function () { return MODE; },
     install: install,
     repaint: repaint,
+    onClusterChange: onClusterChange,
     renderers: RENDERERS,
     automation: renderAutomationLive,
     _internals: {
-      fmtTime: fmtTime, fmtMin: fmtMin, ago: ago, dur: dur, num: num, pct: pct,
+      fmtTime: fmtTime, fmtMin: fmtMin, ago: ago, dur: dur, elapsed: elapsed, num: num, pct: pct,
       promHTML: promHTML, spark: spark, promLabels: promLabels,
       asArray: asArray, pick: pick, parseJSON: parseJSON, autoSummary: autoSummary,
       alertKey: alertKey, claimPayload: claimPayload,
+      activeCluster: activeCluster, clusterKey: clusterKey, ownedDatasource: ownedDatasource,
+      alertMatchesCluster: alertMatchesCluster, silenceMatchesCluster: silenceMatchesCluster,
+      datasourceBody: datasourceBody, datasourceScopeText: datasourceScopeText, dsDetailRows: dsDetailRows,
+      legacyDatasourceCandidate: legacyDatasourceCandidate, hasDatasource: hasDatasource, integrationCandidates: integrationCandidates,
       sqlRisk: sqlRisk, redisRisk: redisRisk, cellHTML: cellHTML,
-      parseJenkinsParameters: parseJenkinsParameters, buildPipelineStages: buildPipelineStages,
+      parseJenkinsParameters: parseJenkinsParameters, buildPipelineStages: buildPipelineStages, pipelineRunStages: pipelineRunStages,
       systemConfigSchema: systemConfigSchema, systemConfigPanels: systemConfigPanels,
       systemConfigPanelResult: systemConfigPanelResult,
       toISO: toISO, dtLocal: dtLocal, memberList: memberList,
-      tabsHTML: tabsHTML, stTag: stTag, sevTag: sevTag, fieldHTML: fieldHTML,
+      stTag: stTag, sevTag: sevTag, fieldHTML: fieldHTML,
       routes: ROUTE_KEYS, renderers: RENDERERS
     }
   };
+  try {
+    if (window.XSClusterContext && typeof window.XSClusterContext.subscribe === "function") window.XSClusterContext.subscribe(onClusterChange);
+    else window.addEventListener("xs:cluster-context", onClusterChange);
+  } catch (e) {}
   try { boot(); } catch (e) { console.error("[xs-live-ops] boot", e); }
 })();

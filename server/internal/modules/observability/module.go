@@ -79,7 +79,9 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 
 	ds := g.Group("/datasources")
 	ds.GET("", rbac.RequirePerm(PermDSRead), m.listDS)
+	ds.GET("/resolve", rbac.RequirePerm(PermDSRead), m.resolveDS)
 	ds.POST("", rbac.RequirePerm(PermDSManage), m.createDS)
+	ds.POST("/test", rbac.RequirePerm(PermDSManage), m.testDraftDS)
 	ds.GET("/:id", rbac.RequirePerm(PermDSRead), m.getDS)
 	ds.PUT("/:id", rbac.RequirePerm(PermDSManage), m.updateDS)
 	ds.DELETE("/:id", rbac.RequirePerm(PermDSManage), m.deleteDS)
@@ -143,6 +145,7 @@ type DataSource struct {
 	AuthType      string         `json:"auth_type"`
 	Username      string         `json:"username"`
 	Secret        string         `json:"secret,omitempty"` // masked in responses
+	HasSecret     bool           `json:"has_secret"`
 	TLSSkipVerify bool           `json:"tls_skip_verify"`
 	TimeoutSec    int            `json:"timeout_sec"`
 	Options       map[string]any `json:"options"`
@@ -226,6 +229,7 @@ func (m *Module) scanDS(row pgx.Row) (*DataSource, error) {
 		}
 		ds.secretPlain = plain
 		ds.Secret = crypto.Mask(plain)
+		ds.HasSecret = plain != ""
 	}
 	return &ds, nil
 }
@@ -308,7 +312,11 @@ func (m *Module) createDS(c *gin.Context) {
 		return
 	}
 	p := rbac.PrincipalFrom(c)
-	if !p.CanEnv(in.Env) {
+	if err := m.validateDSScope(c, p, &in); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if !p.CanEnv(in.Env) && !(in.Env == "" && optionString(in.Options, "scope") == "central") {
 		httpx.Fail(c, httpx.Forbidden("no access to environment "+in.Env))
 		return
 	}
@@ -378,7 +386,15 @@ func (m *Module) updateDS(c *gin.Context) {
 		httpx.Fail(c, httpx.Validation("type cannot be changed"))
 		return
 	}
-	if !p.CanEnv(in.Env) {
+	if optionString(in.Options, "scope") == "" && scopeKind(cur.Options) == "cluster" &&
+		(optionString(in.Options, "cluster_id") != "" || optionString(in.Options, "cluster_name") != "") {
+		in.Options["scope"] = "cluster" // explicit legacy ownership survives an edit
+	}
+	if err := m.validateDSScope(c, p, &in); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if !p.CanEnv(in.Env) && !(in.Env == "" && optionString(in.Options, "scope") == "central") {
 		httpx.Fail(c, httpx.Forbidden("no access to environment "+in.Env))
 		return
 	}

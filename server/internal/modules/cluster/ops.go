@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -26,6 +27,8 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/approval"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/audit"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
 )
 
@@ -335,6 +338,10 @@ func validateChange(pl *changePayload) error {
 		if err := validateApplyYAML(p.YAML); err != nil {
 			return err
 		}
+	case "network_configuration_apply":
+		return validateNetworkConfigurationApply(pl)
+	case "rbac_apply", "rbac_delete", "backup_apply":
+		return validateGovernedChange(pl)
 	case "network_policy_create", "network_policy_update", "network_policy_delete":
 		return validateNetworkPolicyChange(pl)
 	case "sc_create", "sc_update", "sc_delete", "pvc_create", "pvc_update", "pvc_delete",
@@ -465,6 +472,8 @@ func executeOn(ctx context.Context, kc *kubeClients, pl changePayload) (any, err
 		var p applyParams
 		_ = decodeParams(pl.Params, &p)
 		return applyYAML(ctx, kc, p)
+	case "rbac_apply", "rbac_delete", "backup_apply":
+		return executeGovernedResourceChange(ctx, kc, pl)
 	case "network_policy_create":
 		var p networkPolicyParams
 		_ = decodeNetworkPolicyParams(pl.Params, &p)
@@ -519,6 +528,69 @@ func executeOn(ctx context.Context, kc *kubeClients, pl changePayload) (any, err
 		return executeAutoscalingCron(ctx, kc, pl)
 	}
 	return nil, errors.New("unreachable")
+}
+
+// executeApprovedNamespaceCreate revalidates the exact namespace object with
+// the Kubernetes API immediately before the approved mutation. Only an actual
+// create attempt is audited, once, with its outcome; preflight failures are not
+// execution events. Kubernetes and PostgreSQL cannot commit atomically, so audit
+// failure after a create requires reconciliation rather than reporting success.
+func executeApprovedNamespaceCreate(ctx context.Context, kc *kubeClients, pl changePayload,
+	persistAudit func(context.Context, audit.Entry) error, ticket *approval.Ticket) (any, error) {
+	started := time.Now()
+	if persistAudit == nil || ticket == nil {
+		return nil, httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "namespace execution audit is unavailable")
+	}
+	if pl.Action != "ns_create" {
+		return nil, httpx.BadRequest("approved namespace action is invalid")
+	}
+	if err := validateChange(&pl); err != nil {
+		return nil, err
+	}
+	var p nsParams
+	if err := decodeParams(pl.Params, &p); err != nil {
+		return nil, err
+	}
+	obj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: p.Name, Labels: p.Labels}}
+	if _, err := kc.cs.CoreV1().Namespaces().Create(ctx, obj.DeepCopy(),
+		metav1.CreateOptions{FieldManager: fieldManager, DryRun: []string{metav1.DryRunAll}}); err != nil {
+		return nil, kubeErr(err)
+	}
+	created, err := kc.cs.CoreV1().Namespaces().Create(ctx, obj,
+		metav1.CreateOptions{FieldManager: fieldManager})
+	result := audit.ResultSuccess
+	statusCode := http.StatusOK
+	namespace := p.Name
+	if err == nil {
+		namespace = created.Name
+	} else {
+		err = kubeErr(err)
+		result = audit.ResultFailure
+		statusCode = http.StatusInternalServerError
+		var platform *httpx.Error
+		if errors.As(err, &platform) {
+			statusCode = platform.Status
+		}
+	}
+	detail, _ := json.Marshal(gin_H{
+		"ticket_id": ticket.ID, "cluster_id": pl.ClusterID, "env": ticket.Env,
+		"namespace": namespace, "action": pl.Action,
+	})
+	entry := audit.Entry{
+		UserID: &ticket.ApplicantID, Username: ticket.ApplicantName, Method: "APPROVAL",
+		Resource: "cluster-namespace", ResourceID: namespace, Action: "ns_create.execute",
+		StatusCode: statusCode, Result: result,
+		DurationMs: int(time.Since(started).Milliseconds()), Detail: detail, CreatedAt: started,
+	}
+	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := persistAudit(auditCtx, entry); err != nil {
+		return nil, httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "namespace execution audit persistence failed; create outcome requires reconciliation")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return namespaceRow(*created), nil
 }
 
 type gin_H = map[string]any //nolint:revive // keep ops free of gin import
@@ -633,20 +705,62 @@ type AppliedObject struct {
 	Kind       string `json:"kind"`
 	Namespace  string `json:"namespace,omitempty"`
 	Name       string `json:"name"`
-	Status     string `json:"status"` // applied | failed
+	Status     string `json:"status"` // applied | failed | unknown | skipped
 	Error      string `json:"error,omitempty"`
 }
 
-// applyYAML server-side-applies every document in a multi-doc YAML/JSON.
+type applyBatchResult struct {
+	DryRun   bool            `json:"dry_run"`
+	Objects  []AppliedObject `json:"objects"`
+	Applied  int             `json:"applied"`
+	Failed   int             `json:"failed"`
+	Unknown  int             `json:"unknown"`
+	Skipped  int             `json:"skipped"`
+	Complete bool            `json:"complete"`
+	State    string          `json:"state"`
+}
+
+func applyBatchFailure(result *applyBatchResult, index int, err error, uncertain bool) (any, error) {
+	platform := resourceAPIError(err)
+	var platformErr *httpx.Error
+	if !errors.As(platform, &platformErr) {
+		platformErr = httpx.NewError(http.StatusBadGateway, httpx.CodeUpstream, "Kubernetes apply failed")
+	}
+	result.Objects[index].Status = "failed"
+	result.Failed = 1
+	if uncertain {
+		result.Objects[index].Status = "unknown"
+		result.Failed, result.Unknown = 0, 1
+	}
+	result.Objects[index].Error = platformErr.Message
+	result.Skipped = len(result.Objects) - result.Applied - result.Failed - result.Unknown
+	result.State = "rejected"
+	if result.Applied > 0 {
+		result.State = "partial"
+	} else if result.Unknown > 0 {
+		result.State = "uncertain"
+	}
+	summary, _ := json.Marshal(result)
+	failure := httpx.NewError(platformErr.Status, platformErr.Code,
+		"apply batch did not complete; no rollback performed; outcome="+string(summary)).WithDetails(result)
+	return result, failure
+}
+
+// applyYAML validates and dry-runs every document before applying the batch.
+// Kubernetes has no transaction for multiple objects, so execution failures
+// report completed, failed, uncertain, and skipped documents explicitly.
 func applyYAML(ctx context.Context, kc *kubeClients, p applyParams) (any, error) {
+	if kc == nil || kc.mapper == nil || kc.dyn == nil {
+		return nil, resourceUnavailable()
+	}
 	dec := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader([]byte(p.YAML)), 4096)
 	force := p.Force == nil || *p.Force // default: like kubectl apply --server-side --force-conflicts
 	opts := metav1.ApplyOptions{FieldManager: fieldManager, Force: force}
 	if p.DryRun {
 		opts.DryRun = []string{metav1.DryRunAll}
 	}
-	results := []AppliedObject{}
-	failed := 0
+	result := &applyBatchResult{DryRun: p.DryRun, State: "preflight"}
+	objects := make([]*unstructured.Unstructured, 0)
 	for {
 		obj := &unstructured.Unstructured{}
 		if err := dec.Decode(&obj.Object); err != nil {
@@ -661,24 +775,56 @@ func applyYAML(ctx context.Context, kc *kubeClients, p applyParams) (any, error)
 		if obj.GetKind() == "List" {
 			return nil, httpx.BadRequest("kind List is not supported; use multi-document YAML")
 		}
-		gvk := obj.GroupVersionKind()
-		r := AppliedObject{APIVersion: obj.GetAPIVersion(), Kind: gvk.Kind, Name: obj.GetName()}
-		res, err := applyOne(ctx, kc, obj, p.Namespace, opts)
+		objects = append(objects, obj)
+		if len(objects) > 100 {
+			return nil, httpx.BadRequest("at most 100 YAML documents are allowed")
+		}
+	}
+	if len(objects) == 0 {
+		return nil, httpx.BadRequest("no objects in yaml")
+	}
+	for _, obj := range objects {
+		result.Objects = append(result.Objects, AppliedObject{APIVersion: obj.GetAPIVersion(), Kind: obj.GetKind(),
+			Namespace: obj.GetNamespace(), Name: obj.GetName(), Status: "skipped"})
+	}
+	preflightOpts := opts
+	if !p.DryRun {
+		preflightOpts.DryRun = []string{metav1.DryRunAll}
+	}
+	for i, obj := range objects {
+		if _, err := applyOne(ctx, kc, obj.DeepCopy(), p.Namespace, preflightOpts); err != nil {
+			if meta.IsNoMatchError(err) {
+				kc.mapper.Reset()
+			}
+			return applyBatchFailure(result, i, err, false)
+		}
+	}
+	if p.DryRun {
+		for i := range result.Objects {
+			result.Objects[i].Status = "applied"
+		}
+		result.Applied = len(result.Objects)
+		result.Complete, result.State = true, "applied"
+		return result, nil
+	}
+	result.State = "execution"
+	for i, obj := range objects {
+		applied, err := applyOne(ctx, kc, obj.DeepCopy(), p.Namespace, opts)
 		if err != nil {
 			if meta.IsNoMatchError(err) {
 				kc.mapper.Reset()
 			}
-			r.Status, r.Error = "failed", err.Error()
-			failed++
-		} else {
-			r.Status, r.Namespace = "applied", res.GetNamespace()
+			return applyBatchFailure(result, i, err, governedWriteUncertain(err))
 		}
-		results = append(results, r)
+		if applied == nil {
+			return applyBatchFailure(result, i, resourceUnavailable(), true)
+		}
+		result.Objects[i].Status = "applied"
+		result.Objects[i].Namespace = applied.GetNamespace()
+		result.Applied++
 	}
-	if len(results) == 0 {
-		return nil, httpx.BadRequest("no objects in yaml")
-	}
-	return gin_H{"dry_run": p.DryRun, "failed": failed, "objects": results}, nil
+	result.Complete, result.State = true, "applied"
+	return result, nil
 }
 
 func applyOne(ctx context.Context, kc *kubeClients, obj *unstructured.Unstructured, defNS string, opts metav1.ApplyOptions) (*unstructured.Unstructured, error) {

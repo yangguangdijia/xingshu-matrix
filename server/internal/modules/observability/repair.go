@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -44,52 +43,23 @@ func (m *Module) repairCluster(ctx context.Context, id int64) (healthCluster, er
 
 func (m *Module) resolveRepairTarget(ctx context.Context, a *Alert, evidence map[string]any, inspectHost bool) (repairTarget, error) {
 	none := repairTarget{}
-	ref := a.Labels["cluster_id"]
-	if ref == "" {
-		ref = a.Labels["cluster"]
-	}
-	if ref == "" {
-		var options []byte
-		if err := m.d.DB.QueryRow(ctx, "SELECT options FROM obs_datasources WHERE id=$1", a.DatasourceID).Scan(&options); err != nil {
-			return none, err
-		}
-		var opts map[string]any
-		_ = json.Unmarshal(options, &opts)
-		if value, ok := opts["cluster_id"].(string); ok {
-			ref = value
-		} else if value, ok := opts["cluster_id"].(float64); ok {
-			ref = strconv.FormatInt(int64(value), 10)
-		}
-	}
-	if ref == "" {
-		return none, errors.New("alert does not identify a cluster")
-	}
-	rows, err := m.d.DB.Query(ctx, "SELECT id,name,env,api_server,kubeconfig FROM cluster_clusters WHERE env=$1 AND (id::text=$2 OR name=$2)", a.Env, ref)
+	cluster, err := m.alertCluster(ctx, a)
 	if err != nil {
 		return none, err
 	}
-	candidates := []healthCluster{}
-	for rows.Next() {
-		var cl healthCluster
-		if rows.Scan(&cl.ID, &cl.Name, &cl.Env, &cl.API, &cl.EncryptedConfig) == nil {
-			candidates = append(candidates, cl)
-		}
+	cl, err := m.repairCluster(ctx, cluster.ID)
+	if err != nil {
+		return none, err
 	}
-	readErr := rows.Err()
-	rows.Close()
-	if readErr != nil || len(candidates) != 1 {
-		return none, errors.New("cluster ownership is ambiguous or unavailable")
-	}
-	cl := candidates[0]
 	cs, err := m.healthClient(ctx, cl)
 	if err != nil {
 		return none, err
 	}
 	if nodeName := a.Labels["node"]; nodeName != "" {
 		evidence["node_diagnostics"] = nodeDiagnosisEvidence(ctx, cs, nodeName)
-		evidence["host_agent_snapshot"] = hostAgentDiagnosisEvidence(ctx, a.Env, nodeName, cs, m.d.HostDiagnostics)
+		evidence["host_agent_snapshot"] = hostAgentDiagnosisEvidence(ctx, cl.Env, nodeName, cs, m.d.HostDiagnostics)
 		if inspectHost {
-			evidence["host_agent_diagnostics"] = hostAgentInspectionEvidence(ctx, a.Env, nodeName, cs, m.d.HostDiagnosticInspector)
+			evidence["host_agent_diagnostics"] = hostAgentInspectionEvidence(ctx, cl.Env, nodeName, cs, m.d.HostDiagnosticInspector)
 		}
 		return none, errors.New("node-level remediation remains manual; diagnosis is read-only")
 	}
@@ -109,9 +79,9 @@ func (m *Module) resolveRepairTarget(ctx context.Context, a *Alert, evidence map
 			"name": pod.Name, "namespace": namespace, "phase": pod.Status.Phase, "node": pod.Spec.NodeName,
 			"containers": containerDiagnosisEvidence(*pod),
 		}
-		evidence["host_agent_snapshot"] = hostAgentDiagnosisEvidence(ctx, a.Env, pod.Spec.NodeName, cs, m.d.HostDiagnostics)
+		evidence["host_agent_snapshot"] = hostAgentDiagnosisEvidence(ctx, cl.Env, pod.Spec.NodeName, cs, m.d.HostDiagnostics)
 		if inspectHost {
-			evidence["host_agent_diagnostics"] = hostAgentInspectionEvidence(ctx, a.Env, pod.Spec.NodeName, cs, m.d.HostDiagnosticInspector)
+			evidence["host_agent_diagnostics"] = hostAgentInspectionEvidence(ctx, cl.Env, pod.Spec.NodeName, cs, m.d.HostDiagnosticInspector)
 		}
 		evidence["container_logs"] = containerDiagnosisLogEvidence(ctx, cs, *pod)
 		events, eventErr := cs.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
@@ -249,8 +219,14 @@ func (m *Module) executeRepair(ctx context.Context, d *Diagnosis) {
 	if err == nil {
 		err = loadErr
 	}
-	if err == nil && (a.Status != "firing" || a.FireCount != d.Occurrence || a.Env != target.Env || a.HandleStatus == "closed") {
+	if err == nil && (a.Status != "firing" || a.FireCount != d.Occurrence || (a.Env != "" && a.Env != target.Env) || a.HandleStatus == "closed") {
 		err = errors.New("alert changed")
+	}
+	if err == nil {
+		owner, ownerErr := m.alertCluster(ctx, a)
+		if ownerErr != nil || owner.ID != target.ClusterID || owner.Env != target.Env {
+			err = errors.New("alert cluster ownership changed; analyze again")
+		}
 	}
 	if err == nil && (target.Kind != "deployments" || target.UID == "" || report.ProposedAction != "restart_workload") {
 		err = errors.New("repair action is not supported")

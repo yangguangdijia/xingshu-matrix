@@ -4,8 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -72,30 +71,43 @@ type Filter struct {
 }
 
 type Session struct {
-	ID            int64      `db:"id" json:"id"`
-	UserID        int64      `db:"user_id" json:"user_id"`
-	Username      string     `db:"username" json:"username"`
-	AssetID       int64      `db:"asset_id" json:"asset_id"`
-	AssetName     string     `db:"asset_name" json:"asset_name"`
-	AccountID     int64      `db:"account_id" json:"account_id"`
-	AccountUser   string     `db:"account_user" json:"account_user"`
-	Protocol      string     `db:"protocol" json:"protocol"`
-	ClientIP      string     `db:"client_ip" json:"client_ip"`
-	Status        string     `db:"status" json:"status"`
-	Error         string     `db:"error" json:"error"`
-	RecordingPath string     `db:"recording_path" json:"-"`
-	StartedAt     time.Time  `db:"started_at" json:"started_at"`
-	EndedAt       *time.Time `db:"ended_at" json:"ended_at"`
-	HasRecording  bool       `db:"-" json:"has_recording"`
+	ID                 int64      `db:"id" json:"id"`
+	UserID             int64      `db:"user_id" json:"user_id"`
+	Username           string     `db:"username" json:"username"`
+	AssetID            int64      `db:"asset_id" json:"asset_id"`
+	AssetName          string     `db:"asset_name" json:"asset_name"`
+	AccountID          int64      `db:"account_id" json:"account_id"`
+	AccountUser        string     `db:"account_user" json:"account_user"`
+	Protocol           string     `db:"protocol" json:"protocol"`
+	ClientIP           string     `db:"client_ip" json:"client_ip"`
+	Status             string     `db:"status" json:"status"`
+	Error              string     `db:"error" json:"error"`
+	RecordingPath      string     `db:"recording_path" json:"-"`
+	StartedAt          time.Time  `db:"started_at" json:"started_at"`
+	EndedAt            *time.Time `db:"ended_at" json:"ended_at"`
+	HasRecording       bool       `db:"-" json:"has_recording"`
+	OwnerID            string     `db:"owner_id" json:"owner_id"`
+	FenceToken         string     `db:"fence_token" json:"-"`
+	HeartbeatAt        *time.Time `db:"heartbeat_at" json:"heartbeat_at"`
+	LeaseExpiresAt     *time.Time `db:"lease_expires_at" json:"lease_expires_at"`
+	KillRequestID      string     `db:"kill_request_id" json:"kill_request_id"`
+	KillRequestedAt    *time.Time `db:"kill_requested_at" json:"kill_requested_at"`
+	KillRequestedBy    *int64     `db:"kill_requested_by" json:"kill_requested_by"`
+	KillAcknowledgedAt *time.Time `db:"kill_acknowledged_at" json:"kill_acknowledged_at"`
+	RecordingState     string     `db:"recording_state" json:"recording_state"`
+	RecordingStorageID string     `db:"recording_storage_id" json:"-"`
 }
 
 type Command struct {
-	ID        int64     `db:"id" json:"id"`
-	SessionID int64     `db:"session_id" json:"session_id"`
-	Command   string    `db:"command" json:"command"`
-	Action    string    `db:"action" json:"action"`
-	RuleID    *int64    `db:"rule_id" json:"rule_id"`
-	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	ID            int64      `db:"id" json:"id"`
+	SessionID     int64      `db:"session_id" json:"session_id"`
+	Command       string     `db:"command" json:"command"`
+	Action        string     `db:"action" json:"action"`
+	RuleID        *int64     `db:"rule_id" json:"rule_id"`
+	CreatedAt     time.Time  `db:"created_at" json:"created_at"`
+	DeliveryState string     `db:"delivery_state" json:"delivery_state"`
+	DeliveryError string     `db:"delivery_error" json:"delivery_error"`
+	ForwardedAt   *time.Time `db:"forwarded_at" json:"forwarded_at"`
 }
 
 func queryAll[T any](ctx context.Context, m *Module, sql string, args ...any) ([]T, error) {
@@ -162,7 +174,7 @@ var sensitiveOptKeys = []string{"secret", "password", "passphrase", "private_key
 func (in *assetIn) check() error {
 	in.Protocol = strings.ToLower(in.Protocol)
 	if !validProtocol(in.Protocol) {
-		return httpx.Validation("protocol must be ssh|rdp|vnc|mysql|postgres")
+		return httpx.Validation("only ssh is implemented; unsupported protocols cannot be created or connected")
 	}
 	if in.Env == "" {
 		in.Env = "dev"
@@ -453,6 +465,7 @@ const grantSQL = `SELECT DISTINCT a.id AS asset_id, a.name AS asset_name, a.host
   JOIN bastion_assets a ON a.id = ANY(r.asset_ids)
   JOIN bastion_accounts acc ON acc.asset_id = a.id AND (cardinality(r.account_ids)=0 OR acc.id = ANY(r.account_ids))
  WHERE r.enabled AND (r.expires_at IS NULL OR r.expires_at > now())
+   AND a.protocol='ssh'
    AND ((r.subject_type='user' AND r.subject=$1) OR (r.subject_type='role' AND r.subject = ANY($2)))`
 
 type Grant struct {
@@ -586,8 +599,7 @@ func (m *Module) loadFilters(ctx context.Context) ([]FilterRule, error) {
 	for _, f := range fs {
 		re, err := regexp.Compile(f.Pattern)
 		if err != nil {
-			m.d.Logger.Warn("bastion: skip invalid filter", "id", f.ID, "err", err)
-			continue
+			return nil, httpx.Conflict("an enabled command filter is invalid; connections are disabled")
 		}
 		out = append(out, FilterRule{ID: f.ID, Name: f.Name, Re: re, Action: f.Action})
 	}
@@ -606,7 +618,7 @@ func (m *Module) listSessions(c *gin.Context) {
 		return
 	}
 	for i := range items {
-		items[i].HasRecording = items[i].RecordingPath != ""
+		items[i].HasRecording = m.hasRecording(&items[i])
 	}
 	var total int64
 	_ = m.d.DB.QueryRow(c, `SELECT count(*) FROM bastion_sessions `+where, status, user, asset).Scan(&total)
@@ -623,7 +635,7 @@ func (m *Module) getSession(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	s.HasRecording = s.RecordingPath != ""
+	s.HasRecording = m.hasRecording(s)
 	cmds, err := queryAll[Command](c, m, `SELECT * FROM bastion_commands WHERE session_id=$1 ORDER BY id LIMIT 500`, id)
 	if err != nil {
 		httpx.Fail(c, err)
@@ -658,17 +670,20 @@ func (m *Module) downloadRecording(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	if s.RecordingPath == "" {
-		httpx.Fail(c, httpx.NotFound("no recording"))
+	f, err := m.openRecording(s)
+	if err != nil {
+		httpx.Fail(c, httpx.Conflict("recording unavailable or not finalized"))
 		return
 	}
-	path := filepath.Join(m.recordDir, filepath.Base(s.RecordingPath))
-	if _, err := os.Stat(path); err != nil {
-		httpx.Fail(c, httpx.NotFound("recording file missing"))
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		httpx.Fail(c, httpx.Conflict("recording unavailable"))
 		return
 	}
 	c.Header("Content-Type", "application/x-asciicast")
-	c.FileAttachment(path, filepath.Base(path))
+	c.Header("Content-Disposition", `attachment; filename="`+s.RecordingPath+`"`)
+	http.ServeContent(c.Writer, c.Request, s.RecordingPath, st.ModTime(), f)
 }
 
 func (m *Module) killSession(c *gin.Context) {
@@ -677,9 +692,53 @@ func (m *Module) killSession(c *gin.Context) {
 		return
 	}
 	audit.SetResource(c, "bastion_session", itoa(id))
-	if !m.kill(id) {
-		httpx.Fail(c, httpx.NotFound("session not active on this server instance"))
+	store := &pgLifecycleStore{db: m.d.DB}
+	result, err := store.requestKill(c.Request.Context(), id, rbac.PrincipalFrom(c).UserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpx.Fail(c, httpx.Conflict("session is not active with a live owner lease; kill was not requested"))
 		return
 	}
-	ok(c, gin.H{"id": id, "killed": true})
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	// The request can land on any Pod. Only the owner may acknowledge after its
+	// transports and recording have closed. Pending is deliberately HTTP 202.
+	wait, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-wait.Done():
+			c.JSON(http.StatusAccepted, httpx.Envelope{Code: httpx.CodeOK, Message: "kill requested; acknowledgement pending", Data: gin.H{"id": id, "requested": true, "killed": false, "request_id": result.RequestID, "status": "pending"}})
+			return
+		case <-tick.C:
+			state, err := store.killState(wait, id, result.RequestID)
+			if err != nil {
+				if wait.Err() != nil {
+					continue
+				}
+				httpx.Fail(c, err)
+				return
+			}
+			if state.killed() {
+				ok(c, gin.H{"id": id, "requested": true, "killed": true, "request_id": state.RequestID, "status": state.Status})
+				return
+			}
+			if state.Status != "active" {
+				c.JSON(http.StatusAccepted, httpx.Envelope{Code: httpx.CodeOK, Message: "kill request was not acknowledged", Data: gin.H{"id": id, "requested": true, "killed": false, "request_id": state.RequestID, "status": state.Status}})
+				return
+			}
+		}
+	}
+}
+
+func (m *Module) hasRecording(s *Session) bool {
+	f, err := m.openRecording(s)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
 }

@@ -216,10 +216,11 @@ type Recorder struct {
 	mu    sync.Mutex
 	f     *os.File
 	start time.Time
+	err   error
 }
 
 func NewRecorder(path string, width, height int, title string) (*Recorder, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -232,24 +233,36 @@ func NewRecorder(path string, width, height int, title string) (*Recorder, error
 		f.Close()
 		return nil, err
 	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return nil, err
+	}
 	return &Recorder{f: f, start: now}, nil
 }
 
-func (r *Recorder) event(kind, data string) {
+func (r *Recorder) event(kind, data string) error {
 	if r == nil {
-		return
+		return fmt.Errorf("recording unavailable")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.f == nil {
-		return
+		return fmt.Errorf("recording closed")
+	}
+	if r.err != nil {
+		return r.err
 	}
 	line, _ := json.Marshal([]any{float64(time.Since(r.start).Microseconds()) / 1e6, kind, data})
-	_, _ = r.f.Write(append(line, '\n'))
+	if _, r.err = r.f.Write(append(line, '\n')); r.err == nil {
+		r.err = r.f.Sync()
+	}
+	return r.err
 }
 
-func (r *Recorder) Output(b []byte)       { r.event("o", string(b)) }
-func (r *Recorder) Resize(cols, rows int) { r.event("r", fmt.Sprintf("%dx%d", cols, rows)) }
+func (r *Recorder) Output(b []byte) error { return r.event("o", string(b)) }
+func (r *Recorder) Resize(cols, rows int) error {
+	return r.event("r", fmt.Sprintf("%dx%d", cols, rows))
+}
 
 func (r *Recorder) Close() error {
 	if r == nil {
@@ -258,9 +271,14 @@ func (r *Recorder) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.f == nil {
-		return nil
+		return r.err
 	}
-	err := r.f.Close()
+	if err := r.f.Sync(); r.err == nil {
+		r.err = err
+	}
+	if err := r.f.Close(); r.err == nil {
+		r.err = err
+	}
 	r.f = nil
-	return err
+	return r.err
 }

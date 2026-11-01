@@ -118,13 +118,15 @@ func TestAssetInValidation(t *testing.T) {
 		err  bool
 	}{
 		{"valid ssh defaults env", assetIn{Name: "web-01", Host: "10.0.0.1", Port: 22, Protocol: "SSH"}, false},
-		{"rdp accepted", assetIn{Name: "win-01", Host: "10.0.0.2", Port: 3389, Protocol: "RDP"}, false},
-		{"postgres accepted", assetIn{Name: "db-01", Host: "10.0.0.3", Port: 5432, Protocol: "postgres"}, false},
+		{"rdp unsupported", assetIn{Name: "win-01", Host: "10.0.0.2", Port: 3389, Protocol: "RDP"}, true},
+		{"vnc unsupported", assetIn{Protocol: "vnc"}, true},
+		{"mysql unsupported", assetIn{Protocol: "mysql"}, true},
+		{"postgres unsupported", assetIn{Name: "db-01", Host: "10.0.0.3", Port: 5432, Protocol: "postgres"}, true},
 		{"invalid protocol", assetIn{Name: "w", Host: "h", Port: 22, Protocol: "telnet"}, true},
 		{"options rejects password", assetIn{Name: "w", Host: "h", Port: 22, Protocol: "ssh", Options: map[string]any{"password": "x"}}, true},
 		{"options rejects private key", assetIn{Name: "w", Host: "h", Port: 22, Protocol: "ssh", Options: map[string]any{"Private_Key": "x"}}, true},
 		{"options rejects token", assetIn{Name: "w", Host: "h", Port: 22, Protocol: "ssh", Options: map[string]any{"access_token": "x"}}, true},
-		{"options keeps safe protocol fields", assetIn{Name: "w", Host: "h", Port: 5432, Protocol: "postgres", Options: map[string]any{"database": "app", "tls": "require", "readonly": true}}, false},
+		{"options keeps safe fields", assetIn{Name: "w", Host: "h", Port: 22, Protocol: "ssh", Options: map[string]any{"label": "app"}}, false},
 	}
 	for _, c := range cases {
 		in := c.in
@@ -145,8 +147,8 @@ func TestAssetInValidation(t *testing.T) {
 		}
 	}
 	in := assetIn{Protocol: "RDP"}
-	if err := in.check(); err != nil {
-		t.Fatal(err)
+	if err := in.check(); err == nil {
+		t.Fatal("RDP must be rejected")
 	}
 	if in.Protocol != "rdp" {
 		t.Fatalf("protocol = %q, want lowercased rdp", in.Protocol)
@@ -209,20 +211,20 @@ func TestGuacdUnreachable(t *testing.T) {
 func TestKillSessionForcesDisconnect(t *testing.T) {
 	m := New()
 	cancelled := 0
-	m.register(42, func() { cancelled++ })
+	m.register(sessionRef{ID: 42, Owner: m.owner, Fence: newToken()}, func() { cancelled++ })
 	if !m.kill(42) {
 		t.Fatal("kill returned false for a live session")
 	}
 	if cancelled != 1 {
 		t.Fatalf("cancel called %d times, want 1", cancelled)
 	}
-	if !m.unregister(42) {
+	if m.unregister(42) != "killed" {
 		t.Fatal("unregister must report the session was killed")
 	}
 	if m.kill(42) {
 		t.Fatal("kill must be false after the session was unregistered")
 	}
-	if m.unregister(42) {
+	if m.unregister(42) != "" {
 		t.Fatal("unregister must be false for an unknown session id")
 	}
 }

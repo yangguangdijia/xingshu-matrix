@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -45,17 +46,20 @@ const (
 	PermWorkloadRead  = "workload:read"
 	PermWorkloadWrite = "workload:write"
 	PermNetworkWrite  = "network:write"
+	PermRBACWrite     = "rbac:write"
 )
 
 // Module is the cluster module.
 type Module struct {
-	d       *app.Deps
-	log     *slog.Logger
-	clients *clientCache
+	d             *app.Deps
+	log           *slog.Logger
+	clients       *clientCache
+	discoveryWG   sync.WaitGroup
+	discoveryWake chan struct{}
 }
 
 // New returns the module.
-func New() *Module { return &Module{clients: newClientCache()} }
+func New() *Module { return &Module{clients: newClientCache(), discoveryWake: make(chan struct{}, 1)} }
 
 func (m *Module) Name() string { return "cluster" }
 
@@ -73,6 +77,7 @@ func (m *Module) Permissions() []rbac.Permission {
 		rbac.P("cluster", "workload", "write", "扩缩容/重启/删除/YAML 应用"),
 		rbac.P("cluster", "network", "write", "创建/更新/删除 Kubernetes NetworkPolicy"),
 		rbac.P("cluster", "network", "probe", "在指定 Pod 容器内运行受限 TCP 连通性探测"),
+		rbac.P("cluster", "rbac", "write", "创建/更新/删除 ServiceAccount 与 RBAC 规则"),
 		rbac.P("cluster", "storage", "read", "查看 PV/PVC/StorageClass 与 VolumeSnapshot"),
 		rbac.P("cluster", "storage", "write", "创建/修改/删除 PV/PVC/StorageClass 与 VolumeSnapshot"),
 		rbac.P("cluster", "config", "read", "查看 ConfigMap 与 Secret 元数据"),
@@ -107,8 +112,17 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	if d.AITools != nil {
 		m.registerAITools(d)
 	}
+	m.RegisterComponentApprovals()
+	if d.Approval != nil {
+		if err := m.RegisterProjectQuotaApprovals(); err != nil {
+			panic(err)
+		}
+	}
 
 	g := r.Group("/clusters")
+	m.RegisterResourceRoutes(g)
+	m.RegisterProjectQuotaRoutes(g)
+	m.RegisterComponentRoutes(g)
 	g.GET("", rbac.RequirePerm(PermClusterRead), m.listClusters)
 	g.GET("/health", rbac.RequirePerm(PermClusterRead), m.clusterHealth)
 	g.POST("", rbac.RequirePerm(PermClusterManage), m.createCluster)
@@ -132,6 +146,18 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.GET("/:id/node-groups", rbac.RequirePerm(PermNodeRead), m.nodeGroups)
 	g.POST("/:id/node-batch-labels", rbac.RequirePerm(PermNodeWrite), m.change("node_batch_labels"))
 	g.PUT("/:id/node-batch-taints", rbac.RequirePerm(PermNodeWrite), m.change("node_batch_taints"))
+	g.GET("/:id/capabilities", rbac.RequirePerm(PermWorkloadRead), m.clusterCapabilities)
+	integrationRead := rbac.RequireAnyPerm(PermWorkloadRead, "datasource:manage")
+	g.GET("/:id/integration-candidates", rbac.RequirePerm(PermClusterRead), integrationRead, m.integrationCandidates)
+	g.GET("/:id/integration-discovery", rbac.RequirePerm(PermClusterRead), integrationRead, m.integrationDiscovery)
+	g.GET("/:id/integration-discovery/status", rbac.RequirePerm(PermClusterRead), integrationRead, m.integrationDiscoveryStatus)
+	g.GET("/:id/integration-discovery/bindings", rbac.RequirePerm(PermClusterRead), integrationRead, m.integrationBindingSuggestions)
+	g.POST("/:id/integration-discovery/refresh", rbac.RequirePerm(PermClusterRead),
+		rbac.RequireAnyPerm(PermClusterManage, "datasource:manage"), m.refreshIntegrationDiscoveryRequest)
+	g.GET("/:id/rbac", rbac.RequirePerm(PermWorkloadRead), m.listRBAC)
+	g.GET("/:id/rbac/:kind/:ns/:name", rbac.RequirePerm(PermWorkloadRead), m.getRBACYAML)
+	g.POST("/:id/rbac/apply", rbac.RequirePerm(PermRBACWrite), m.change("rbac_apply"))
+	g.DELETE("/:id/rbac/:kind/:ns/:name", rbac.RequirePerm(PermRBACWrite), m.change("rbac_delete"))
 
 	g.GET("/:id/namespaces", rbac.RequirePerm(PermNSRead), m.listNamespaces)
 	g.POST("/:id/namespaces", rbac.RequirePerm(PermNSWrite), m.change("ns_create"))
@@ -139,6 +165,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 
 	g.GET("/:id/events", rbac.RequirePerm(PermWorkloadRead), m.listEvents)
 	g.GET("/:id/network/services", rbac.RequirePerm(PermWorkloadRead), m.listNetworkServices)
+	g.GET("/:id/network/endpoints", rbac.RequirePerm(PermWorkloadRead), m.listNetworkEndpoints)
 	g.GET("/:id/network/services/:ns/:name", rbac.RequirePerm(PermWorkloadRead), m.getService)
 	g.POST("/:id/network/services", rbac.RequirePerm(PermNetworkWrite), m.change("service_create"))
 	g.PUT("/:id/network/services/:ns/:name", rbac.RequirePerm(PermNetworkWrite), m.change("service_update"))
@@ -154,6 +181,8 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.PUT("/:id/network/policies/:ns/:name", rbac.RequirePerm(PermNetworkWrite), m.change("network_policy_update"))
 	g.DELETE("/:id/network/policies/:ns/:name", rbac.RequirePerm(PermNetworkWrite), m.change("network_policy_delete"))
 	g.GET("/:id/network/configuration", rbac.RequirePerm(PermWorkloadRead), m.networkConfiguration)
+	g.GET("/:id/network/configuration/detail", rbac.RequirePerm(PermWorkloadRead), m.networkConfigurationDetail)
+	g.POST("/:id/network/configuration/apply", rbac.RequirePerm(PermNetworkWrite), m.change("network_configuration_apply"))
 	g.POST("/:id/network/probe", rbac.RequirePerm(PermWorkloadRead, "network:probe"), m.networkProbe)
 
 	storageRead := rbac.RequireAnyPerm(PermWorkloadRead, PermStorageRead)
@@ -162,6 +191,8 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.GET("/:id/storage/claims", storageRead, m.listPersistentVolumeClaims)
 	g.GET("/:id/storage/snapshots", storageRead, m.listVolumeSnapshots)
 	g.GET("/:id/storage/capabilities", storageRead, m.storageCapabilities)
+	g.GET("/:id/backups", storageRead, m.listBackups)
+	g.POST("/:id/backups/apply", rbac.RequirePerm(PermStorageWrite), m.change("backup_apply"))
 	g.POST("/:id/storage/classes", rbac.RequirePerm(PermStorageWrite), m.change("sc_create"))
 	g.PUT("/:id/storage/classes/:name", rbac.RequirePerm(PermStorageWrite), m.change("sc_update"))
 	g.DELETE("/:id/storage/classes/:name", rbac.RequirePerm(PermStorageWrite), m.change("sc_delete"))
@@ -184,6 +215,8 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.POST("/:id/config/configmaps/batch-delete", rbac.RequirePerm(PermConfigWrite), m.change("configmap_batch_delete"))
 	g.GET("/:id/config/secrets", configRead, m.listSecrets)
 	g.GET("/:id/config/secrets/:ns/:name", configRead, m.getSecret)
+	g.GET("/:id/certificates", configRead, m.listCertificates)
+	g.POST("/:id/certificates/import", rbac.RequirePerm(PermConfigWrite), m.importCertificate)
 	g.POST("/:id/config/secrets", rbac.RequirePerm(PermConfigWrite), m.change("secret_create"))
 	g.PUT("/:id/config/secrets/:ns/:name", rbac.RequirePerm(PermConfigWrite), m.change("secret_update"))
 	g.DELETE("/:id/config/secrets/:ns/:name", rbac.RequirePerm(PermConfigWrite), m.change("secret_delete"))
@@ -486,6 +519,7 @@ func (m *Module) executeRegistryChange(ctx context.Context, id, applicantID int6
 			}
 			return nil, httpx.Internal(errors.New("cluster registration failed"))
 		}
+		m.queueIntegrationDiscovery(ctx, created.ID)
 		return created, nil
 	case "update":
 		in := mutation.Input
@@ -506,6 +540,8 @@ func (m *Module) executeRegistryChange(ctx context.Context, id, applicantID int6
 			return nil, httpx.Internal(errors.New("cluster update failed"))
 		}
 		m.clients.drop(current.ID)
+		certificateMetadataInvalidateCluster(m, current.ID)
+		m.queueIntegrationDiscovery(ctx, updated.ID)
 		return updated, nil
 	case "delete":
 		tag, err := m.d.DB.Exec(ctx, `DELETE FROM cluster_clusters WHERE id=$1 AND env=$2 AND name=$3`, current.ID, row.Env, row.Cluster)
@@ -513,6 +549,7 @@ func (m *Module) executeRegistryChange(ctx context.Context, id, applicantID int6
 			return nil, httpx.Conflict("cluster changed before deletion")
 		}
 		m.clients.drop(current.ID)
+		certificateMetadataInvalidateCluster(m, current.ID)
 		return gin.H{"id": current.ID}, nil
 	case "import":
 		return m.executeRegistryImport(ctx, row, mutation)
@@ -566,6 +603,11 @@ func (m *Module) executeRegistryImport(ctx context.Context, row registryChangeRo
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, httpx.Internal(err)
+	}
+	for _, item := range created {
+		if id, ok := item["id"].(int64); ok {
+			m.queueIntegrationDiscovery(ctx, id)
+		}
 	}
 	return gin.H{"created": len(created), "failed": 0, "total": len(created), "items": created}, nil
 }
@@ -850,12 +892,15 @@ func (m *Module) change(action string) gin.HandlerFunc {
 				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256<<10)
 			}
 			switch {
+			case strings.HasPrefix(action, "rbac_"), strings.HasPrefix(action, "backup_"):
+				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
 			case strings.HasPrefix(action, "pvc_"), strings.HasPrefix(action, "sc_"),
 				strings.HasPrefix(action, "snapshot_"), strings.HasPrefix(action, "pv_"):
 				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
 			case strings.HasPrefix(action, "configmap_"), strings.HasPrefix(action, "secret_"):
 				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
-			case strings.HasPrefix(action, "service_"), strings.HasPrefix(action, "ingress_"):
+			case strings.HasPrefix(action, "service_"), strings.HasPrefix(action, "ingress_"),
+				action == "network_configuration_apply":
 				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
 			case strings.HasPrefix(action, "node_batch_"):
 				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
@@ -869,6 +914,22 @@ func (m *Module) change(action string) gin.HandlerFunc {
 		if err := validateChange(&pl); err != nil {
 			httpx.Fail(c, err)
 			return
+		}
+		if pl.Action == "network_configuration_apply" {
+			var params networkConfigurationApplyParams
+			if err := decodeParams(pl.Params, &params); err != nil {
+				httpx.Fail(c, err)
+				return
+			}
+			kc, err := m.kube(c.Request.Context(), cl)
+			if err != nil {
+				httpx.Fail(c, httpx.BadRequest("cluster client: "+err.Error()))
+				return
+			}
+			if _, _, err := prepareNetworkConfigurationApply(c.Request.Context(), kc, params); err != nil {
+				httpx.Fail(c, err)
+				return
+			}
 		}
 		if err := m.encryptSecretParams(&pl); err != nil {
 			httpx.Fail(c, err)
@@ -935,6 +996,18 @@ func (m *Module) onApproved(ctx context.Context, t *approval.Ticket) (any, error
 	if !p.Can(permission) || !p.CanEnv(cl.Env) {
 		return nil, httpx.Forbidden("applicant permissions or environment scope revoked")
 	}
+	if pl.Action == "ns_create" {
+		if m.d.Audit == nil || m.d.DB == nil {
+			return nil, httpx.NewError(http.StatusServiceUnavailable, httpx.CodeUnavailable, "namespace execution audit is unavailable")
+		}
+		kc, err := m.kube(ctx, cl)
+		if err != nil {
+			return nil, httpx.BadRequest("cluster client: " + err.Error())
+		}
+		return executeApprovedNamespaceCreate(ctx, kc, pl, func(ctx context.Context, entry audit.Entry) error {
+			return (&audit.PgStore{DB: m.d.DB}).WriteBatch(ctx, []audit.Entry{entry})
+		}, t)
+	}
 	return m.executeChange(ctx, cl, pl)
 }
 
@@ -948,6 +1021,29 @@ func (m *Module) executeChange(ctx context.Context, cl *Cluster, pl changePayloa
 			return nil, err
 		}
 		return m.applyAlertRule(ctx, cl, in)
+	}
+	if pl.Action == "network_configuration_apply" {
+		var params networkConfigurationApplyParams
+		if err := decodeParams(pl.Params, &params); err != nil {
+			return nil, err
+		}
+		kc, err := m.kube(ctx, cl)
+		if err != nil {
+			return nil, httpx.BadRequest("cluster client: " + err.Error())
+		}
+		result, err := applyNetworkConfiguration(ctx, kc, params)
+		return result, err
+	}
+	if pl.Action == "rbac_apply" || pl.Action == "rbac_delete" || pl.Action == "backup_apply" {
+		kc, err := m.kube(ctx, cl)
+		if err != nil {
+			return nil, httpx.BadRequest("cluster client: " + err.Error())
+		}
+		result, err := executeGovernedResourceChange(ctx, kc, pl)
+		if err != nil {
+			return nil, kubeErr(err)
+		}
+		return result, nil
 	}
 	return m.execute(ctx, cl, pl)
 }
@@ -1020,6 +1116,12 @@ func changePermission(action string) string {
 		return PermNSWrite
 	case "network_policy_create", "network_policy_update", "network_policy_delete":
 		return PermNetworkWrite
+	case "network_configuration_apply":
+		return PermNetworkWrite
+	case "rbac_apply", "rbac_delete":
+		return PermRBACWrite
+	case "backup_apply":
+		return PermStorageWrite
 	case "hpa_create", "hpa_update", "hpa_delete",
 		"cronjob_create", "cronjob_update", "cronjob_delete", "cronjob_run":
 		return PermWorkloadWrite
@@ -1059,6 +1161,10 @@ func (m *Module) execute(ctx context.Context, cl *Cluster, pl changePayload) (an
 	res, err := executeOn(ctx, kc, pl)
 	if err != nil {
 		return nil, kubeErr(err)
+	}
+	if strings.HasPrefix(pl.Action, "secret_") || pl.Action == "apply" ||
+		strings.HasPrefix(pl.Action, "ingress_") {
+		certificateMetadataInvalidateCluster(m, cl.ID)
 	}
 	return res, nil
 }

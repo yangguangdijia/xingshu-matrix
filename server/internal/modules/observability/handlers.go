@@ -23,17 +23,44 @@ import (
 
 // clientFor loads the datasource from :id (or ?datasource=) and builds a client.
 func (m *Module) clientFor(c *gin.Context, idStr string, types ...string) (*client, bool) {
+	return m.clientForCluster(c, idStr, c.Query("cluster_id"), types...)
+}
+
+func (m *Module) clientForCluster(c *gin.Context, idStr, clusterID string, types ...string) (*client, bool) {
+	if queryCluster := c.Query("cluster_id"); clusterID != "" && queryCluster != "" && clusterID != queryCluster {
+		httpx.Fail(c, httpx.Validation("conflicting cluster_id in query and request body"))
+		return nil, false
+	}
+	if clusterID == "" {
+		clusterID = c.Query("cluster_id")
+	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
 		httpx.Fail(c, httpx.BadRequest("invalid datasource id"))
 		return nil, false
 	}
-	ds, err := m.loadDS(c, rbac.PrincipalFrom(c), id, types...)
+	ds, err := m.loadDS(c, nil, id, types...)
 	if err != nil {
 		httpx.Fail(c, err)
 		return nil, false
 	}
-	return newClient(ds), true
+	scope, err := m.resolveSourceScope(c, rbac.PrincipalFrom(c), ds, clusterID)
+	if err != nil {
+		httpx.Fail(c, err)
+		return nil, false
+	}
+	selected, _, err := m.selectSource(c, rbac.PrincipalFrom(c), ds.Type, strconv.FormatInt(scope.Cluster.ID, 10))
+	if err != nil {
+		httpx.Fail(c, err)
+		return nil, false
+	}
+	if selected.ID != ds.ID {
+		httpx.Fail(c, httpx.Conflict("another datasource has priority for this cluster"))
+		return nil, false
+	}
+	cl := newClient(ds)
+	cl.scope = scope
+	return cl, true
 }
 
 func respond(c *gin.Context, v any, err error) {
@@ -104,7 +131,7 @@ func (m *Module) logsQuery(c *gin.Context) {
 	if !httpx.Bind(c, &in) {
 		return
 	}
-	if cl, ok := m.clientFor(c, strconv.FormatInt(in.Datasource, 10), "loki", "elasticsearch"); ok {
+	if cl, ok := m.clientForCluster(c, strconv.FormatInt(in.Datasource, 10), string(in.ClusterID), "loki", "elasticsearch"); ok {
 		r, err := cl.QueryLogs(c, &in)
 		respond(c, r, err)
 	}
@@ -150,7 +177,7 @@ func (m *Module) createSilence(c *gin.Context) {
 	if !httpx.Bind(c, &in) {
 		return
 	}
-	if cl, ok := m.clientFor(c, strconv.FormatInt(in.Datasource, 10), "alertmanager"); ok {
+	if cl, ok := m.clientForCluster(c, strconv.FormatInt(in.Datasource, 10), string(in.ClusterID), "alertmanager"); ok {
 		id, err := cl.CreateSilence(c, &in, rbac.PrincipalFrom(c).Username)
 		if err != nil {
 			httpx.Fail(c, err)
@@ -338,11 +365,17 @@ func scanAlert(row pgx.Row) (*Alert, error) {
 type AlertFilter struct {
 	Status, HandleStatus, Severity, Q string
 	DatasourceID                      int64
+	ClusterID                         string
 }
 
 func (m *Module) queryAlerts(ctx context.Context, p *rbac.Principal, f AlertFilter, pg httpx.Page) ([]*Alert, int64, error) {
 	where := []string{"TRUE"}
 	args := []any{}
+	sources, err := m.alertSources(ctx, p, f.ClusterID, f.DatasourceID)
+	if err != nil {
+		return nil, 0, err
+	}
+	where = append(where, alertSourceSQL(sources, &args))
 	add := func(cond string, v any) {
 		args = append(args, v)
 		where = append(where, strings.ReplaceAll(cond, "?", "$"+strconv.Itoa(len(args))))
@@ -362,15 +395,8 @@ func (m *Module) queryAlerts(ctx context.Context, p *rbac.Principal, f AlertFilt
 	if f.Q != "" {
 		add("(a.alertname ILIKE ? OR a.annotations::text ILIKE ?)", "%"+f.Q+"%")
 	}
-	if p != nil && p.EnvScope != nil {
-		all := false
-		for _, e := range p.EnvScope {
-			all = all || e == "*"
-		}
-		if !all {
-			add("d.env = ANY(?)", p.EnvScope)
-		}
-	}
+	// alertSources already checked the selected cluster's environment against
+	// the principal; central datasources may deliberately have env=''.
 	w := strings.Join(where, " AND ")
 	var total int64
 	if err := m.d.DB.QueryRow(ctx, `SELECT count(*) FROM obs_alerts a JOIN obs_datasources d ON d.id=a.datasource_id WHERE `+w, args...).Scan(&total); err != nil {
@@ -389,6 +415,12 @@ func (m *Module) queryAlerts(ctx context.Context, p *rbac.Principal, f AlertFilt
 		if err != nil {
 			return nil, 0, err
 		}
+		for _, source := range sources {
+			if source.ID == a.DatasourceID {
+				a.Env = source.Scope.Cluster.Env
+				break
+			}
+		}
 		out = append(out, a)
 	}
 	return out, total, rows.Err()
@@ -398,7 +430,8 @@ func (m *Module) listAlerts(c *gin.Context) {
 	pg := httpx.ParsePage(c)
 	dsID, _ := strconv.ParseInt(c.Query("datasource"), 10, 64)
 	items, total, err := m.queryAlerts(c, rbac.PrincipalFrom(c), AlertFilter{Status: c.Query("status"),
-		HandleStatus: c.Query("handle_status"), Severity: c.Query("severity"), Q: c.Query("q"), DatasourceID: dsID}, pg)
+		HandleStatus: c.Query("handle_status"), Severity: c.Query("severity"), Q: c.Query("q"), DatasourceID: dsID,
+		ClusterID: c.Query("cluster_id")}, pg)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -412,8 +445,8 @@ func (m *Module) loadAlert(c *gin.Context) (*Alert, bool) {
 		return nil, false
 	}
 	a, err := scanAlert(m.d.DB.QueryRow(c, `SELECT `+alertCols+` FROM obs_alerts a JOIN obs_datasources d ON d.id=a.datasource_id WHERE a.id=$1`, id))
-	if err == nil && !rbac.PrincipalFrom(c).CanEnv(a.Env) {
-		err = httpx.Forbidden("no access to environment " + a.Env)
+	if err == nil {
+		err = m.authorizeAlert(c, rbac.PrincipalFrom(c), a, c.Query("cluster_id"))
 	}
 	if err != nil {
 		httpx.Fail(c, err)
@@ -471,16 +504,29 @@ func (m *Module) closeAlert(c *gin.Context) {
 
 // ---------------------------------------------------------------------- AI tools
 
-func (m *Module) aiClient(ctx context.Context, id int64, types ...string) (*client, error) {
+func (m *Module) aiClient(ctx context.Context, id int64, clusterID string, types ...string) (*client, error) {
 	p := rbac.FromContext(ctx)
 	if p == nil {
 		return nil, httpx.Unauthorized("no principal")
 	}
-	ds, err := m.loadDS(ctx, p, id, types...)
+	ds, err := m.loadDS(ctx, nil, id, types...)
 	if err != nil {
 		return nil, err
 	}
-	return newClient(ds), nil
+	scope, err := m.resolveSourceScope(ctx, p, ds, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	selected, _, err := m.selectSource(ctx, p, ds.Type, strconv.FormatInt(scope.Cluster.ID, 10))
+	if err != nil {
+		return nil, err
+	}
+	if selected.ID != ds.ID {
+		return nil, httpx.Conflict("another datasource has priority for this cluster")
+	}
+	cl := newClient(ds)
+	cl.scope = scope
+	return cl, nil
 }
 
 func (m *Module) registerAITools() {
@@ -498,7 +544,7 @@ func (m *Module) registerAITools() {
 		Description: "Run a PromQL query against a Prometheus datasource. Without start/end it is an instant query; with start (e.g. now-1h) it is a range query.",
 		Permission:  PermMetricsRead,
 		Parameters: json.RawMessage(`{"type":"object","properties":{
-			"datasource":{"type":"integer","description":"Prometheus datasource id"},
+			"datasource":{"type":"integer","description":"Prometheus datasource id"},"cluster_id":{"type":"string"},
 			"query":{"type":"string","description":"PromQL expression"},
 			"start":{"type":"string","description":"range start: RFC3339, unix seconds or now-1h"},
 			"end":{"type":"string"},"step":{"type":"string","description":"e.g. 30s, 5m"}},
@@ -506,12 +552,13 @@ func (m *Module) registerAITools() {
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
 			var a struct {
 				Datasource              int64
+				ClusterID               string `json:"cluster_id"`
 				Query, Start, End, Step string
 			}
 			if err := json.Unmarshal(raw, &a); err != nil {
 				return nil, err
 			}
-			cl, err := m.aiClient(ctx, a.Datasource, "prometheus")
+			cl, err := m.aiClient(ctx, a.Datasource, a.ClusterID, "prometheus")
 			if err != nil {
 				return nil, err
 			}
@@ -526,7 +573,7 @@ func (m *Module) registerAITools() {
 		Description: "Search logs in a Loki (LogQL) or Elasticsearch (Lucene / field:value AND ...) datasource. Returns normalized rows {ts, level, service, host, message}.",
 		Permission:  PermLogsRead,
 		Parameters: json.RawMessage(`{"type":"object","properties":{
-			"datasource":{"type":"integer"},"query":{"type":"string"},
+			"datasource":{"type":"integer"},"cluster_id":{"type":"string"},"query":{"type":"string"},
 			"from":{"type":"string","description":"default now-1h"},"to":{"type":"string"},
 			"limit":{"type":"integer","description":"max rows, default 50"}},"required":["datasource","query"]}`),
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -537,7 +584,7 @@ func (m *Module) registerAITools() {
 			if q.Limit <= 0 || q.Limit > 200 {
 				q.Limit = 50
 			}
-			cl, err := m.aiClient(ctx, q.Datasource, "loki", "elasticsearch")
+			cl, err := m.aiClient(ctx, q.Datasource, string(q.ClusterID), "loki", "elasticsearch")
 			if err != nil {
 				return nil, err
 			}
@@ -557,12 +604,14 @@ func (m *Module) registerAITools() {
 		Description: "List alerts received from Alertmanager, newest firing first.",
 		Permission:  PermAlertRead,
 		Parameters: json.RawMessage(`{"type":"object","properties":{
+			"cluster_id":{"type":"string"},
 			"status":{"type":"string","enum":["firing","resolved"]},
 			"handle_status":{"type":"string","enum":["open","acked","closed"]},
 			"severity":{"type":"string"},"q":{"type":"string","description":"alertname/annotation substring"},
 			"limit":{"type":"integer","description":"default 20"}}}`),
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
 			var a struct {
+				ClusterID    string `json:"cluster_id"`
 				Status       string `json:"status"`
 				HandleStatus string `json:"handle_status"`
 				Severity     string `json:"severity"`
@@ -578,7 +627,7 @@ func (m *Module) registerAITools() {
 				return nil, httpx.Unauthorized("no principal")
 			}
 			items, total, err := m.queryAlerts(ctx, p, AlertFilter{Status: a.Status, HandleStatus: a.HandleStatus,
-				Severity: a.Severity, Q: a.Q}, httpx.Page{Page: 1, Size: a.Limit})
+				Severity: a.Severity, Q: a.Q, ClusterID: a.ClusterID}, httpx.Page{Page: 1, Size: a.Limit})
 			if err != nil {
 				return nil, err
 			}

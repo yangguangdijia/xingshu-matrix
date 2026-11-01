@@ -1,0 +1,28 @@
+.xcc-root { min-width: 0; }
+.xcc-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.xcc-toolbar h2, .xcc-toolbar h3 { margin: 0 auto 0 0; font-size: 15px; }
+.xcc-toolbar input { max-width: 100%; width: 240px; }
+.xcc-section { margin: 16px 0; }
+.xcc-section h3, .xcc-detail h4 { font-size: 13px; margin: 0 0 10px; }
+.xcc-scroll { overflow-x: auto; border: 1px solid var(--x-line, #ddd); border-radius: 6px; }
+.xcc-table { width: 100%; min-width: 740px; margin: 0; }
+.xcc-table td { vertical-align: top; overflow-wrap: anywhere; max-width: 300px; }
+.xcc-table small { display: block; margin-top: 4px; }
+.xcc-state { color: var(--x-sub, #666); padding: 12px 0; }
+.xcc-error, .xcc-root [data-state="forbidden"], .xcc-root [data-state="failed"], .xcc-root [data-state="error"] { color: var(--x-red, #b42318); overflow-wrap: anywhere; }
+.xcc-root [data-state="installed"], .xcc-root [data-state="succeeded"] { color: var(--x-green, #16803c); }
+.xcc-detail { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--x-line, #ddd); }
+.xcc-detail[hidden], .xcc-root [hidden] { display: none; }
+.xcc-form { max-width: 850px; }
+.xcc-form fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 0; border: 0; margin: 0 0 12px; }
+.xcc-form label { display: grid; gap: 5px; font-size: 12px; min-width: 0; }
+.xcc-form input, .xcc-form select { width: 100%; min-width: 0; }
+.xcc-form .xcc-wide { grid-column: 1 / -1; }
+.xcc-form .xcc-confirm { display: flex; align-items: center; margin: 12px 0; }
+.xcc-confirm input { width: auto; }
+.xcc-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 320px; overflow: auto; padding: 10px; background: var(--x-bg, #f7f8fa); }
+.xcc-operation { margin-top: 16px; }
+.xcc-definition { display: grid; grid-template-columns: minmax(90px, .3fr) minmax(0, 1fr); gap: 6px 12px; }
+.xcc-definition dd { margin: 0; overflow-wrap: anywhere; }
+.xcc-root :focus-visible { outline: 2px solid var(--x-blue, #1677ff); outline-offset: 2px; }
+@media (max-width: 640px) { .xcc-toolbar h2 { flex: 1 0 100%; } .xcc-toolbar input { flex: 1; width: 140px; } .xcc-form fieldset { grid-template-columns: minmax(0, 1fr); } }

@@ -1,0 +1,16 @@
+# Apply only after backing up recordings from BOTH existing Pods.
+# This file deliberately does not modify the Matrix Deployment.
+# The existing nfs-storageclass uses nfs.csi.k8s.io, server 192.168.6.3,
+# share /storage/storageclass. Verify that StorageClass before applying.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: matrix-bastion-recordings
+  namespace: xingshu-system
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-storageclass
+  resources:
+    requests:
+      storage: 20Gi

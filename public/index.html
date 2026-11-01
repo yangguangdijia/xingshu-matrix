@@ -368,42 +368,42 @@
       .x-topo .e.bad line { stroke: #ff4d4f; stroke-width: 2; }
       .x-topo .e text { font-size: 11px; fill: var(--x-sub); text-anchor: middle; paint-order: stroke; stroke: #fff; stroke-width: 4px; stroke-linejoin: round; }
       .x-topo .e.bad text { fill: #cf1322; font-weight: 500; }
-      .x-topo--flow { max-height: 68vh; overflow: auto; border: 1px solid var(--x-line); border-radius: 6px; background-color: #f8fafb; background-image: radial-gradient(#cbd5da .7px, transparent .8px); background-size: 16px 16px; }
+      .x-topo--flow { max-height: 68vh; overflow: auto; border: 1px solid #e4e7ec; border-radius: 6px; background-color: #fbfcfd; background-image: radial-gradient(#d0d5dd .65px, transparent .75px); background-size: 16px 16px; }
       .x-topo--flow svg { display: block; width: auto; min-width: 0; max-width: none; height: auto; margin-inline: auto; touch-action: none; }
       .x-topo--flow .flow-edge-line, .x-topo--flow .flow-edge-motion { fill: none; vector-effect: non-scaling-stroke; }
       .x-topo--flow .flow-edge { transition: opacity 140ms ease; }
-      .x-topo--flow .flow-edge-line { stroke: #758992; stroke-width: 2.8; stroke-linecap: round; }
-      .x-topo--flow .flow-edge.observed .flow-edge-line { stroke: #087967; stroke-width: 3.2; }
-      .x-topo--flow .flow-edge-motion { stroke: #27b493; stroke-width: 5; stroke-dasharray: 1 12; stroke-linecap: round; pointer-events: none; animation: x-topology-flow 680ms linear infinite; }
-      .x-topo--flow .flow-edge.declared .flow-edge-line { stroke: #8d9da4; stroke-width: 2.4; stroke-dasharray: 7 6; }
-      .x-topo--flow .flow-edge.bad .flow-edge-line { stroke: #d43832; }
-      .x-topo--flow .flow-edge.bad .flow-edge-motion { stroke: #d43832; }
-      .x-topo--flow .flow-edge-label-bg { fill: #fff; stroke: #b8c6cc; stroke-width: 1; }
-      .x-topo--flow .flow-edge.observed .flow-edge-label-bg { fill: #edf7f3; stroke: #a9cec2; }
-      .x-topo--flow .flow-edge.declared .flow-edge-label-bg { fill: #f5f7f8; stroke: #c6d0d4; }
-      .x-topo--flow .flow-edge.bad .flow-edge-label-bg { fill: #fff1f0; stroke: #e2aaa5; }
-      .x-topo--flow .flow-edge-label { font-size: 10px; font-weight: 650; fill: #344c52; text-anchor: middle; pointer-events: none; }
-      .x-topo--flow .flow-edge.bad .flow-edge-label { fill: #a61d24; }
+      .x-topo--flow .flow-edge-line { stroke: #98a2b3; stroke-width: 2.4; stroke-linecap: round; }
+      .x-topo--flow .flow-edge.observed .flow-edge-line { stroke: #12b76a; stroke-width: 2.8; }
+      .x-topo--flow .flow-edge-motion { stroke: #32d583; stroke-width: 4.5; stroke-dasharray: 1 12; stroke-linecap: round; pointer-events: none; animation: x-topology-flow 680ms linear infinite; }
+      .x-topo--flow .flow-edge.declared .flow-edge-line { stroke: #98a2b3; stroke-width: 2; stroke-dasharray: 7 6; }
+      .x-topo--flow .flow-edge.bad .flow-edge-line { stroke: #f04438; }
+      .x-topo--flow .flow-edge.bad .flow-edge-motion { stroke: #f97066; }
+      .x-topo--flow .flow-edge-label-bg { fill: #fff; stroke: #d0d5dd; stroke-width: 1; }
+      .x-topo--flow .flow-edge.observed .flow-edge-label-bg { fill: #ecfdf3; stroke: #a6f4c5; }
+      .x-topo--flow .flow-edge.declared .flow-edge-label-bg { fill: #f9fafb; stroke: #d0d5dd; }
+      .x-topo--flow .flow-edge.bad .flow-edge-label-bg { fill: #fef3f2; stroke: #fecdca; }
+      .x-topo--flow .flow-edge-label { font-size: 10px; font-weight: 600; fill: #475467; text-anchor: middle; pointer-events: none; }
+      .x-topo--flow .flow-edge.bad .flow-edge-label { fill: #b42318; }
       .x-topo--flow .flow-node { cursor: grab; outline: none; transition: opacity 140ms ease; }
       .x-topo--flow .flow-node:active { cursor: grabbing; }
       .x-topo--flow .flow-node-hit { fill: transparent; pointer-events: all; }
-      .x-topo--flow .flow-node-card { fill: #fff; stroke: #aebdc3; stroke-width: 1.35; transition: stroke var(--x-t), filter var(--x-t); }
-      .x-topo--flow .flow-node-accent { fill: #718791; }
-      .x-topo--flow .flow-node.flow-connected .flow-node-card { stroke: #087967; }
-      .x-topo--flow .flow-node.flow-connected .flow-node-accent { fill: #087967; }
-      .x-topo--flow .flow-node.flow-declared .flow-node-card, .x-topo--flow .flow-node.flow-neighbor:not(.flow-connected) .flow-node-card { stroke: #8d9da4; stroke-dasharray: 5 3; }
-      .x-topo--flow .flow-node.trace-only .flow-node-card { stroke: #8a9ba2; stroke-dasharray: 4 3; }
-      .x-topo--flow .flow-node:hover .flow-node-card, .x-topo--flow .flow-node:focus-visible .flow-node-card, .x-topo--flow .flow-node.flow-active .flow-node-card { stroke: #1677ff; filter: drop-shadow(0 2px 3px #1677ff33); }
+      .x-topo--flow .flow-node-card { fill: #fff; stroke: #d0d5dd; stroke-width: 1.15; filter: drop-shadow(0 1px 1.5px #10182812); transition: stroke var(--x-t), filter var(--x-t); }
+      .x-topo--flow .flow-node-accent { fill: #98a2b3; }
+      .x-topo--flow .flow-node--entry .flow-node-accent, .x-topo--flow .flow-node--ingress .flow-node-accent, .x-topo--flow .flow-node--apisixroute .flow-node-accent { fill: #1677ff; }
+      .x-topo--flow .flow-node--service .flow-node-accent { fill: #0f9f8a; }
+      .x-topo--flow .flow-node--pod .flow-node-accent { fill: #12b76a; }
+      .x-topo--flow .flow-node--bad .flow-node-accent { fill: #f04438; }
+      .x-topo--flow .flow-node--bad .flow-node-card { stroke: #fda29b; }
+      .x-topo--flow .flow-node.flow-declared .flow-node-card, .x-topo--flow .flow-node.flow-neighbor:not(.flow-connected) .flow-node-card { stroke: #98a2b3; }
+      .x-topo--flow .flow-node.trace-only .flow-node-card { stroke-dasharray: 4 3; }
+      .x-topo--flow .flow-node:hover .flow-node-card, .x-topo--flow .flow-node:focus-visible .flow-node-card, .x-topo--flow .flow-node.flow-active .flow-node-card { stroke: #1677ff; filter: drop-shadow(0 3px 7px #1677ff26); }
       .x-topo--flow .flow-node text { pointer-events: none; }
-      .x-topo--flow .flow-node .flow-name { fill: var(--x-text); font-size: 13px; font-weight: 650; }
-      .x-topo--flow .flow-node .flow-sub { fill: var(--x-sub); font-size: 10px; }
-      .x-topo--flow .flow-node .flow-meta { fill: #52666e; font-size: 9px; }
-      .x-topo--flow .flow-node .flow-status-bg { fill: #f1f4f5; }
-      .x-topo--flow .flow-node .flow-status { fill: #596e77; font-size: 8px; font-weight: 650; text-anchor: middle; }
-      .x-topo--flow .flow-node.flow-connected .flow-status-bg { fill: #eaf5f1; }
-      .x-topo--flow .flow-node.flow-connected .flow-status { fill: #087967; }
-      .x-topo--flow .flow-node.flow-declared .flow-status-bg { fill: #f0f3f4; }
-      .x-topo--flow .flow-node.flow-declared .flow-status { fill: #596e77; }
+      .x-topo--flow .flow-node .flow-name { fill: #101828; font-size: 13px; font-weight: 650; }
+      .x-topo--flow .flow-node .flow-sub { fill: #667085; font-size: 10px; }
+      .x-topo--flow .flow-node .flow-meta { fill: #667085; font-size: 9px; }
+      .x-topo--flow .flow-status-dot { fill: #98a2b3; }
+      .x-topo--flow .flow-node.flow-connected .flow-status-dot { fill: #12b76a; }
+      .x-topo--flow .flow-node.flow-node--bad .flow-status-dot { fill: #f04438; }
       .x-topo--flow [data-flow-focus="true"] .flow-edge:not(.flow-focus), .x-topo--flow [data-flow-focus="true"] .flow-node:not(.flow-active):not(.flow-neighbor) { opacity: .2; }
       .x-topo--flow [data-flow-focus="true"] .flow-edge.flow-focus .flow-edge-line { stroke-width: 4; }
       .x-topo--flow [data-flow-focus="true"] .flow-edge.flow-focus .flow-edge-motion { stroke-width: 6; }
@@ -413,6 +413,14 @@
       @keyframes x-topology-flow { to { stroke-dashoffset: -22; } }
       .x-flow-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: space-between; margin-bottom: 8px; }
       .x-flow-toolbar .x-tbar { flex: 1; margin: 0; }
+      .x-topology-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; }
+      .x-topology-controls > label { display: flex; align-items: center; gap: 6px; margin: 0; white-space: nowrap; }
+      .x-topology-controls > label:first-child .x-select { width: auto; min-width: 180px; }
+      .x-topology-toggle { white-space: nowrap; }
+      .x-topology-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; color: var(--x-sub); font-size: 11px; white-space: nowrap; }
+      .x-topology-key { display: inline-block; width: 18px; height: 0; border-top: 3px solid #376f8c; }
+      .x-topology-key--observed { border-color: #087967; }
+      .x-topology-key--declared { border-color: #8d9da4; border-top-style: dashed; }
       .x-network-probe .x-form { padding: 16px 0; }
       .x-network-probe .x-form .x-row2 { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
       .x-network-probe-result { margin-top: 12px; }
@@ -421,9 +429,16 @@
       @media (max-width: 640px) {
         .x-topo--flow { max-height: 58vh; }
         .x-topo--flow svg { width: 100%; max-width: 100%; }
+        .x-topology-controls { align-items: stretch; }
+        .x-topology-controls > label:first-child { flex: 1 1 100%; }
+        .x-topology-controls > label:first-child .x-select { flex: 1; min-width: 0; width: 100%; }
+        .x-topology-legend { flex: 1 1 100%; }
       }
       @media (max-width: 560px) { .x-network-probe .x-form .x-row2 { grid-template-columns: 1fr; } }
       @media (prefers-reduced-motion: reduce) { .x-topo--flow .flow-node, .x-topo--flow .flow-edge, .x-topo--flow .flow-node-card { transition: none; } .x-topo--flow .flow-edge-motion { animation: none; } }
+      .x-topo--flow .flow-edge { outline: none; cursor: crosshair; transition: opacity 140ms ease, filter 140ms ease; }
+      .x-topo--flow .flow-edge:focus-visible .flow-edge-line, .x-topo--flow .flow-edge.flow-focus .flow-edge-line { stroke-width: 4.5; filter: drop-shadow(0 1px 2px #1677ff55); }
+      .x-topo--flow .flow-edge.declared:focus-visible .flow-edge-line, .x-topo--flow .flow-edge.declared.flow-focus .flow-edge-line { stroke-dasharray: 7 4; }
       /* 网络策略: editor with live YAML, policy graph, connectivity test */
       .x-npm { width: min(1040px, calc(100vw - 32px)); }
       .x-npe { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
@@ -1735,6 +1750,17 @@
       @media (max-width: 600px) { .x-ashell { padding: 22px 18px 40px; } .x-atop { display: flex; padding: 16px 18px 0; } .x-feats { grid-template-columns: 1fr; gap: 14px; max-width: none; } .x-bhead { font-size: 36px; gap: 12px; } .x-bline { width: 40px; height: 3px; margin-top: 8px; } .x-eyebrow { font-size: 14px; letter-spacing: .26em; } .x-feats { margin-top: 30px; gap: 16px; } .x-feats svg { width: 40px; height: 40px; padding: 9px; } .x-formp { padding: 28px 22px 24px; border-radius: 16px; } .x-aform h1 { font-size: 26px; } .x-bcopy { margin-top: 22px; } .x-auth .x-arow a, .x-auth .x-arow label { min-height: 44px; } .x-eye { width: 44px; height: 44px; right: 2px; } .x-aerr { line-height: 1.5; } }
       @media (prefers-reduced-motion: reduce) { .x-auth *, .x-auth *::before, .x-auth *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
     </style>
+    <link rel="stylesheet" href="xs-ops-visual-polish.css" />
+    <link rel="stylesheet" href="xs-cluster-context.css" />
+    <link rel="stylesheet" href="xs-structured-forms.css" />
+    <link rel="stylesheet" href="xs-network-config-forms.css" />
+    <link rel="stylesheet" href="xs-certificates.css" />
+    <link rel="stylesheet" href="xs-helm-apps.css" />
+    <link rel="stylesheet" href="xs-crd-page.css" />
+    <link rel="stylesheet" href="xs-project-quota.css" />
+    <link rel="stylesheet" href="xs-component-center.css" />
+    <link rel="stylesheet" href="xs-cluster-integrations.css" />
+    <link rel="stylesheet" href="xs-cicd-pipeline.css" />
   </head>
   <body>
     <div class="x-app" id="top">
@@ -1757,6 +1783,7 @@
         <nav class="x-crumbs x-devo" id="crumbs" aria-label="面包屑"></nav>
         <button class="x-kbtn x-devo" id="kbtn" data-ic="search" aria-label="搜索页面（⌘K）"><span>搜索页面</span><kbd>⌘K</kbd></button>
         <button class="x-envbtn x-devo" id="envbtn" data-pop="env" aria-haspopup="menu" aria-expanded="false"></button>
+        <select class="x-topbar-cluster-select x-devo" id="clctx" aria-label="当前集群"><option value="">选择集群</option></select>
         <button class="x-envbtn x-devo" id="kcbtn" type="button" data-ic="term" aria-controls="kdock" aria-label="打开 kubectl Web Shell"><span>kubectl</span></button>
         <button class="x-ibtn x-devo" id="bellbtn" data-ic="bell" data-pop="bell" aria-haspopup="true" aria-expanded="false" aria-label="通知"><b class="x-badge" id="badge" hidden></b></button>
         <button class="x-avbtn x-devo" data-pop="me" aria-haspopup="menu" aria-expanded="false" aria-label="个人菜单"><span class="x-avatar">李</span><span class="x-who"><b data-who>李明</b><small>超级管理员</small></span></button>
@@ -1835,12 +1862,15 @@
     <script src="chart.js"></script>
     <script src="datalabels.js"></script>
     <script src="hark-charts.js"></script>
+    <script src="xs-cluster-context.js"></script>
     <script src="xs-api.js"></script>
     <script src="xs-observability.js"></script>
+    <script src="xs-structured-forms.js"></script>
     <script src="xs-traffic-topology.js"></script>
     <script src="xs-provision.js"></script>
     <script src="xs-aiops.js"></script>
     <script src="xs-network-config.js"></script>
+    <script src="xs-certificates.js"></script>
     <script>
       // Sandboxed iframe (no allow-forms) blocks native submission: re-create it with synthetic submit events
       document.addEventListener("click", (e) => {
@@ -2248,14 +2278,17 @@
           }
         });
         render();
+        if (p) clMenuPrewarm();
       }
 
       let pageRenderRev = 0;
       function render() {
         pageRenderRev++;
+        window.XS_LIVE?.core?.destroyClusterPage();
         legacyHash();
         if (gate()) return;
         drawNav();
+        ensurePageContext();
         killCharts();
         const routeKey = current(), r = routes[routeKey], on = curLeaf(), t = on ? on.t : r.label;
         // Home (#/, #/sre or no hash) shows the bare brand; every other page is 「<页面名>   星枢 Matrix」
@@ -2272,7 +2305,7 @@
         const basPage = current() === "bastion";
         if (on && on.w.k === "ops" && !on.free && !basPage && !opsOn() && !(window.XS && XS.mode === "live")) return renderNoCluster($("view"), t, (on && on.s) || r.soon);
         if (r.render) {
-          if (current() === "cluster" && window.XS && XS.mode === "live" && !k8Synced) {
+          if (current() === "cluster" && window.XS && XS.mode === "live" && !k8Synced && !r.__xsLivePatched) {
             syncClusterLive().then(() => render()).catch((err) => { console.warn("sync cluster", err); render(); });
             return;
           }
@@ -3311,7 +3344,7 @@
       }
 
       // 持续交付
-      // 构建 and 制品 live under 应用交付 (#/cicd/build|artifact/<app>); the app's 导览 links there filtered by app
+      // 构建 and 制品 live under CI/CD (#/cicd/build|artifact/<app>); the app's 导览 links there filtered by app
       const MENU = ["导览", "服务列表", "实例列表", "部署编排", "监控告警", "应用成员", "操作记录", "流程中心"];
       const clustersForEnv = (env) => {
         const matches = (Array.isArray(window.XS_CLUSTERS) ? window.XS_CLUSTERS : [])
@@ -3326,7 +3359,7 @@
       const stTag = (s) => `<span class="x-tag x-dot ${{ 成功: "x-green", 失败: "x-red", 运行中: "x-green" }[s] || (s === "启动中" ? "x-orange" : "x-blue")}">${s}</span>`;
       const tbl = (cols, rows) => `<div style="overflow-x:auto"><table class="x-table x-table--plain"><thead><tr>${cols.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
       // Page header; its action area always ends with the page's 「✦ AI」 scene button (aiBtn)
-      const phead = (t, desc, tools = "") => `<div class="x-sethead"><div><h1 class="x-h1">${t}</h1><p class="x-desc">${desc}</p></div><div class="x-phacts">${tools}${aiBtn(aiSceneOf(), aiCtxOf)}</div></div>`;
+      const phead = (t, desc, tools = "") => `<div class="x-sethead"><div><h1 class="x-h1">${t}</h1>${window.XS && XS.mode === "live" ? "" : `<p class="x-desc">${desc}</p>`}</div><div class="x-phacts">${tools}${aiBtn(aiSceneOf(), aiCtxOf)}</div></div>`;
       const refresh = () => {
         const c = current();
         if (c === "approvals") renderApprovals($("view"));
@@ -3339,7 +3372,7 @@
       // 构建 / 制品 / 流水线 (#/cicd/<page>[/<app>]): every app's builds and artifacts, optionally filtered to one app
       const CICD = { build: "构建", artifact: "制品", pipeline: "流水线" };
       function renderCicd(el) {
-        el.innerHTML = phead("应用交付", "构建、制品与流水线运行数据") + '<section class="x-panel"><p class="x-empty">应用交付数据尚未就绪，无法显示真实构建记录。</p></section>';
+        el.innerHTML = phead("CI/CD", "构建、制品与流水线运行数据") + '<section class="x-panel"><p class="x-empty">CI/CD数据尚未就绪，无法显示真实构建记录。</p></section>';
         return;
         const [, , pg0 = "build", ap = ""] = location.hash.split("/"), pg = CICD[pg0] ? pg0 : "build", app = decodeURIComponent(ap), a = APPS.find((x) => x.name === app);
         if (pg === "pipeline") return renderPipeline(el, app);
@@ -3676,7 +3709,7 @@
         };
       }
       function renderDelivery(el) {
-        el.innerHTML = phead("应用", "各应用的运行状态与最近发布") + '<section class="x-panel"><p class="x-empty">应用交付数据尚未就绪，无法显示真实应用信息。</p></section>';
+        el.innerHTML = phead("应用", "各应用的运行状态与最近发布") + '<section class="x-panel"><p class="x-empty">CI/CD数据尚未就绪，无法显示真实应用信息。</p></section>';
         return;
         const a = APPS.find((x) => x.name === cd.app);
         if (!a) {
@@ -3704,7 +3737,7 @@
         el.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { cd.menu = b.dataset.m; renderDelivery(el); }));
         const pane = $("pane");
         if (PANES[cd.menu]) PANES[cd.menu](pane, a, d); else pane.innerHTML = wip(cd.menu);
-        pane.insertAdjacentHTML("afterbegin", `<p class="x-crumb">应用交付<i>/</i>${a.name}<i>/</i><b>${cd.menu}</b></p>`);
+        pane.insertAdjacentHTML("afterbegin", `<p class="x-crumb">CI/CD<i>/</i>${a.name}<i>/</i><b>${cd.menu}</b></p>`);
         pane.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => { cd.menu = b.dataset.go; renderDelivery(el); }));
       }
 
@@ -4402,9 +4435,9 @@
         ["安全管理员", "堡垒机、审计与网络策略的策略制定与审批", (w, m) => ["查看", "导出", ...(has(m, ["堡垒机", "网络"]) ? ["创建", "编辑", "删除", "审批"] : [])], false],
         ["审计员", "只读全部模块并可导出记录", () => ["查看", "导出"], false],
         ["运维工程师", "运维中心日常操作，可登录主机执行命令", (w, m) => (w === "dev" ? ["查看"] : ["查看", "创建", "编辑", "部署", ...(has(m, ["集群", "堡垒机"]) ? ["登录主机", "执行命令"] : []), ...(m === "值班故障" ? ["审批"] : [])]), true, { env: [] }],
-        ["开发工程师", "研发中心读写，可向开发与测试环境部署", (w, m) => (w === "dev" ? ["查看", "创建", "编辑"] : ["查看", ...(m === "应用交付" ? ["部署"] : [])]), true, { env: ["开发", "测试"] }],
-        ["测试工程师", "测试管理与缺陷读写，可部署到测试环境", (w, m) => ["查看", ...(has(m, ["测试管理", "缺陷总览"]) ? ["创建", "编辑", "删除", "导出"] : []), ...(m === "应用交付" ? ["部署"] : [])], true, { env: ["测试"] }],
-        ["项目经理", "需求与迭代管理，审批变更", (w, m) => (w === "dev" ? ["查看", "创建", "编辑", "审批", "导出"] : has(m, ["总览", "应用交付"]) ? ["查看", ...(m === "应用交付" ? ["审批"] : [])] : []), true],
+        ["开发工程师", "研发中心读写，可向开发与测试环境部署", (w, m) => (w === "dev" ? ["查看", "创建", "编辑"] : ["查看", ...(m === "CI/CD" ? ["部署"] : [])]), true, { env: ["开发", "测试"] }],
+        ["测试工程师", "测试管理与缺陷读写，可部署到测试环境", (w, m) => ["查看", ...(has(m, ["测试管理", "缺陷总览"]) ? ["创建", "编辑", "删除", "导出"] : []), ...(m === "CI/CD" ? ["部署"] : [])], true, { env: ["测试"] }],
+        ["项目经理", "需求与迭代管理，审批变更", (w, m) => (w === "dev" ? ["查看", "创建", "编辑", "审批", "导出"] : has(m, ["总览", "CI/CD"]) ? ["查看", ...(m === "CI/CD" ? ["审批"] : [])] : []), true],
         ["只读访客", "仅可查看开发与测试环境", () => ["查看"], false, { env: ["开发", "测试"] }],
       ].map(([name, desc, fn, prod, sc = {}]) => ({ name, desc, fn, prod, builtin: true, scope: { env: [], cluster: [], ns: [], hg: [], proj: [], ...sc }, temp: [] }));
       const IAM = {
@@ -4913,10 +4946,22 @@
           CL_LIVE.items = null; CL_LIVE.status = "error";
           console.warn("env menu clusters", err);
           return [];
-        }).then((items) => { CL_LIVE.loading = null; return items; });
+        }).then((items) => {
+          CL_LIVE.loading = null;
+          try {
+            const context = clusterContextApi(), before = context && context.epoch();
+            syncClusterContext(items);
+            drawTop();
+            if (context && context.epoch() !== before && authBoot) setTimeout(render, 0);
+          } catch (err) { console.warn("cluster context", err); }
+          return items;
+        });
         return CL_LIVE.loading;
       }
-      function clMenuPrewarm() { if (!clMenuReady() && CL_LIVE.status !== "loading") clMenuLoad(); }
+      function clMenuPrewarm() {
+        if (!authBoot || !session || !session.live || !window.XS || !XS.token()) return;
+        if (!clMenuReady() && CL_LIVE.status !== "loading") clMenuLoad();
+      }
       // 计数：null = 未知（统计中 / 未接入），调用方据此避免渲染出假的 0
       function clEnvCount(env) {
         if (!clMenuReady()) return null;
@@ -5887,16 +5932,23 @@
           '<section class="x-panel"><p class="x-empty">正在读取集群数据…</p></section>';
         let clusters = [], hosts = [], alerts = [], notices = [];
         const failed = [];
-        try { clusters = (await apiRequest("/clusters?page_size=200")).items || []; } catch (e) { failed.push("集群：" + e.message); }
-        try { hosts = (await apiRequest("/hosts?page_size=200")).items || []; } catch (e) { failed.push("主机：" + e.message); }
-        try { alerts = (await apiRequest("/observability/alerts?page_size=200&status=firing")).items || []; } catch (e) { failed.push("告警：" + e.message); }
-        try { notices = (await apiRequest("/platform/notices")).items || []; } catch (e) { failed.push("公告：" + e.message); }
-        try { if (window.XS && XS.mode === "live") await XS.ready; } catch (e) {}
+        const initial = await Promise.allSettled([
+          apiRequest("/clusters?page_size=200"), apiRequest("/hosts?page_size=200"), apiRequest("/platform/notices")
+        ]);
+        ["集群", "主机", "公告"].forEach((name, i) => { if (initial[i].status === "rejected") failed.push(name + "：" + initial[i].reason.message); });
+        if (initial[0].status === "fulfilled") clusters = initial[0].value.items || [];
+        if (initial[1].status === "fulfilled") hosts = initial[1].value.items || [];
+        if (initial[2].status === "fulfilled") notices = initial[2].value.items || [];
 
         // 先按当前环境筛选集群，再从这些集群加载节点和 Pod，避免总览混入其它环境的数据。
         const selectedEnv = envNorm(sre.env);
         const allEnvs = selectedEnv === "全部";
         clusters = clusters.filter((c) => allEnvs || envNorm(c.env) === selectedEnv);
+        const alertResults = await Promise.allSettled(clusters.map((c) => apiRequest("/observability/alerts?page_size=200&status=firing&cluster_id=" + encodeURIComponent(c.id))));
+        alertResults.forEach((result, i) => {
+          if (result.status === "fulfilled") alerts.push(...(result.value.items || []).map((a) => ({ ...a, cluster: a.cluster || clusters[i].name, cluster_id: clusters[i].id })));
+          else failed.push("告警（" + clusters[i].name + "）：" + result.reason.message);
+        });
         const visibleClusterNames = new Set(clusters.map((c) => c.name));
         const visibleClusterEnvs = new Set(clusters.map((c) => envNorm(c.env)).filter(Boolean));
         alerts = alerts.filter((a) => {
@@ -5975,7 +6027,7 @@
           <div class="x-tbar" role="group" aria-label="按环境筛选">${SRE_ENVS.map((e) => `<button class="x-seg" data-seg="${e}" aria-pressed="${e === sre.env}">${e}</button>`).join("")}</div>
           <div class="x-two">
             <section class="x-panel"><h2 class="x-h2">最近变更</h2>
-              <p class="x-empty">尚未接入发布记录：在「应用交付 › 发布单」创建发布后显示。</p></section>
+              <p class="x-empty">尚未接入发布记录：在「CI/CD › 发布单」创建发布后显示。</p></section>
             <section class="x-panel"><div class="x-sethead"><h2 class="x-h2">活跃告警 <span class="x-frac">${alerts.length} 条</span></h2><a class="x-btn" href="#/observe/events">查看全部</a></div>
               ${alerts.length ? `<ul class="x-list">${alerts.slice(0, 8).map((a) => {
                 const lb = a.labels || {};
@@ -8703,19 +8755,22 @@
       // 集群状态: 节点 / 工作负载 / 配置与密钥 (#/cluster/<k>); data shows only when opsOn() (render() gates it)
       const K8_PAGES = [
         { k: "list", t: "集群", i: "cube", h: "#/cluster/list", free: true, sub: "已接入的 Kubernetes 集群，按环境标签分组管理，支持 kubeconfig、Agent 与云托管三种接入方式" },
+        { k: "integrations", t: "接入配置", i: "plug", h: "#/cluster/integrations", sub: "查看所选集群的组件接入配置" },
+        { k: "components", t: "组件中心", i: "cube", h: "#/cluster/components", sub: "查看组件库存与目录，预检并提交组件安装配置" },
+        { k: "registries", t: "镜像仓库", i: "box", h: "#/cluster/registries", sub: "集群镜像仓库与镜像源配置" },
         { k: "nodes", t: "节点", i: "console", h: "#/cluster/nodes", sub: "各集群节点的负载与调度状态，可封锁、驱逐并编辑标签与污点", q: "搜索节点 / IP", fl: "集群", fc: 1 },
         { k: "nodepools", t: "节点分组", i: "cube", h: "#/cluster/nodepools", sub: "按 node.xingshu.com/pool 标签分组，支持批量维护节点标签与污点" },
         { k: "network", t: "Service", i: "net", h: "#/cluster/network", sub: "管理 Kubernetes Service，包括 ClusterIP、NodePort、LoadBalancer 与 ExternalName" },
         { k: "storage", t: "存储", i: "box", h: "#/cluster/storage", sub: "管理 PersistentVolume、PersistentVolumeClaim、StorageClass 与卷快照" },
         { k: "workloads", t: "工作负载", i: "apps", h: "#/cluster/workloads", sub: "Deployment、StatefulSet、DaemonSet、Job、CronJob 与 Pod，点击行查看详情", q: "搜索名称 / 镜像", fl: "类型", fc: 1 },
         { k: "config", t: "配置与密钥", i: "lock", h: "#/cluster/config", sub: "ConfigMap 与 Secret，Secret 的值默认隐藏", q: "搜索名称 / 键", fl: "命名空间", fc: 1 },
-        { k: "projects", t: "项目", i: "board", h: "#/cluster/projects", sub: "按项目归组命名空间，统一分配成员角色、ResourceQuota 与 LimitRange" },
-        { k: "helm", t: "应用商店", i: "box", h: "#/cluster/helm", sub: "Helm 仓库、Chart 目录与已安装的 Release，支持安装、升级、回滚与卸载" },
+        { k: "projects", t: "项目与配额", i: "board", h: "#/cluster/projects", sub: "查看 Namespace、ResourceQuota 与 LimitRange，验证并提交结构化配置" },
+        { k: "helm", t: "Helm 应用", i: "box", h: "#/cluster/helm", sub: "查看所选集群真实 Helm Release、Chart 版本与 revision 历史" },
         { k: "hpa", t: "弹性伸缩", i: "updown", h: "#/cluster/hpa", sub: "查看并管理基于 autoscaling/v2 的 HPA" },
         { k: "cron", t: "定时任务", i: "clock", h: "#/cluster/cron", sub: "CronJob 调度、暂停与手动触发，以及每次运行生成的 Job 历史" },
         { k: "backup", t: "备份恢复", i: "loop", h: "#/cluster/backup", sub: "基于集群 VolumeSnapshot 能力管理恢复点；未安装快照组件时明确提示" },
         { k: "rbac", t: "访问控制", i: "users", h: "#/cluster/rbac", sub: "Role / ClusterRole、角色绑定与 ServiceAccount，可做权限检查并生成 kubeconfig" },
-        { k: "crd", t: "自定义资源", i: "code", h: "#/cluster/crd", sub: "集群中的 CRD 按 API 分组浏览，查看 Schema 与定义，并管理其自定义资源实例" },
+        { k: "crd", t: "CRD", i: "code", h: "#/cluster/crd", sub: "查看集群 CRD 的 Group、Kind、Scope、版本、条件与 Schema" },
         { k: "hosts", t: "主机纳管", i: "term", h: "#/cluster/hosts", free: true, sub: "物理机与虚拟机的导入、分组、环境标签与 Agent 安装" },
       ];
       const k8Cur = () => K8_PAGES.find((p) => p.k === location.hash.split("/")[2]) || K8_PAGES.find((p) => p.k === "nodes");
@@ -10271,7 +10326,7 @@
               const note = '<p class="x-frac">此处仅显示 CI/CD 应用中实际配置的 Helm 环境；未配置的 Chart 不会从示例清单补入。</p>';
               const table = rows.length
                 ? k8Table(["应用", "环境", "Chart", "版本", "Release", "命名空间", "执行目标", "操作"], rows)
-                : '<p class="x-empty">' + (helmEntries.length ? "没有匹配的 Helm 配置。" : "尚无已配置 Helm 环境；请先在「应用交付」中配置真实应用与执行目标。") + "</p>";
+                : '<p class="x-empty">' + (helmEntries.length ? "没有匹配的 Helm 配置。" : "尚无已配置 Helm 环境；请先在「CI/CD」中配置真实应用与执行目标。") + "</p>";
               return search + note + table;
             },
             发布记录: () => {
@@ -10338,7 +10393,7 @@
           box.innerHTML = '<div class="x-bar"><div class="x-tabs" role="tablist">' +
             tabs.map((tab) => '<button role="tab" data-hmlive-tab="' + esc(tab) + '" aria-selected="' + (tab === HM_LIVE.tab) + '" class="' + (tab === HM_LIVE.tab ? "on" : "") + '">' + esc(tab) + "<b>" + cnt[tab] + "</b></button>").join("") +
             '</div><button class="x-btn" type="button" data-hmlive-refresh>刷新</button></div><section class="x-panel">' +
-            '<p class="x-frac" style="margin:0 0 12px">Helm 部署目标来自 CI/CD target；它与当前集群编号不是同一标识。部署与回滚请在现有应用交付流程中提交。</p>' +
+            '<p class="x-frac" style="margin:0 0 12px">Helm 部署目标来自 CI/CD target；它与当前集群编号不是同一标识。部署与回滚请在现有CI/CD流程中提交。</p>' +
             body[HM_LIVE.tab]() + "</section>";
           box.querySelectorAll("[data-hmlive-tab]").forEach((button) => {
             button.onclick = () => { HM_LIVE.tab = button.getAttribute("data-hmlive-tab"); render(apps, targets, releases, releaseError, repos, charts, repoError, chartError); };
@@ -11238,8 +11293,9 @@
           bar: { q: "搜索命名空间 / 服务", act: "已注入的全部切为 STRICT", id: "tfStrict" } },
         { k: "expose", t: "对外服务", body: "对外服务", sub: "管理 Kubernetes Ingress 与集群已安装的 APISIX 域名入口",
           bar: { q: "搜索服务 / 域名", act: "+ 创建流量配置", id: "tfExpose" } },
-        { k: "topo", t: "服务拓扑", body: "拓扑", sub: "服务间的实际调用方向、链路样本量与错误率",
+        { k: "topo", t: "服务链路", body: "拓扑", sub: "从 Ingress / APISIX 入口到 Service 与业务 Pod 的流量链路",
           bar: { act: "刷新拓扑", id: "tfTopo" } },
+        { k: "certificates", t: "证书", body: "证书", sub: "集群 TLS Secret 与 cert-manager 证书" },
       ];
       const tfHash = (p) => (p.k === "mesh" ? "#/traffic" : "#/traffic/" + p.k);
       const tfCur = () => TF_PAGES.find((p) => p.k === location.hash.split("/")[2]) || TF_PAGES[0];
@@ -11340,7 +11396,9 @@
       async function netContext() {
         const all = netItems(await XS.get("/clusters?page_size=500")), env = envNorm(nav.env);
         const clusters = all.filter((c) => env === "全部" || envNorm(c.env) === env);
-        const cluster = clusters.find((c) => String(c.id) === String(NET_VIEW.clusterId)) || clusters[0] || null;
+        const context = clusterContextApi(), state = context && context.get();
+        const selected = NET_VIEW.clusterId || state && state.kind === "cluster" && state.cluster_id;
+        const cluster = selected ? clusters.find((c) => String(c.id) === String(selected)) || null : null;
         NET_VIEW.clusterId = cluster ? String(cluster.id) : "";
         return { all, clusters, cluster };
       }
@@ -11353,7 +11411,13 @@
           if (rev !== pageRenderRev || current() !== kind) return;
           el.innerHTML = `<div>${phead(pg.t, pg.sub, netClusterSelect(ctx))}<section class="x-panel x-setform">${body}</section></div>`;
           const select = el.querySelector("[data-net-cluster]");
-          if (select) select.onchange = () => { NET_VIEW.clusterId = select.value; kind === "traffic" ? renderTrafficLive(el) : renderNetpolLive(el); };
+          if (select) select.onchange = () => {
+            NET_VIEW.clusterId = select.value;
+            NET_VIEW.flow = null;
+            const selected = ctx.clusters.find((cluster) => String(cluster.id) === String(select.value));
+            if (selected && window.XSClusterContext) window.XSClusterContext.set({ kind: "cluster", cluster_id: selected.id, name: selected.name, env: selected.env || "" });
+            kind === "traffic" ? renderTrafficLive(el) : renderNetpolLive(el);
+          };
           const topology = el.querySelector("[data-flow-topology]");
           if (topology) bindTrafficTopology(topology);
           const reset = el.querySelector("[data-flow-reset]");
@@ -11370,15 +11434,21 @@
         const dsData = await XS.get("/observability/datasources");
         const source = XSObserve.datasource(netItems(dsData), ctx.all, ctx.cluster, ["jaeger", "tempo"]);
         if (!source) return { source: null, services: [], edges: [] };
-        const services = netItems(await XS.get(`/observability/traces/services?datasource=${encodeURIComponent(source.ds.id)}`));
-        const tags = source.dedicated ? {} : { [(source.ds.options || {}).cluster_label || "k8s.cluster.name"]: ctx.cluster.name };
+        const services = netItems(await XS.get("/observability/traces/services", {
+          datasource: source.ds.id, cluster_id: ctx.cluster.id
+        }, { scope: "cluster" }));
+        const tags = XSObserve.traceTags(source);
         const found = await Promise.all(services.slice(0, 20).map((service) => {
-          const query = new URLSearchParams({ datasource: source.ds.id, service, tags: JSON.stringify(tags), start: "now-60m", end: "now", limit: "15" });
-          return XS.get("/observability/traces/search?" + query.toString()).then(netItems).catch(() => []);
+          return XS.get("/observability/traces/search", {
+            datasource: source.ds.id, cluster_id: ctx.cluster.id, service, tags: JSON.stringify(tags),
+            start: "now-60m", end: "now", limit: "15"
+          }, { scope: "cluster" }).then(netItems).catch(() => []);
         }));
         const hits = [...new Map(found.flat().filter((t) => t.trace_id || t.traceID).map((t) => [t.trace_id || t.traceID, t])).values()].slice(0, 40);
         const details = await Promise.all(hits.map((t) =>
-          XS.get(`/observability/traces/${encodeURIComponent(t.trace_id || t.traceID)}?datasource=${encodeURIComponent(source.ds.id)}`).catch(() => null)
+          XS.get("/observability/traces/" + encodeURIComponent(t.trace_id || t.traceID), {
+            datasource: source.ds.id, cluster_id: ctx.cluster.id
+          }, { scope: "cluster" }).catch(() => null)
         ));
         const edgeMap = new Map();
         details.filter(Boolean).forEach((trace) => {
@@ -11422,25 +11492,27 @@
           if (matches.length === 1 && visibleKeys.has(matches[0].key)) traceNode.set(name, matches[0].key);
         });
         visible.filter((node) => node.key.indexOf("trace:") === 0).forEach((node) => traceNode.set(node.trace, node.key));
-        const graphEdges = edges.filter((edge) => traceNode.has(edge.from) && traceNode.has(edge.to) && traceNode.get(edge.from) !== traceNode.get(edge.to))
-          .map((edge) => ({ from: traceNode.get(edge.from), to: traceNode.get(edge.to) }));
+        const resolvedEdges = edges.filter((edge) => traceNode.has(edge.from) && traceNode.has(edge.to) && traceNode.get(edge.from) !== traceNode.get(edge.to))
+          .map((edge) => ({ ...edge, from: traceNode.get(edge.from), to: traceNode.get(edge.to) }));
+        const graphEdges = resolvedEdges.map((edge) => ({ from: edge.from, to: edge.to }));
         const connected = new Set();
         graphEdges.forEach((edge) => { connected.add(edge.from); connected.add(edge.to); });
-        const graphNodes = graphEdges.length ? visible.filter((node) => connected.has(node.key)) : visible;
-        const unobserved = graphEdges.length ? visible.filter((node) => !connected.has(node.key)) : [];
+        const graphNodes = visible;
         const layout = trafficLayout(graphNodes, graphEdges), pos = layout.positions;
         const markerId = "net-flow-arrow";
-        const defs = `<defs><marker id="${markerId}" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto"><path d="M1 1 11 6 1 11z" fill="#176c61" /></marker><marker id="${markerId}-bad" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto"><path d="M1 1 11 6 1 11z" fill="#d43832" /></marker></defs>`;
-        const lines = edges.filter((edge) => traceNode.has(edge.from) && traceNode.has(edge.to) && traceNode.get(edge.from) !== traceNode.get(edge.to))
+        const defs = `<defs><marker id="${markerId}" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto"><path d="M1 1 11 6 1 11z" fill="#12b76a" /></marker><marker id="${markerId}-bad" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto"><path d="M1 1 11 6 1 11z" fill="#f04438" /></marker></defs>`;
+        const traceOffsets = window.XSTrafficTopology.parallelOffsets(resolvedEdges);
+        const lines = resolvedEdges
           .map((edge, index) => {
-            const fromKey = traceNode.get(edge.from), toKey = traceNode.get(edge.to);
+            const fromKey = edge.from, toKey = edge.to;
             const from = pos[fromKey], to = pos[toKey], bad = edge.errorPct >= 1;
-            const d = window.XSTrafficTopology.edgePath(from, to, layout.nodeWidth, layout.nodeHeight);
+            const geometry = { offset: traceOffsets[index], labelHeight: 18, labelClearance: 10 };
+            const d = window.XSTrafficTopology.edgePath(from, to, layout.nodeWidth, layout.nodeHeight, geometry);
             const label = `${edge.count} 样本   ${edge.errorPct}% 错`;
-            const labelPoint = window.XSTrafficTopology.edgeLabelPoint(from, to, layout.nodeWidth, layout.nodeHeight, layout.width);
+            const labelPoint = window.XSTrafficTopology.edgeLabelPoint(from, to, layout.nodeWidth, layout.nodeHeight, layout.width, geometry);
             const labelWidth = Math.max(68, Math.min(156, label.length * 5.5 + 18));
             const title = `${edge.from} 调用 ${edge.to}；${edge.count} 个已检索 trace span 样本，错误率 ${edge.errorPct}%`;
-            return `<g class="flow-edge observed${bad ? " bad" : ""}" data-flow-edge data-flow-from="${esc(fromKey)}" data-flow-to="${esc(toKey)}" data-flow-index="${index}"><title>${esc(title)}</title><path class="flow-edge-line" d="${d}" marker-end="url(#${bad ? markerId + "-bad" : markerId})" /><path class="flow-edge-motion" d="${d}" aria-hidden="true" /><rect class="flow-edge-label-bg" data-flow-label-bg x="${labelPoint.x - labelWidth / 2}" y="${labelPoint.y - 9}" width="${labelWidth}" height="18" rx="9" /><text class="flow-edge-label" x="${labelPoint.x}" y="${labelPoint.y + 3}">${esc(label)}</text></g>`;
+            return `<g class="flow-edge observed${bad ? " bad" : ""}" data-flow-edge data-flow-from="${esc(fromKey)}" data-flow-to="${esc(toKey)}" data-flow-index="${index}" data-flow-offset="${traceOffsets[index]}" tabindex="0" aria-label="${esc(title)}"><title>${esc(title)}</title><path class="flow-edge-line" d="${d}" marker-end="url(#${bad ? markerId + "-bad" : markerId})" /><path class="flow-edge-motion" d="${d}" aria-hidden="true" /><rect class="flow-edge-label-bg" data-flow-label-bg x="${labelPoint.x - labelWidth / 2}" y="${labelPoint.y - 9}" width="${labelWidth}" height="18" rx="9" /><text class="flow-edge-label" x="${labelPoint.x}" y="${labelPoint.y + 3}">${esc(label)}</text></g>`;
           }).join("");
         const nodeMarkup = graphNodes.map((node) => {
           const p = pos[node.key];
@@ -11448,17 +11520,15 @@
           const short = (text, max) => text.length > max ? text.slice(0, max - 1) + "…" : text;
           const isTraceOnly = node.key.indexOf("trace:") === 0;
           const href = `#/trace/svc/${encodeURIComponent(node.trace)}?cluster=${encodeURIComponent(clusterId || "")}`;
-          const flowClass = connected.has(node.key) ? " flow-connected" : "";
           const status = connected.has(node.key) ? "已观测到调用关系" : "当前窗口未观测到调用关系";
           const meta = [node.type, node.address].filter(Boolean).join("   ");
-          return `<a class="flow-node${isTraceOnly ? " trace-only" : ""}${flowClass}" href="${href}" data-flow-node data-node-key="${esc(node.key)}" data-x="${p.x}" data-y="${p.y}" transform="translate(${p.x} ${p.y})" aria-label="查看 ${esc(name)} 的链路；${status}；可拖动调整位置" tabindex="0"><title>${esc(name)}   ${esc(sub)}${meta ? `   ${esc(meta)}` : ""}   ${status}</title><rect class="flow-node-hit" x="${-layout.nodeWidth / 2}" y="${-layout.nodeHeight / 2}" width="${layout.nodeWidth}" height="${layout.nodeHeight}" rx="9" /><rect class="flow-node-card" x="${-layout.nodeWidth / 2}" y="${-layout.nodeHeight / 2}" width="${layout.nodeWidth}" height="${layout.nodeHeight}" rx="9" /><rect class="flow-node-accent" x="${-layout.nodeWidth / 2}" y="${-layout.nodeHeight / 2}" width="5" height="${layout.nodeHeight}" rx="3" /><text class="flow-name" x="${-layout.nodeWidth / 2 + 18}" y="-17">${esc(short(name, 24))}</text><text class="flow-sub" x="${-layout.nodeWidth / 2 + 18}" y="1">${esc(short(sub, 28))}</text>${meta ? `<text class="flow-meta" x="${-layout.nodeWidth / 2 + 18}" y="20">${esc(short(meta, 34))}</text>` : ""}<rect class="flow-status-bg" x="${layout.nodeWidth / 2 - 94}" y="${-layout.nodeHeight / 2 + 14}" width="76" height="18" rx="9" /><text class="flow-status" x="${layout.nodeWidth / 2 - 56}" y="${-layout.nodeHeight / 2 + 26}">${connected.has(node.key) ? "已关联" : "未观测"}</text></a>`;
+          const extra = [connected.has(node.key) ? "flow-connected" : "", isTraceOnly ? "trace-only" : ""].filter(Boolean).join(" ");
+          return topologyNodeMarkup(node, layout, p, `查看 ${name} 的链路；${status}；可拖动调整位置`,
+            short(name, 24), short(sub, 28), short(meta || `${node.type || "Service"} · ${status}`, 34), href, extra);
         }).join("");
         const initial = esc(JSON.stringify(pos));
-        const unobservedMarkup = unobserved.length
-          ? `<div class="x-flow-unobserved"><span>未关联到可见调用方向：</span>${unobserved.map((node) => `<strong title="${esc(node.sub || node.label)}">${esc(String(node.label || node.key))}</strong>`).join("")}</div>`
-          : "";
         const empty = graphEdges.length ? "" : '<p class="x-flow-empty" data-flow-empty>近 1 小时没有采集到跨服务调用 span；图中仅展示集群 Service，不推测调用关系。</p>';
-        return `<div class="x-topo x-topo--flow"><svg data-flow-topology data-flow-direction="${layout.direction}" data-flow-node-width="${layout.nodeWidth}" data-flow-node-height="${layout.nodeHeight}" data-flow-initial="${initial}" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" preserveAspectRatio="xMidYMin meet" role="group" aria-label="${graphNodes.length} 个调用图服务节点，${graphEdges.length} 条基于实际 trace span 父子关系识别的调用方向">${defs}${lines}${nodeMarkup}</svg>${unobservedMarkup}${empty}</div>`;
+        return `<div class="x-topo x-topo--flow"><svg data-flow-topology data-flow-direction="${layout.direction}" data-flow-node-width="${layout.nodeWidth}" data-flow-node-height="${layout.nodeHeight}" data-flow-initial="${initial}" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" preserveAspectRatio="xMidYMin meet" role="group" aria-label="${graphNodes.length} 个调用图服务节点，${graphEdges.length} 条基于实际 trace span 父子关系识别的调用方向">${defs}${lines}${nodeMarkup}</svg>${empty}</div>`;
       }
       function bindTrafficTopology(svg) {
         if (!svg || svg.dataset.flowBound) return;
@@ -11503,19 +11573,38 @@
             node.classList.toggle("flow-neighbor", !!key && !active && related.has(node.dataset.nodeKey));
           });
         };
+        const focusEdge = (target) => {
+          if (!target) { focusNode(""); return; }
+          svg.dataset.flowFocus = "true";
+          const from = target.dataset.flowFrom, to = target.dataset.flowTo;
+          svg.querySelectorAll("[data-flow-edge]").forEach((edge) => edge.classList.toggle("flow-focus", edge === target));
+          svg.querySelectorAll("[data-flow-node]").forEach((node) => {
+            const key = node.dataset.nodeKey;
+            node.classList.toggle("flow-active", key === from || key === to);
+            node.classList.toggle("flow-neighbor", key === from || key === to);
+          });
+        };
         svg.addEventListener("pointerover", (event) => {
+          const edge = event.target.closest && event.target.closest("[data-flow-edge]");
+          if (edge && !edge.contains(event.relatedTarget)) { focusEdge(edge); return; }
           const node = event.target.closest && event.target.closest("[data-flow-node]");
           if (node && !node.contains(event.relatedTarget)) focusNode(node.dataset.nodeKey);
         });
         svg.addEventListener("pointerout", (event) => {
+          const edge = event.target.closest && event.target.closest("[data-flow-edge]");
+          if (edge && !edge.contains(event.relatedTarget)) { focusEdge(null); return; }
           const node = event.target.closest && event.target.closest("[data-flow-node]");
           if (node && !node.contains(event.relatedTarget)) focusNode("");
         });
         svg.addEventListener("focusin", (event) => {
+          const edge = event.target.closest && event.target.closest("[data-flow-edge]");
+          if (edge) { focusEdge(edge); return; }
           const node = event.target.closest && event.target.closest("[data-flow-node]");
           if (node) focusNode(node.dataset.nodeKey);
         });
         svg.addEventListener("focusout", (event) => {
+          const edge = event.target.closest && event.target.closest("[data-flow-edge]");
+          if (edge && !edge.contains(event.relatedTarget)) { focusEdge(null); return; }
           const node = event.target.closest && event.target.closest("[data-flow-node]");
           if (node && !node.contains(event.relatedTarget)) focusNode("");
         });
@@ -11527,11 +11616,12 @@
             const motion = edge.querySelector(".flow-edge-motion");
             const label = edge.querySelector(".flow-edge-label");
             const labelBg = edge.querySelector("[data-flow-label-bg]");
-            const d = window.XSTrafficTopology.edgePath(from, to, nodeWidth, nodeHeight);
+            const geometry = { offset: Number(edge.dataset.flowOffset) || 0, labelHeight: 18, labelClearance: 10 };
+            const d = window.XSTrafficTopology.edgePath(from, to, nodeWidth, nodeHeight, geometry);
             path.setAttribute("d", d);
             if (motion) motion.setAttribute("d", d);
             if (label) {
-              const point = window.XSTrafficTopology.edgeLabelPoint(from, to, nodeWidth, nodeHeight, svg.viewBox.baseVal.width);
+              const point = window.XSTrafficTopology.edgeLabelPoint(from, to, nodeWidth, nodeHeight, svg.viewBox.baseVal.width, geometry);
               label.setAttribute("x", point.x);
               label.setAttribute("y", point.y + 3);
               if (labelBg) {
@@ -11630,6 +11720,279 @@
           return false;
         });
       }
+      function configurationItems(result, kind) {
+        const resources = result && result.resources || [];
+        return resources.filter((resource) => resource.kind === kind)
+          .flatMap((resource) => resource.items || []);
+      }
+      function exposurePaths(object) {
+        const spec = object.spec || {};
+        if (object.kind === "Ingress") {
+          return (spec.rules || []).flatMap((rule) => ((rule.http || {}).paths || []).map((path) => ({
+            host: rule.host || "*", path: path.path || "/", port: path.backend && path.backend.service && path.backend.service.port,
+            service: path.backend && path.backend.service && path.backend.service.name
+          })));
+        }
+        const routes = spec.http || spec.rules || spec.routes || [];
+        const list = Array.isArray(routes) ? routes : [routes];
+        return list.flatMap((route) => {
+          const host = (route.match || []).flatMap((match) => match.hosts || []).join(", ") || (route.hosts || []).join(", ") || "*";
+          const path = (route.match || []).map((match) => (match.paths || []).map((entry) => entry.value || entry)).flat().join(", ") || "/";
+          return (route.backends || route.backend || []).map((backend) => ({
+            host, path, service: backend.serviceName || backend.service || backend.name,
+            port: backend.servicePort || backend.port
+          }));
+        });
+      }
+      function endpointPods(endpointResult, services, pods) {
+        const byIdentity = new Map(pods.map((pod) => [`${pod.namespace}/${pod.name}/${pod.uid}`, pod]));
+        const byService = new Map();
+        (endpointResult && endpointResult.items || []).forEach((slice) => {
+          const key = `${slice.namespace}/${slice.service}`;
+          const row = byService.get(key) || [];
+          (slice.endpoints || []).forEach((endpoint) => {
+            const ref = endpoint.pod;
+            if (!ref || ref.namespace !== slice.namespace || endpoint.ready !== true || endpoint.terminating === true) return;
+            const pod = byIdentity.get(`${ref.namespace}/${ref.name}/${ref.uid}`);
+            if (pod) row.push({ pod, endpoint, slice });
+          });
+          byService.set(key, row);
+        });
+        const fallback = endpointResult && endpointResult.state === "forbidden" || endpointResult && endpointResult.state === "unavailable";
+        const links = [];
+        services.forEach((service) => {
+          const key = `${service.namespace}/${service.name}`;
+          const ready = byService.get(key) || [];
+          if (ready.length) {
+            ready.forEach(({ pod, endpoint, slice }) => links.push({
+              service, pod, source: "endpointslice", ready: endpoint.ready,
+              serving: endpoint.serving, terminating: endpoint.terminating,
+              ports: (slice.ports || []).filter((port) => port.port != null)
+            }));
+          } else if (fallback && service.selector && Object.keys(service.selector).length) {
+            pods.filter((pod) => pod.namespace === service.namespace &&
+              Object.entries(service.selector).every(([name, value]) => (pod.labels || {})[name] === value))
+              .forEach((pod) => links.push({ service, pod, source: "selector", ready: null, ports: service.ports || [] }));
+          }
+        });
+        return { links, fallback: !!fallback };
+      }
+      function ingressPolicyRows(resources) {
+        return (resources || []).flatMap((resource) => resource.items || [])
+          .filter((policy) => ["NetworkPolicy", "CiliumNetworkPolicy", "CiliumClusterwideNetworkPolicy"].includes(policy.kind));
+      }
+      function policyDeclarationEdges(services, pods, policies) {
+        const serviceKey = (service) => `${service.namespace}/${service.name}`;
+        const matchingServices = (selected) => [...new Set(selected.flatMap((pod) => services.filter((service) =>
+          service.namespace === pod.namespace && service.selector && Object.keys(service.selector).length &&
+          Object.entries(service.selector).every(([key, value]) => (pod.labels || {})[key] === value)
+        ).map(serviceKey)))];
+        const edges = new Map();
+        const add = (from, to, policy) => {
+          if (from === to) return;
+          const key = `${from}\u0000${to}`, value = edges.get(key) || { from, to, policies: [] };
+          value.policies.push(`${policy.metadata?.namespace || "cluster"}/${policy.metadata?.name || policy.name || "policy"}`);
+          edges.set(key, value);
+        };
+        policies.forEach((policy) => {
+          const meta = policy.metadata || policy, namespace = meta.namespace || "";
+          const spec = policy.spec || {};
+          const targetSelector = policy.pod_selector || spec.podSelector || spec.endpointSelector || {};
+          const targetPods = pods.filter((pod) => (!namespace || pod.namespace === namespace) && netSelectorMatches(targetSelector, pod.labels));
+          const targets = matchingServices(targetPods);
+          const rules = [
+            ...(policy.ingress || spec.ingress || []).map((rule) => ({ rule, direction: "Ingress" })),
+            ...(policy.egress || spec.egress || []).map((rule) => ({ rule, direction: "Egress" }))
+          ];
+          rules.forEach(({ rule, direction }) => {
+            const peers = rule.from || rule.to || [];
+            peers.forEach((peer) => {
+              const selector = peer.podSelector || peer.endpointSelector;
+              if (!selector) return;
+              const peerPods = pods.filter((pod) =>
+                (!peer.namespaceSelector && !peer.namespace_selector ? pod.namespace === namespace :
+                  netSelectorMatches(peer.namespaceSelector || peer.namespace_selector, pod.namespaceLabels || {})) &&
+                netSelectorMatches(selector, pod.labels));
+              const mapped = matchingServices(peerPods);
+              if (direction === "Ingress") mapped.forEach((from) => targets.forEach((to) => add(from, to, policy)));
+              else targets.forEach((from) => mapped.forEach((to) => add(from, to, policy)));
+            });
+          });
+        });
+        return [...edges.values()];
+      }
+      function mergePrimaryEdges(edges) {
+        const merged = new Map();
+        (edges || []).forEach((edge) => {
+          const key = `${edge.from}\u0000${edge.to}`;
+          const row = merged.get(key);
+          if (!row) {
+            merged.set(key, { ...edge, pathCount: 1, titles: edge.title ? [edge.title] : [] });
+            return;
+          }
+          row.pathCount++;
+          if (edge.title) row.titles.push(edge.title);
+        });
+        return [...merged.values()].map((edge) => edge.pathCount > 1
+          ? { ...edge, label: `${edge.pathCount} paths`, title: edge.titles.join("；") }
+          : edge);
+      }
+      function topologyEdgeMarkup(edge, from, to, layout, type, index, label, color, options) {
+        if (!from || !to) return "";
+        const geometry = { offset: options && options.offset || 0, labelHeight: 18, labelClearance: 10 };
+        const path = window.XSTrafficTopology.edgePath(from, to, layout.nodeWidth, layout.nodeHeight, geometry);
+        const point = window.XSTrafficTopology.edgeLabelPoint(from, to, layout.nodeWidth, layout.nodeHeight, layout.width, geometry);
+        const width = Math.max(58, Math.min(160, label.length * 5.4 + 18));
+        const title = edge.title || label;
+        return `<g class="flow-edge ${type}" data-flow-edge data-flow-from="${esc(edge.from)}" data-flow-to="${esc(edge.to)}" data-flow-index="${index}" data-flow-offset="${esc(geometry.offset)}" tabindex="0" aria-label="${esc(title)}"><title>${esc(title)}</title><path class="flow-edge-line" d="${path}" marker-end="url(#flow-${type})" /><rect class="flow-edge-label-bg" data-flow-label-bg x="${point.x - width / 2}" y="${point.y - 9}" width="${width}" height="18" rx="9" /><text class="flow-edge-label" x="${point.x}" y="${point.y + 3}">${esc(label)}</text></g>`;
+      }
+      function topologyNodeClass(node) {
+        const type = String(node && node.type || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+        const entry = ["ingress", "apisixroute"].includes(type);
+        const unhealthy = node && node.type === "Pod" && (node.ready === false ||
+          node.object && node.object.status && node.object.status.phase && node.object.status.phase !== "Running");
+        return `flow-node flow-node--${entry ? "entry" : type || "service"}${unhealthy ? " flow-node--bad" : ""}`;
+      }
+      function topologyNodeStatus(node) {
+        if (!node) return "";
+        if (node.type === "Pod") return node.ready === true ? "Ready" : node.ready === false ? "Not Ready" : "Endpoint 未验证";
+        if (node.type === "Service") return "业务 Service";
+        return "流量入口";
+      }
+      function topologyNodeMarkup(node, layout, position, title, label, sub, meta, href, extraClass) {
+        const status = topologyNodeStatus(node);
+        const body = `<rect class="flow-node-hit" x="${-layout.nodeWidth / 2}" y="${-layout.nodeHeight / 2}" width="${layout.nodeWidth}" height="${layout.nodeHeight}" rx="8"/><rect class="flow-node-card" x="${-layout.nodeWidth / 2}" y="${-layout.nodeHeight / 2}" width="${layout.nodeWidth}" height="${layout.nodeHeight}" rx="8"/><rect class="flow-node-accent" x="${-layout.nodeWidth / 2}" y="${-layout.nodeHeight / 2}" width="${layout.nodeWidth}" height="3" rx="1.5"/><circle class="flow-status-dot" cx="${layout.nodeWidth / 2 - 14}" cy="${-layout.nodeHeight / 2 + 15}" r="3.2"/><text class="flow-name" x="${-layout.nodeWidth / 2 + 16}" y="-12">${esc(label)}</text><text class="flow-sub" x="${-layout.nodeWidth / 2 + 16}" y="7">${esc(sub)}</text><text class="flow-meta" x="${-layout.nodeWidth / 2 + 16}" y="25">${esc(meta || `${node.type} · ${status}`)}</text>`;
+        const attrs = `class="${topologyNodeClass(node)}${extraClass ? " " + extraClass : ""}" data-flow-node data-node-key="${esc(node.key)}" data-x="${position.x}" data-y="${position.y}" transform="translate(${position.x} ${position.y})" tabindex="0" aria-label="${esc(title)}"`;
+        return href ? `<a ${attrs} href="${href}"><title>${esc(title)}</title>${body}</a>` : `<g ${attrs}><title>${esc(title)}</title>${body}</g>`;
+      }
+      function networkTopology(services, pods, exposures, endpointResult, traceServices, observedEdges, policies, clusterId, options) {
+        const serviceById = new Map(services.map((service) => [`${service.namespace}/${service.name}`, service]));
+        const nodes = [], nodeByKey = new Map(), primaryEdges = [];
+        const addNode = (node) => {
+          if (!nodeByKey.has(node.key)) { nodeByKey.set(node.key, node); nodes.push(node); }
+          return nodeByKey.get(node.key);
+        };
+        const exposureEntries = exposures.flatMap((object) => exposurePaths(object).map((path, index) => ({ object, path, index })));
+        const filters = new Map([["all", "全部入口"]]);
+        exposureEntries.forEach(({ object, path }) => filters.set(`${object.kind}/${object.metadata?.namespace || "cluster"}/${object.metadata?.name || object.name}/${path.host}`,
+          `${path.host}   ${object.metadata?.namespace || ""}/${object.metadata?.name || object.name}`));
+        const selected = options && options.entry || "all";
+        const visibleEntries = exposureEntries.filter(({ object, path }) => selected === "all" ||
+          selected === `${object.kind}/${object.metadata?.namespace || "cluster"}/${object.metadata?.name || object.name}/${path.host}`);
+        visibleEntries.forEach(({ object, path }) => {
+          const meta = object.metadata || {};
+          const entryKey = `entry:${object.kind}/${meta.namespace || "cluster"}/${meta.name || object.name}/${path.host || "*"}`;
+          const entry = addNode({ key: entryKey, label: object.kind === "ApisixRoute" ? `APISIX ${meta.name || object.name}` : meta.name || object.name,
+            sub: path.host, type: object.kind, namespace: meta.namespace || "", object, lane: "entry" });
+          const service = serviceById.get(`${meta.namespace || "default"}/${path.service}`);
+          if (!service) return;
+          const serviceNode = addNode({ key: `service:${service.namespace}/${service.name}`, label: service.name, sub: service.namespace,
+            type: "Service", namespace: service.namespace, object: service, trace: service.name, lane: "service" });
+          primaryEdges.push({ from: entry.key, to: serviceNode.key, kind: "primary", label: `${path.path} → ${path.port && (path.port.number || path.port.name) || service.ports?.[0]?.port || ""}`,
+            port: path.port, title: `${entry.label} ${path.host}${path.path} → ${service.namespace}/${service.name}` });
+        });
+        const relation = endpointPods(endpointResult, services, pods);
+        relation.links.forEach((link) => {
+          const serviceKey = `service:${link.service.namespace}/${link.service.name}`;
+          if (!nodeByKey.has(serviceKey)) return;
+          const pod = link.pod, key = `pod:${pod.namespace}/${pod.name}/${pod.uid}`;
+          const podNode = addNode({ key, label: pod.name, sub: pod.namespace, type: "Pod", namespace: pod.namespace,
+            object: pod, ready: pod.ready, lane: "pod" });
+          primaryEdges.push({ from: serviceKey, to: key, kind: "primary", label: link.source === "endpointslice"
+            ? `${(link.ports || []).map((port) => `${port.port}/${port.protocol}`).join(", ") || "Endpoint"} · Ready`
+            : "selector 关联", title: `${link.service.namespace}/${link.service.name} → ${pod.namespace}/${pod.name}（${link.source === "endpointslice" ? `EndpointSlice ready=${link.ready}` : "selector 关联，未验证 Endpoint readiness"}）` });
+        });
+        const primaryLines = mergePrimaryEdges(primaryEdges);
+        const linkedKeys = new Set(primaryLines.flatMap((edge) => [edge.from, edge.to]));
+        const mainNodes = nodes.filter((node) => linkedKeys.has(node.key));
+        const selectedEdges = primaryLines.filter((edge) => linkedKeys.has(edge.from) && linkedKeys.has(edge.to));
+        if (!mainNodes.length) return { html: '<p class="x-empty" data-flow-empty>当前集群没有可关联到 Service 的 Ingress 或 APISIX 入口。</p>', filters };
+        const serviceByTrace = new Map();
+        services.forEach((service) => {
+          const key = `service:${service.namespace}/${service.name}`, matches = serviceByTrace.get(service.name) || [];
+          matches.push(key); serviceByTrace.set(service.name, matches);
+        });
+        const traceKey = new Map();
+        (traceServices || []).forEach((name) => {
+          const matches = serviceByTrace.get(name) || [];
+          if (matches.length === 1 && mainNodes.some((node) => node.key === matches[0])) traceKey.set(name, matches[0]);
+        });
+        const traceEdges = (observedEdges || []).flatMap((edge) => {
+          const from = traceKey.get(edge.from), to = traceKey.get(edge.to);
+          return from && to && from !== to && mainNodes.some((node) => node.key === from) && mainNodes.some((node) => node.key === to)
+            ? [{ from, to, kind: "observed", label: `${edge.count} span`, title: `${edge.from} → ${edge.to}，${edge.count} 个 trace span 样本，错误率 ${edge.errorPct}%` }] : [];
+        });
+        const policyEdges = options && options.policy ? policyDeclarationEdges(services, pods, policies)
+          .filter((edge) => mainNodes.some((node) => node.key === `service:${edge.from}`) && mainNodes.some((node) => node.key === `service:${edge.to}`))
+          .map((edge) => ({ ...edge, from: `service:${edge.from}`, to: `service:${edge.to}`, kind: "declared",
+            label: `策略 ${edge.policies.length}`, title: `NetworkPolicy 声明方向：${edge.policies.join(", ")}` })) : [];
+        const overlay = [...traceEdges, ...policyEdges];
+        const layout = trafficLayout(mainNodes, [...selectedEdges, ...overlay].map(({ from, to }) => ({ from, to })), {
+          primaryEdges: selectedEdges, laneByKey: Object.fromEntries(mainNodes.map((node) => [node.key, node.lane]))
+        });
+        const pos = layout.positions;
+        const drawEdges = [
+          ...selectedEdges.map((edge) => ({ edge, type: "primary" })),
+          ...traceEdges.map((edge) => ({ edge, type: "observed" })),
+          ...policyEdges.map((edge) => ({ edge, type: "declared" }))
+        ];
+        const offsets = window.XSTrafficTopology.parallelOffsets(drawEdges.map((item) => item.edge));
+        const connected = new Set(drawEdges.flatMap((item) => [item.edge.from, item.edge.to]));
+        const lines = drawEdges.map((item, index) => topologyEdgeMarkup(item.edge, pos[item.edge.from], pos[item.edge.to],
+          layout, item.type, index, item.edge.label, "", { offset: offsets[index] })).join("");
+        const nodeMarkup = mainNodes.map((node) => {
+          const p = pos[node.key], short = (value, max) => String(value || "").length > max ? String(value).slice(0, max - 1) + "…" : String(value || "");
+          const title = `${node.type} ${node.namespace}/${node.label}\n${JSON.stringify(node.object || {})}`;
+          const status = node.type === "Pod" ? node.ready || "EndpointSlice ready" : node.type === "Service" ? "业务 Service" : "流量入口";
+          return topologyNodeMarkup(node, layout, p, title, short(node.label, 24), short(node.sub, 28),
+            short(`${node.type} · ${status}`, 34), "", connected.has(node.key) ? "flow-connected" : "");
+        }).join("");
+        const initial = esc(JSON.stringify(pos));
+        const svg = `<div class="x-topo x-topo--flow"><svg data-flow-topology data-flow-direction="${layout.direction}" data-flow-node-width="${layout.nodeWidth}" data-flow-node-height="${layout.nodeHeight}" data-flow-initial="${initial}" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" preserveAspectRatio="xMidYMin meet" role="group" aria-label="入口到 Service 和业务 Pod 的流量链路"><defs><marker id="flow-primary" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto"><path d="M1 1 11 6 1 11z" fill="#98a2b3"/></marker><marker id="flow-observed" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto"><path d="M1 1 11 6 1 11z" fill="#12b76a"/></marker><marker id="flow-declared" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto"><path d="M1 1 11 6 1 11z" fill="#98a2b3"/></marker></defs>${lines}${nodeMarkup}</svg></div>`;
+        return { html: svg, filters, fallback: relation.fallback, nodeCount: mainNodes.length };
+      }
+      function renderNetworkFlow(ctx, services, pods, exposures, endpointResult, trace, policies, defaults) {
+        const state = NET_VIEW.flow || (NET_VIEW.flow = { entry: "all", policy: !!(defaults && defaults.policy) });
+        const graph = networkTopology(services, pods, exposures, endpointResult, trace.services, trace.edges, policies, ctx.cluster.id, state);
+        const entryOptions = [...graph.filters].map(([value, label]) => `<option value="${esc(value)}"${state.entry === value ? " selected" : ""}>${esc(label)}</option>`).join("");
+        const legend = `<div class="x-topology-controls"><label>入口 <select class="x-select" data-flow-entry>${entryOptions || '<option value="all">全部入口</option>'}</select></label><label class="x-topology-toggle"><input type="checkbox" data-flow-policy${state.policy ? " checked" : ""}/> 策略声明</label><button type="button" class="x-btn" data-flow-reset title="恢复自动布局">重置布局</button><span class="x-topology-legend"><i class="x-topology-key x-topology-key--primary"></i>入口链 <i class="x-topology-key x-topology-key--observed"></i>Trace <i class="x-topology-key x-topology-key--declared"></i>策略声明</span></div>`;
+        const stateNote = graph.fallback ? '<span class="x-topology-state">EndpointSlice 不可读，当前按 Service selector 展示关联</span>' :
+          endpointResult.state !== "available" ? `<span class="x-topology-state">${esc(endpointResult.error || endpointResult.state || "EndpointSlice 不可用")}</span>` : "";
+        const content = `${legend}${stateNote}${graph.html}`;
+        return { content, graph };
+      }
+      async function renderNetworkFlowLive(el, defaults) {
+        const policyDefault = !!(defaults && defaults.policy);
+        const pg = current() === "netpol" ? npCur() : tfCur();
+        const routeKind = current() === "netpol" ? "netpol" : "traffic";
+        const page = netPanelPage(el, { t: "服务链路", sub: "", ...pg }, routeKind);
+        try {
+          const ctx = await netContext();
+          if (page.rev !== pageRenderRev) return;
+          if (!ctx.cluster) { page.draw(ctx, '<p class="x-empty">请从顶栏选择目标集群。</p>'); return; }
+          const root = `/clusters/${encodeURIComponent(ctx.cluster.id)}`;
+          const [serviceData, podData, exposeData, endpointData, policyData, traces] = await Promise.all([
+            XS.get(root + "/network/services"), XS.get(root + "/workloads/pods?page_size=1000"),
+            XS.get(root + "/network/configuration?view=expose").catch((error) => ({ state: "error", error: error.message, resources: [] })),
+            XS.get(root + "/network/endpoints").catch((error) => ({ state: "error", error: error.message, items: [] })),
+            XS.get(root + "/network/configuration?view=policy").catch((error) => ({ state: "error", error: error.message, resources: [] })),
+            loadObservedTrace(ctx).catch(() => ({ source: null, services: [], edges: [] }))
+          ]);
+          if (page.rev !== pageRenderRev) return;
+          const services = netItems(serviceData), pods = netItems(podData);
+          const exposures = configurationItems(exposeData, "Ingress").concat(configurationItems(exposeData, "ApisixRoute"));
+          const policies = ingressPolicyRows(policyData.resources);
+          const result = renderNetworkFlow(ctx, services, pods, exposures, endpointData, traces, policies, { policy: policyDefault });
+          const header = `<div class="x-tbar"><span class="x-frac">${esc(ctx.cluster.name)} · ${exposures.length} 个入口 · ${services.length} 个 Service · ${pods.length} 个 Pod</span><span class="x-frac">${esc(traces.source ? traces.source.ds.name : "Trace 未配置")}</span></div>`;
+          page.draw(ctx, `${header}${result.content}`);
+          const entrySelect = el.querySelector("[data-flow-entry]");
+          if (entrySelect) entrySelect.onchange = () => { NET_VIEW.flow.entry = entrySelect.value; renderNetworkFlowLive(el, policyDefault); };
+          const policyToggle = el.querySelector("[data-flow-policy]");
+          if (policyToggle) policyToggle.onchange = () => { NET_VIEW.flow.policy = policyToggle.checked; renderNetworkFlowLive(el, policyDefault); };
+        } catch (err) {
+          if (page.rev === pageRenderRev) page.draw(await netContext().catch(() => ({ clusters: [], cluster: null })), `<p class="x-aerr" role="alert">读取真实服务链路失败：${esc(err.message || err)}</p>`);
+        }
+      }
       function netPolicyGraph(services, policies, pods, namespaces, clusterId, traceServices, observedEdges) {
         const serviceKey = (service) => `${service.namespace}/${service.name}`;
         const servicesByTraceName = new Map();
@@ -11709,7 +12072,7 @@
           const path = window.XSTrafficTopology.edgePath(a, b, layout.nodeWidth, layout.nodeHeight);
           const point = window.XSTrafficTopology.edgeLabelPoint(a, b, layout.nodeWidth, layout.nodeHeight, layout.width);
           const labelWidth = Math.max(68, Math.min(156, label.length * 5.5 + 18));
-          return `<g class="flow-edge${measured ? " observed" : " declared"}${bad ? " bad" : ""}" data-flow-edge data-flow-from="${esc(e.from)}" data-flow-to="${esc(e.to)}"><title>${esc(title)}</title><path class="flow-edge-line" d="${path}" marker-end="url(#${marker})" />${measured ? `<path class="flow-edge-motion" d="${path}" aria-hidden="true" />` : ""}<rect class="flow-edge-label-bg" data-flow-label-bg x="${point.x - labelWidth / 2}" y="${point.y - 9}" width="${labelWidth}" height="18" rx="9" /><text class="flow-edge-label" x="${point.x}" y="${point.y + 3}">${esc(label)}</text></g>`;
+          return `<g class="flow-edge${measured ? " observed" : " declared"}${bad ? " bad" : ""}" data-flow-edge data-flow-from="${esc(e.from)}" data-flow-to="${esc(e.to)}" tabindex="0" aria-label="${esc(title)}"><title>${esc(title)}</title><path class="flow-edge-line" d="${path}" marker-end="url(#${marker})" />${measured ? `<path class="flow-edge-motion" d="${path}" aria-hidden="true" />` : ""}<rect class="flow-edge-label-bg" data-flow-label-bg x="${point.x - labelWidth / 2}" y="${point.y - 9}" width="${labelWidth}" height="18" rx="9" /><text class="flow-edge-label" x="${point.x}" y="${point.y + 3}">${esc(label)}</text></g>`;
         }).join("");
         const nodes = visible.map((node) => {
           const key = node.key;
@@ -11733,7 +12096,15 @@
         try {
           const ctx = await netContext();
           if (page.rev !== pageRenderRev) return;
-          if (!ctx.cluster) { page.draw(ctx, '<p class="x-empty">当前环境没有已接入的集群。</p>'); return; }
+          if (!ctx.cluster) { page.draw(ctx, '<p class="x-empty">请从顶栏选择目标集群。</p>'); return; }
+          if (pg.k === "certificates") {
+            if (window.XSCertificates && typeof window.XSCertificates.render === "function") {
+              return window.XSCertificates.render(el, page, ctx);
+            }
+            page.draw(ctx, '<p class="x-aerr" role="alert">证书页面模块不可用，未读取或修改集群数据。</p>');
+            return;
+          }
+          if (pg.k === "topo") return renderNetworkFlowLive(el, { policy: true });
           if (pg.k !== "topo") return window.XSNetworkConfig.render(el, pg, page, ctx);
           const serviceData = await XS.get(`/clusters/${encodeURIComponent(ctx.cluster.id)}/network/services`);
           const services = netItems(serviceData);
@@ -12041,7 +12412,9 @@
         const cr = await XS.get("/clusters?page_size=200");
         const all = XSObserve.items(cr), env = envNorm(nav.env), clusters = all.filter((c) => env === "全部" || envNorm(c.env) === env);
         const dr = clusters.length ? await XS.get("/observability/datasources") : [];
-        return { all, clusters, datasources: XSObserve.items(dr), cluster: clusters.find((c) => String(c.id) === String(selected)) || clusters[0] || null };
+        const context = clusterContextApi(), state = context && context.get();
+        const requested = selected || state && state.kind === "cluster" && state.cluster_id;
+        return { all, clusters, datasources: XSObserve.items(dr), cluster: requested ? clusters.find((c) => String(c.id) === String(requested)) || null : null };
       }
       function obsSource(ctx, types) {
         const source = XSObserve.datasource(ctx.datasources, ctx.all, ctx.cluster, types);
@@ -12050,9 +12423,12 @@
       function obsClusterSelect(id, ctx) {
         return `<select class="x-select" id="${id}" aria-label="集群">${ctx.clusters.length ? ctx.clusters.map((c) => `<option value="${c.id}"${ctx.cluster && c.id === ctx.cluster.id ? " selected" : ""}>${esc(c.name)}</option>`).join("") : '<option value="">当前环境无集群</option>'}</select>`;
       }
-      async function obsRange(ds, query, shift = 0, at = Math.floor(Date.now() / 1000)) {
+      async function obsRange(ds, query, shift = 0, at = Math.floor(Date.now() / 1000), scope = null) {
         const [count, step] = OB_RANGES[ob.range], end = at - shift;
-        return XSObserve.matrix(await XS.get("/observability/prometheus/" + ds.id + "/query_range?" + new URLSearchParams({ query, start: end - count * step * 60, end, step: step * 60 })));
+        if (!scope || !scope.cluster) throw new Error("请先选择目标集群");
+        return XSObserve.matrix(await XS.get("/observability/prometheus/" + ds.id + "/query_range", {
+          query, start: end - count * step * 60, end, step: step * 60, cluster_id: scope.cluster.id
+        }, { scope: "cluster" }));
       }
       async function obLoadMetrics(rev) {
         const key = () => JSON.stringify([nav.env, ob.cl, ob.ns, ob.app, ob.range, ob.cmp]);
@@ -12061,7 +12437,7 @@
         const ctx = await obsContext(ob.cl); if (rev !== pageRenderRev) return; ob.ctx = ctx; ob.cl = ctx.cluster ? String(ctx.cluster.id) : "";
         OBD.clusters = {}; OBD.apps = {};
         ctx.clusters.forEach((c) => { OBD.clusters[String(c.id)] = { ns: [] }; });
-        if (!ctx.cluster) { ob.liveNote = "当前环境尚未接入集群，不查询其他环境的数据"; return; }
+        if (!ctx.cluster) { ob.liveNote = "请从顶栏选择目标集群，不查询其他集群的数据"; return; }
         const source = obsSource(ctx, ["prometheus"]); ob.source = source;
         if (!source) { ob.liveNote = "当前集群环境未配置 Prometheus 数据源"; return; }
         const [nr, pr] = await Promise.all([XS.get("/clusters/" + ob.cl + "/nodes"), XS.get("/clusters/" + ob.cl + "/workloads/pods?page_size=500")]);
@@ -12071,10 +12447,10 @@
         if (!ns.includes(ob.ns)) ob.ns = "";
         pods.filter((p) => !ob.ns || p.namespace === ob.ns).forEach((p) => { const name = (p.labels || {}).app || (p.labels || {})["app.kubernetes.io/name"]; if (name) OBD.apps[name] = {}; });
         if (!Object.hasOwn(OBD.apps, ob.app)) ob.app = "";
-        ob.queries = XSObserve.metricQueries(nodes, pods, ob.ns, ob.app);
+        ob.queries = XSObserve.metricQueries(nodes, pods, ob.ns, ob.app, source);
         const errors = [], results = {}, at = Math.floor(Date.now() / 1000);
         await Promise.all(Object.entries(ob.queries).map(async ([key, q]) => {
-          try { results[key] = await obsRange(source.ds, q, 0, at); if (ob.cmp) results[key + "Prev"] = await obsRange(source.ds, q, 86400, at); }
+          try { results[key] = await obsRange(source.ds, q, 0, at, source); if (ob.cmp) results[key + "Prev"] = await obsRange(source.ds, q, 86400, at, source); }
           catch (e) { errors.push(key + ": " + e.message); }
         }));
         if (rev !== pageRenderRev) return;
@@ -12094,17 +12470,19 @@
         if (!ob.source) { ob.err = "当前集群没有可查询的 Prometheus 数据源"; return obDraw(); }
         const started = performance.now(), rev = pageRenderRev;
         try {
-          const query = ob.q === OB_PQ[3][1] ? ob.queries.cpu : ob.q;
-          const data = await obsRange(ob.source.ds, query), times = [...new Set(data.flatMap((s) => s.values.map(([t]) => t)))].sort((a, b) => a - b);
+          const query = ob.q === OB_PQ[3][1] ? ob.queries.cpu : XSObserve.scopedPromQuery(ob.q, ob.source);
+          const data = await obsRange(ob.source.ds, query, 0, Math.floor(Date.now() / 1000), ob.source), times = [...new Set(data.flatMap((s) => s.values.map(([t]) => t)))].sort((a, b) => a - b);
           if (rev !== pageRenderRev || current() !== "observe") return;
           ob.res = { series: data.map((s) => { const m = new Map(s.values); return [JSON.stringify(s.labels), times.map((t) => m.get(t) ?? null)]; }), labels: times.map((t) => hm(new Date(t * 1000))), u: "", ms: Math.round(performance.now() - started) };
           obDraw();
         } catch (e) { if (rev === pageRenderRev) { ob.err = e.message; obDraw(); } }
       }
       async function obLoadEvents(rev) {
-        const ctx = await obsContext(), raw = XSObserve.items(await XS.get("/observability/alerts?page_size=200"));
+        const ctx = await obsContext();
+        if (!ctx.cluster) { ob.ev = []; ob.liveNote = "请先选择一个集群"; return; }
+        const raw = XSObserve.items(await XS.get("/observability/alerts", { page_size: 200, cluster_id: ctx.cluster.id }, { scope: "cluster" }));
         if (rev !== pageRenderRev) return;
-        ob.ev = raw.filter((a) => { const lb = a.labels || {}, name = lb.cluster || lb.cluster_name || lb["k8s.cluster.name"]; return name ? ctx.clusters.some((c) => c.name === name) : ctx.clusters.some((c) => envNorm(c.env) === envNorm(a.env)); }).map((a) => ({ ...a, p: { critical: "P1", warning: "P2" }[a.severity] || "P3", st: a.status === "firing" ? "告警中" : "已恢复", msg: (a.annotations || {}).summary || a.alertname, rule: a.alertname, app: (a.labels || {}).pod || (a.labels || {}).instance || a.datasource, val: (a.annotations || {}).value || "—", t: a.starts_at ? obTs(new Date(a.starts_at)) : "—", end: a.ends_at ? obTs(new Date(a.ends_at)) : "—", ack: a.acked_by, who: a.acked_by }));
+        ob.ev = raw.map((a) => ({ ...a, p: { critical: "P1", warning: "P2" }[a.severity] || "P3", st: a.status === "firing" ? "告警中" : "已恢复", msg: (a.annotations || {}).summary || a.alertname, rule: a.alertname, app: (a.labels || {}).pod || (a.labels || {}).instance || a.datasource, val: (a.annotations || {}).value || "—", t: a.starts_at ? obTs(new Date(a.starts_at)) : "—", end: a.ends_at ? obTs(new Date(a.ends_at)) : "—", ack: a.acked_by, who: a.acked_by }));
       }
       async function obLoadChannels() {
         const previous = ob.ch || [];
@@ -12115,7 +12493,9 @@
       }
       async function obOpenAlert(id) {
         try {
-          const a = await XS.get("/observability/alerts/" + encodeURIComponent(id));
+          const context = clusterContextApi(), state = context && context.get();
+          if (!state || state.kind !== "cluster" || !state.cluster_id) throw new Error("请先选择一个集群");
+          const a = await XS.get("/observability/alerts/" + encodeURIComponent(id), { cluster_id: state.cluster_id }, { scope: "cluster" });
           const [cr, dr] = await Promise.all([XS.get("/clusters?page_size=500"), XS.get("/observability/datasources?page_size=500")]);
           const clusters = XSObserve.items(cr), sources = XSObserve.items(dr), ds = sources.find((d) => String(d.id) === String(a.datasource_id));
           const envClusters = clusters.filter((c) => !a.env || envNorm(c.env) === envNorm(a.env));
@@ -12692,12 +13072,12 @@
         const ctx = await obsContext(LG.cluster);
         if (rev !== pageRenderRev) { LG.live = false; return 0; }
         LG.ctx = ctx; LG.cluster = ctx.cluster ? String(ctx.cluster.id) : ""; ob.logs = [];
-        if (!ctx.cluster) { LG.liveNote = "当前环境无集群"; return 0; }
+        if (!ctx.cluster) { LG.liveNote = "请从顶栏选择目标集群"; return 0; }
         const scope = obsSource(ctx, ["loki"]);
         if (!scope) { LG.liveNote = "当前集群环境未配置日志数据源"; return 0; }
         const res = await apiRequest("/observability/logs/query", {
           method: "POST",
-          body: JSON.stringify({ datasource: scope.ds.id, query: XSObserve.logQuery(scope), from: LG.from ? new Date(LG.from).toISOString() : `now-${Math.min(LG.win || 1440, 10080)}m`, to: LG.to ? new Date(LG.to).toISOString() : "now", limit: 500 }),
+          body: JSON.stringify({ datasource: scope.ds.id, cluster_id: ctx.cluster.id, query: XSObserve.logQuery(scope), from: LG.from ? new Date(LG.from).toISOString() : `now-${Math.min(LG.win || 1440, 10080)}m`, to: LG.to ? new Date(LG.to).toISOString() : "now", limit: 500 }),
         });
         const rows = (res && res.rows) || [];
         if (rev !== pageRenderRev) { LG.live = false; return 0; }
@@ -12797,7 +13177,11 @@
           else if (e.key === "Escape" && LG.facet.open) { LG.facet.open = false; lgDraw("#lgfacetbtn"); }
         };
         w.onchange = (e) => {
-          if (e.target.id === "lgcluster") { LG.cluster = e.target.value; LG.live = false; LG.open.clear(); renderLogs($("view")); }
+          if (e.target.id === "lgcluster") {
+            const selected = LG.ctx && LG.ctx.clusters.find((cluster) => String(cluster.id) === String(e.target.value));
+            if (selected && window.XSClusterContext) window.XSClusterContext.set({ kind: "cluster", cluster_id: selected.id, name: selected.name, env: selected.env || "" });
+            LG.cluster = e.target.value; LG.live = false; LG.open.clear(); renderLogs($("view"));
+          }
           else if (e.target.id === "lgwin" && e.target.value !== "c") { LG.win = +e.target.value; LG.from = LG.to = 0; LG.open.clear(); LG.live = false; renderLogs($("view")); }
           else if (e.target.id === "lgfacetfield") { LG.facet.field = e.target.value; LG.facet.search = ""; lgDraw("#lgfacetsearch"); }
         };
@@ -12881,17 +13265,20 @@
         tr.list = []; tr.note = "";
         const ctx = await obsContext(tr.cluster); if (rev !== pageRenderRev) return; tr.ctx = ctx; tr.cluster = ctx.cluster ? String(ctx.cluster.id) : "";
         TR_SVCS.splice(0); TR_OPS.splice(0); Object.keys(TR_C).forEach((name) => delete TR_C[name]);
-        if (!ctx.cluster) { tr.note = "当前环境无集群"; return; }
+        if (!ctx.cluster) { tr.note = "请从顶栏选择目标集群"; return; }
         const scope = obsSource(ctx, ["jaeger", "tempo"]); tr.source = scope;
         if (!scope) { tr.note = "当前集群环境未配置 Jaeger / Tempo 数据源"; return; }
-        const services = XSObserve.items(await XS.get("/observability/traces/services?datasource=" + scope.ds.id));
+        const services = XSObserve.items(await XS.get("/observability/traces/services", { datasource: scope.ds.id, cluster_id: ctx.cluster.id }, { scope: "cluster" }));
         if (rev !== pageRenderRev) return;
-        const tags = {};
-        if (!scope.dedicated) tags[(scope.ds.options || {}).cluster_label || "k8s.cluster.name"] = ctx.cluster.name;
+        const tags = XSObserve.traceTags(scope);
         const [tag, value] = tr.f.tag.split("=").map((v) => v.trim());
         if (tag && value != null) { if (Object.hasOwn(tags, tag) && tags[tag] !== value) throw new Error("标签条件与所选集群冲突"); tags[tag] = value; }
         const requested = tr.f.svc ? [tr.f.svc] : services.slice(0, 20);
-        const found = await Promise.all(requested.map((service) => XS.get("/observability/traces/search?" + new URLSearchParams({ datasource: scope.ds.id, service, tags: JSON.stringify(tags), start: "now-" + tr.f.win + "m", end: "now", limit: 100, operation: tr.f.op, minDuration: tr.f.min ? tr.f.min + "ms" : "" }))));
+        const found = await Promise.all(requested.map((service) => XS.get("/observability/traces/search", {
+          datasource: scope.ds.id, cluster_id: ctx.cluster.id, service, tags: JSON.stringify(tags),
+          start: "now-" + tr.f.win + "m", end: "now", limit: 100, operation: tr.f.op,
+          minDuration: tr.f.min ? tr.f.min + "ms" : ""
+        }, { scope: "cluster" })));
         if (rev !== pageRenderRev) return;
         const unique = new Map(found.flatMap(XSObserve.items).map((r) => [r.trace_id, r]));
         tr.list = [...unique.values()].map((r) => XSObserve.traceRecord(r, ctx.cluster)).sort((a, b) => b.ts - a.ts);
@@ -13079,7 +13466,9 @@
         if (!demo && kind === "t" && tr.source && (!t || t.summaryOnly)) {
           const rev = pageRenderRev;
           try {
-            const raw = await XS.get("/observability/traces/" + encodeURIComponent(v) + "?datasource=" + tr.source.ds.id);
+            const raw = await XS.get("/observability/traces/" + encodeURIComponent(v), {
+              datasource: tr.source.ds.id, cluster_id: tr.ctx && tr.ctx.cluster && tr.ctx.cluster.id
+            }, { scope: "cluster" });
             if (rev !== pageRenderRev || current() !== "trace") return;
             const label = (tr.source.ds.options || {}).cluster_label || "k8s.cluster.name";
             if (!tr.source.dedicated && !(raw.spans || []).some((s) => (s.tags || {})[label] === tr.ctx.cluster.name)) throw new Error("链路标签与所选集群不匹配");
@@ -13102,7 +13491,12 @@
         };
         const f = $("trf");
         if (f) {
-          const clusterSelect = $("trcluster"); if (clusterSelect) clusterSelect.onchange = (e) => { e.stopPropagation(); tr.cluster = e.target.value; tr.liveKey = null; tr.f.svc = tr.f.op = tr.f.tag = ""; redraw(); };
+          const clusterSelect = $("trcluster"); if (clusterSelect) clusterSelect.onchange = (e) => {
+            e.stopPropagation();
+            const selected = tr.ctx && tr.ctx.clusters.find((cluster) => String(cluster.id) === String(e.target.value));
+            if (selected && window.XSClusterContext) window.XSClusterContext.set({ kind: "cluster", cluster_id: selected.id, name: selected.name, env: selected.env || "" });
+            tr.cluster = e.target.value; tr.liveKey = null; tr.f.svc = tr.f.op = tr.f.tag = ""; redraw();
+          };
           const read = () => { const x = f.elements; tr.f = { svc: x.svc.value, op: x.op.value, tag: x.tag.value.trim(), min: x.min.value, st: x.st.value, win: +x.win.value }; };
           f.onsubmit = (e) => { e.preventDefault(); read(); tr.liveKey = null; redraw('#trf [type="submit"]'); };
           f.onchange = (e) => { if (e.target.tagName === "SELECT") { read(); redraw(`#trf [name="${e.target.name}"]`); } };
@@ -13125,11 +13519,19 @@
         const renderRev = ++pageRenderRev;
         killCharts(); obInit();
         const pg = obCur();
+        const contextState = clusterContextApi() && clusterContextApi().get();
+        const renderContext = nav.env + ":" + (contextState && contextState.kind === "cluster" ? contextState.cluster_id : "");
         if (!demo && pg.k === "rules" && window.XSLiveOpsRules) return window.XSLiveOpsRules(el);
         let loadError = "";
         if (!demo) {
           try {
-            if (pg.k === "metrics") { if (ob.renderEnv !== nav.env) { el.innerHTML = phead(pg.t, pg.sub) + '<section class="x-panel"><p class="x-empty">正在读取所选环境的真实指标…</p></section>'; ob.renderEnv = nav.env; } await obLoadMetrics(renderRev); }
+            if (pg.k === "metrics") {
+              if (ob.renderContext !== renderContext) {
+                el.innerHTML = phead(pg.t, pg.sub) + '<section class="x-panel"><p class="x-empty">正在切换到目标集群并读取真实指标…</p></section>';
+                ob.renderContext = renderContext;
+              }
+              await obLoadMetrics(renderRev);
+            }
             if (pg.k === "events") await obLoadEvents(renderRev);
             if (pg.k === "channels") await obLoadChannels();
           } catch (e) { loadError = e.message; if (pg.k === "metrics") { ob.liveValues = {}; ob.liveTimes = []; ob.liveNote = e.message; } if (pg.k === "events") ob.ev = []; }
@@ -13157,7 +13559,12 @@
           else if (d.redit) obRuleEdit(ob.rules[d.redit]);
           else if (d.rsil) obSilence(ob.rules[d.rsil], `[data-rsil="${d.rsil}"]`);
           else if (d.evf) { ob.evf = d.evf; obDraw(`[data-evf="${d.evf}"]`); }
-          else if (d.eack) { const x = ob.ev[d.eack]; XS.post("/observability/alerts/" + x.id + "/ack", {}).then(() => { obDraw(); toast("告警已确认"); }).catch((err) => toast(err.message)); }
+          else if (d.eack) {
+            const x = ob.ev[d.eack], state = clusterContextApi() && clusterContextApi().get();
+            if (!state || state.kind !== "cluster") return toast("请先选择一个集群");
+            XS.post("/observability/alerts/" + x.id + "/ack", {}, { query: { cluster_id: state.cluster_id }, scope: "cluster" })
+              .then(() => { obDraw(); toast("告警已确认"); }).catch((err) => toast(err.message));
+          }
             else if (d.easn) { const a = ob.ev[d.easn]; if (!demo && a.id) toast("当前后端未提供告警指派接口"); else obAssign(a); }
           else if (d.esil) obSilence(obRule(ob.ev[d.esil].rule), `[data-esil="${d.esil}"]`);
           else if (d.chtest) obTest(ob.ch[d.chtest], b);
@@ -13412,7 +13819,6 @@
       const NP_PAGES = [
         { k: "list", t: "策略列表", sub: "按 Pod 标签控制入站与出站流量，规则支持命名空间、Pod 标签、CIDR 与 FQDN",
           bar: { q: "搜索策略 / 标签", fl: "命名空间", fo: ["prod", "pre", "test"], fc: 1, act: "+ 新建策略", id: "npNew" } },
-        { k: "graph", t: "策略可视化", sub: "对照实测调用方向与 NetworkPolicy 声明，查看服务关系", bar: { act: "+ 新建策略", id: "npNew" } },
         { k: "test", t: "连通性测试", sub: "从运行中的 Pod 发起 TCP 探测，结果仅代表本次连接测试" },
         { k: "egress", t: "出网白名单", sub: "经出网代理访问外部的域名与 CIDR，未列出的外部地址一律拒绝",
           bar: { q: "搜索域名 / CIDR", act: "+ 添加条目", id: "npEgAdd" } },
@@ -13672,9 +14078,25 @@
             const keys = Object.keys(draft);
             if (!keys.length) throw new Error("没有生成可用字段，请补充策略名称、目标、方向或端口后重试。");
             keys.forEach((key) => {
+              if (key === "labels" && typeof window !== "undefined" && window.XSStructuredForms) {
+                const field = [...form.querySelectorAll("[data-xsf-name]")].find((item) => item.getAttribute("data-xsf-name") === "labels");
+                if (field) window.XSStructuredForms.fill(field, draft[key], "labels");
+                return;
+              }
+              if (key === "spec" && typeof window !== "undefined" && window.XSStructuredForms) {
+                const field = [...form.querySelectorAll("[data-xsf-name]")].find((item) => item.getAttribute("data-xsf-name") === "podSelector");
+                if (field) window.XSStructuredForms.fill(field, (draft[key].podSelector || {}).matchLabels || {}, "podSelector");
+                const types = draft[key].policyTypes || [];
+                form.querySelectorAll('input[name="policyTypes"]').forEach((input) => { input.checked = types.includes(input.value); });
+                ["ingress", "egress"].forEach((direction) => {
+                  const body = form.querySelector(`[data-netpol-rules="${direction}"]`);
+                  if (body) body.innerHTML = (draft[key][direction] || []).map((rule, index) => netpolRuleRow(rule, direction, index)).join("") || netpolRuleRow({}, direction, 0);
+                });
+                bindNetpolRuleRows(form);
+                return;
+              }
               const control = form.elements[key];
-              if (!control) return;
-              control.value = key === "labels" || key === "spec" ? JSON.stringify(draft[key], null, 2) : draft[key];
+              if (control) control.value = key === "labels" || key === "spec" ? JSON.stringify(draft[key], null, 2) : draft[key];
             });
             setStatus(`已填入 ${keys.length} 个字段草稿，请检查后填写变更原因并单独提交。`);
           } catch (err) {
@@ -13693,12 +14115,117 @@
         };
       }
 
+      function netpolLabelText(selector) {
+        return Object.entries((selector || {}).matchLabels || (selector || {}).match_labels || {})
+          .map(([key, value]) => key + "=" + value).join(", ");
+      }
+
+      function netpolRuleRow(rule, direction, rowIndex) {
+        const peers = rule && rule[direction === "ingress" ? "from" : "to"] || [];
+        const peer = peers[0] || {};
+        const ipBlock = peer.ipBlock || peer.ip_block;
+        const namespaceSelector = peer.namespaceSelector || peer.namespace_selector;
+        const podSelector = peer.podSelector || peer.pod_selector;
+        const kind = ipBlock ? "cidr" : namespaceSelector ? "namespace" : podSelector ? "pod" : peers.length ? "advanced" : "any";
+        const value = ipBlock ? ipBlock.cidr || "" : namespaceSelector
+          ? ((namespaceSelector.matchLabels || namespaceSelector.match_labels || {})["kubernetes.io/metadata.name"] || netpolLabelText(namespaceSelector))
+          : netpolLabelText(podSelector);
+        const ports = (rule && rule.ports || []).map((port) =>
+          (port.protocol && port.protocol !== "TCP" ? port.protocol + ":" : "") + (port.port == null ? "" : port.port)
+        ).filter(Boolean).join(", ");
+        const choices = direction === "ingress"
+          ? [["any", "任意来源"], ["pod", "Pod 标签"], ["namespace", "命名空间"], ["cidr", "CIDR"]]
+          : [["any", "任意目标"], ["pod", "Pod 标签"], ["namespace", "命名空间"], ["cidr", "CIDR"]];
+        if (kind === "advanced") choices.push(["advanced", "高级规则（保持原样）"]);
+        return `<tr data-netpol-rule-row data-direction="${direction}" data-original="${esc(JSON.stringify(rule || {}))}">
+          <td><select class="x-select" data-netpol-peer-kind>${choices.map(([valueKey, label]) => `<option value="${valueKey}"${valueKey === kind ? " selected" : ""}>${label}</option>`).join("")}</select></td>
+          <td><input class="x-input x-mono" data-netpol-peer-value value="${esc(value)}" placeholder="Pod/命名空间标签 key=value 或 CIDR"${kind === "any" || kind === "advanced" ? " disabled" : ""} /></td>
+          <td><input class="x-input x-mono" data-netpol-ports value="${esc(ports)}" placeholder="8080, UDP:53" /></td>
+          <td><button class="x-btn" type="button" data-netpol-remove-rule="${rowIndex}" aria-label="删除规则" title="删除规则">×</button></td>
+        </tr>`;
+      }
+
+      function netpolRuleTable(direction, rules) {
+        const ingress = direction === "ingress";
+        return `<section class="x-netpol-rules" data-netpol-rule-table="${direction}">
+          <div class="x-tbar"><strong>${ingress ? "入站规则" : "出站规则"}</strong><button class="x-btn" type="button" data-netpol-add-rule="${direction}">+ 添加规则</button></div>
+          <div class="x-net-table-wrap"><table class="x-table"><thead><tr><th>${ingress ? "来源类型" : "目标类型"}</th><th>${ingress ? "来源" : "目标"}</th><th>端口</th><th>操作</th></tr></thead>
+          <tbody data-netpol-rules="${direction}">${(rules || []).map((rule, index) => netpolRuleRow(rule, direction, index)).join("") || netpolRuleRow({}, direction, 0)}</tbody></table></div>
+        </section>`;
+      }
+
+      function bindNetpolRuleRows(form) {
+        const syncDisabled = (row) => {
+          const kind = row.querySelector("[data-netpol-peer-kind]").value;
+          row.querySelector("[data-netpol-peer-value]").disabled = kind === "any" || kind === "advanced";
+        };
+        const bindRow = (row) => {
+          row.querySelector("[data-netpol-peer-kind]").onchange = () => syncDisabled(row);
+          row.querySelector("[data-netpol-remove-rule]").onclick = () => row.remove();
+          syncDisabled(row);
+        };
+        form.querySelectorAll("[data-netpol-rule-row]").forEach(bindRow);
+        form.querySelectorAll("[data-netpol-add-rule]").forEach((button) => {
+          button.onclick = () => {
+            const direction = button.getAttribute("data-netpol-add-rule");
+            const body = form.querySelector(`[data-netpol-rules="${direction}"]`);
+            body.insertAdjacentHTML("beforeend", netpolRuleRow({}, direction, body.children.length));
+            bindRow(body.lastElementChild);
+            const focus = body.lastElementChild.querySelector("[data-netpol-peer-kind]");
+            if (focus) focus.focus();
+          };
+        });
+      }
+
+      function netpolParsePorts(text) {
+        return String(text || "").split(",").map((entry) => entry.trim()).filter(Boolean).map((entry) => {
+          const parts = entry.split(":");
+          const protocol = parts.length > 1 ? parts.shift().toUpperCase() : "TCP";
+          const value = parts.join(":").trim();
+          if (!["TCP", "UDP", "SCTP"].includes(protocol) || !value) throw new Error("端口格式应为 8080、UDP:53 或服务端口名称");
+          return { protocol, port: /^\d+$/.test(value) ? Number(value) : value };
+        });
+      }
+
+      function netpolReadRules(form, direction, bad) {
+        const result = [];
+        for (const row of form.querySelectorAll(`[data-netpol-rules="${direction}"] [data-netpol-rule-row]`)) {
+          const kind = row.querySelector("[data-netpol-peer-kind]").value;
+          const value = row.querySelector("[data-netpol-peer-value]").value.trim();
+          let rule;
+          try { rule = JSON.parse(row.getAttribute("data-original") || "{}"); } catch (_) { rule = {}; }
+          const peerKey = direction === "ingress" ? "from" : "to";
+          if (kind === "advanced") {
+            if (!Array.isArray(rule[peerKey]) || !rule[peerKey].length) continue;
+          } else if (kind === "any") {
+            delete rule[peerKey];
+          } else if (kind === "cidr") {
+            if (!/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(value)) return bad("CIDR 格式应为 10.0.0.0/16", row);
+            rule[peerKey] = [{ ipBlock: { cidr: value } }];
+          } else {
+            const entries = value.split(",").map((item) => item.trim()).filter(Boolean);
+            if (!entries.length || entries.some((item) => !/^[\w./-]+=[\w.-]*$/.test(item))) return bad("选择器格式应为 key=value，多个用逗号分隔", row);
+            const labels = Object.fromEntries(entries.map((item) => item.split("=").map((part) => part.trim())));
+            rule[peerKey] = [kind === "namespace"
+              ? { namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": Object.values(labels)[0] } } }
+              : { podSelector: { matchLabels: labels } }];
+          }
+          try {
+            const ports = netpolParsePorts(row.querySelector("[data-netpol-ports]").value);
+            if (ports.length) rule.ports = ports; else delete rule.ports;
+          } catch (err) { return bad(err.message, row); }
+          result.push(rule);
+        }
+        return result;
+      }
+
       async function renderNetpolLive(el) {
         const pg = npCur(), page = netPanelPage(el, pg, "netpol");
         try {
           const ctx = await netContext();
           if (page.rev !== pageRenderRev) return;
-          if (!ctx.cluster) { page.draw(ctx, '<p class="x-empty">当前环境没有已接入的集群。</p>'); return; }
+          if (!ctx.cluster) { page.draw(ctx, '<p class="x-empty">请从顶栏选择目标集群。</p>'); return; }
+          if (pg.k === "graph") return renderNetworkFlowLive(el, { policy: true });
           const root = `/clusters/${encodeURIComponent(ctx.cluster.id)}`;
           const pr = await XS.get(root + "/network/policies");
           const policies = netItems(pr);
@@ -13724,14 +14251,18 @@
                   <p class="x-frac" data-netpol-ai-status role="${canUseAI ? "status" : "alert"}" aria-live="polite" style="margin:6px 0 12px">${canUseAI ? "AI 只会收到描述和可生成字段，不会读取当前策略；生成只填入草稿，不会提交。编辑时请描述完整目标规则。" : "当前账号没有 ai:chat 权限，仍可手动填写。"}</p>
                 </div>
                 ${keyFields}
-                <label><span>标签 JSON</span><textarea class="x-input x-mono" name="labels" rows="3" spellcheck="false">${esc(JSON.stringify(policy && policy.labels || {}, null, 2))}</textarea></label>
-                <label><span class="x-req">策略规则 JSON</span><textarea class="x-input x-mono" name="spec" rows="14" spellcheck="false" required>${esc(JSON.stringify(spec, null, 2))}</textarea></label>
+                <div class="x-sf-group"><span class="x-sf-caption">资源标签</span>${window.XSStructuredForms ? window.XSStructuredForms.keyValue(policy && policy.labels || {}, { name: "labels", typed: false }) : ""}</div>
+                <div class="x-sf-group"><span class="x-sf-caption">目标 Pod 标签</span>${window.XSStructuredForms ? window.XSStructuredForms.keyValue((spec.podSelector || {}).matchLabels || {}, { name: "podSelector", typed: false }) : ""}</div>
+                <div class="x-row2"><label><span>策略方向</span><span><label><input type="checkbox" name="policyTypes" value="Ingress"${(spec.policyTypes || ["Ingress"]).includes("Ingress") ? " checked" : ""} /> Ingress</label> <label><input type="checkbox" name="policyTypes" value="Egress"${(spec.policyTypes || []).includes("Egress") ? " checked" : ""} /> Egress</label></span></label></div>
+                ${netpolRuleTable("ingress", spec.ingress)}
+                ${netpolRuleTable("egress", spec.egress)}
                 <label><span class="x-req">变更原因</span><input class="x-input" name="reason" required maxlength="500" /></label>
                 <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="confirm" required />已确认目标集群、命名空间及策略影响范围</label>
-                <p class="x-frac">仅写入 Kubernetes 原生 NetworkPolicy；不自动安装 CNI 或扩展策略控制器。生产环境按集群审批策略处理。</p>
                 <p class="x-aerr" data-netpol-error role="alert" hidden></p></form>`,
                 '<button class="x-btn" data-close type="button">取消</button><button class="x-btn x-btn--pri" type="submit" form="netpolEditForm">提交变更</button>');
               const form = document.getElementById("netpolEditForm");
+              if (window.XSStructuredForms) window.XSStructuredForms.bind(form);
+              bindNetpolRuleRows(form);
               bindNetpolAIDraft(form, !!policy);
               form.onsubmit = async (event) => {
                 event.preventDefault();
@@ -13741,16 +14272,24 @@
                 button.disabled = true;
                 error.hidden = true;
                 try {
-                  let labels, nextSpec;
-                  try {
-                    labels = JSON.parse(form.elements.labels.value || "{}");
-                    nextSpec = JSON.parse(form.elements.spec.value);
-                  } catch (parseError) {
-                    throw new Error("标签和策略规则必须是有效 JSON");
-                  }
-                  if (!labels || Array.isArray(labels) || typeof labels !== "object" || !nextSpec || Array.isArray(nextSpec) || typeof nextSpec !== "object") {
-                    throw new Error("标签必须是对象，策略规则必须是 JSON 对象");
-                  }
+                  const structured = (name, label) => {
+                    const field = [...form.querySelectorAll("[data-xsf-name]")].find((item) => item.getAttribute("data-xsf-name") === name);
+                    if (!field) throw new Error(label + "控件缺失");
+                    try { return window.XSStructuredForms.read(field); }
+                    catch (parseError) { throw new Error(label + "：" + parseError.message); }
+                  };
+                  const labels = structured("labels", "资源标签");
+                  const podLabels = structured("podSelector", "目标 Pod 标签");
+                  const policyTypes = [...form.querySelectorAll('input[name="policyTypes"]:checked')].map((input) => input.value);
+                  if (!policyTypes.length) throw new Error("至少选择 Ingress 或 Egress");
+                  const nextSpec = Object.assign({}, spec, {
+                    podSelector: { matchLabels: podLabels },
+                    policyTypes,
+                    ingress: netpolReadRules(form, "ingress", (message, field) => { throw new Error(message); }),
+                    egress: netpolReadRules(form, "egress", (message, field) => { throw new Error(message); })
+                  });
+                  if (!nextSpec.ingress.length) delete nextSpec.ingress;
+                  if (!nextSpec.egress.length) delete nextSpec.egress;
                   const namespace = form.elements.namespace.value.trim();
                   const name = form.elements.name.value.trim();
                   const path = `${root}/network/policies/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
@@ -14815,10 +15354,18 @@ spec:
 
       async function aiLoadHistory() {
         if (!window.XS || XS.mode !== "live" || ai.histLoading) return;
+        const context = clusterContextApi(), state = context && context.get();
+        if (!state || state.kind !== "cluster" || !state.cluster_id) {
+          ai.histError = "请先选择一个目标集群";
+          ai.histLoaded = false;
+          return;
+        }
+        const epoch = context.epoch();
         ai.histLoading = true;
         ai.histError = "";
         try {
-          const d = await XS.get("/observability/diagnoses", { page: ai.histPage, page_size: 20 });
+          const d = await XS.get("/observability/diagnoses", { page: ai.histPage, page_size: 20, cluster_id: state.cluster_id }, { scope: "cluster" });
+          if (!context.isCurrent(epoch)) return;
           ai.hist = Array.isArray(d) ? d : ((d && d.items) || []);
           ai.histTotal = Number(d && d.total) || 0;
           ai.histLoaded = true;
@@ -15681,10 +16228,10 @@ spec:
         ] },
         { k: "ops", t: "运维中心", c: "#0d9488", items: [
           { t: "总览", i: "pulse", h: "#/sre" },
-          { t: "集群", i: "cube", kids: (([l, n, p, h, r]) => [rn(l, "集群列表"), n, p, rn(h, "主机"), { t: MC_PAGE.t, i: "globe", h: MC_PAGE.h, s: MC_PAGE.s }, rn(r, "集群 RBAC")])(k8L("list", "nodes", "nodepools", "hosts", "rbac")) },
+          { t: "集群", i: "cube", kids: (([l, cfg, components, registries, n, p, h, r]) => [rn(l, "集群列表"), cfg, components, registries, n, p, rn(h, "主机"), { t: MC_PAGE.t, i: "globe", h: MC_PAGE.h, s: MC_PAGE.s }, rn(r, "集群 RBAC")])(k8L("list", "integrations", "components", "registries", "nodes", "nodepools", "hosts", "rbac")) },
           { t: "工作负载", i: "apps", kids: (([w, net, storage, c, d, p, h, a, cr, b]) => [w, net, storage, c, rn(d, "CRD"), rn(p, "项目与配额"), rn(h, "Helm 应用"), { t: "中间件", i: "mq", h: "#/middleware", s: "Kafka、RabbitMQ 与 RocketMQ 实例的节点、Topic/队列与消费堆积", free: true }, a, cr, b])(k8L("workloads", "network", "storage", "config", "crd", "projects", "helm", "hpa", "cron", "backup")) },
           // 应用 lists every app with its status (old #/appstatus redirects here); 构建 / 制品 hold every app's builds, filtered by app from its detail page
-          { t: "应用交付", i: "ship", kids: [
+          { t: "CI/CD", i: "ship", kids: [
             { t: "应用", i: "apps", h: "#/delivery/apps", n: () => APPS.length },
             { t: "构建", i: "build", h: "#/cicd/build", s: "各应用的构建任务与触发记录。" },
             { t: "制品", i: "box", h: "#/cicd/artifact", s: "构建产出的容器镜像与制品版本。" },
@@ -15748,6 +16295,7 @@ spec:
         ({
           requirements: () => TABS.some((t) => t[0] === s) && (state.tab = s),
           traffic: () => /^\d+$/.test(s) && TF_PAGES[+s] && go(tfHash(TF_PAGES[+s])),
+          netpol: () => s === "graph" && go("#/traffic/topo"),
           audit: () => /^\d+$/.test(s) && SEC[+s] && go(secHash(SEC[+s])),
           delivery: () => { if (s === "apps") cd.app = null; else if (APPS.some((x) => x.name === s)) { cd.app = s; cd.menu = "导览"; cd.env = "测试环境"; } },
         })[k]?.();
@@ -15855,16 +16403,146 @@ spec:
         ...(opsOn() && pendingApprovals() ? [{ t: "变更审批", d: `${pendingApprovals()} 条发布等待审批`, w: "刚刚", h: "#/approvals", c: "#fa8c16" }] : []),
         ...(reqN("accept") ? [{ t: "需求验收", d: `${reqN("accept")} 个需求等待你验收`, w: "今天", h: "#/requirements/accept", c: "#1677ff" }] : []),
       ];
+      function clusterContextApi() { return window.XSClusterContext || null; }
+      function clusterContextAllowed(cluster) {
+        return !!cluster && (nav.env === "全部" || envNorm(cluster.env) === envNorm(nav.env));
+      }
+      function selectedContextCluster(items) {
+        const context = clusterContextApi(), state = context && context.get();
+        if (!state || state.kind !== "cluster") return null;
+        return (items || clMenuItems()).find((cluster) => String(cluster.id) === String(state.cluster_id) && clusterContextAllowed(cluster)) || null;
+      }
+      window.XSSelectedCluster = function (items) {
+        const state = clusterContextApi() && clusterContextApi().get();
+        if (!state || state.kind !== "cluster") return null;
+        return (items || clMenuItems()).find((cluster) => String(cluster.id) === String(state.cluster_id)) || null;
+      };
+      window.XSVisibleClusters = function (items) {
+        return (items || clMenuItems()).filter(clusterContextAllowed);
+      };
+      let clusterContextSyncing = false;
+      function syncClusterContext(items) {
+        const context = clusterContextApi();
+        if (!context || !clMenuReady()) return null;
+        const available = (items || clMenuItems()).filter(clusterContextAllowed);
+        const state = context.get();
+        clusterContextSyncing = true;
+        try {
+        if (state.kind === "cluster") {
+          const current = available.find((cluster) => String(cluster.id) === String(state.cluster_id));
+          if (current) return current;
+          context.clear();
+        } else if (state.kind === "all") {
+          context.clear();
+        }
+        const saved = context.restoreCandidate();
+        if (saved && saved.kind === "cluster") {
+          const candidate = available.find((cluster) => String(cluster.id) === saved.cluster_id && envNorm(cluster.env) === envNorm(saved.env));
+          if (candidate) {
+            try { context.activate(saved, { clusters: items || clMenuItems(), env: saved.env }); return candidate; } catch {}
+          }
+        }
+        if (available.length === 1) {
+          const only = available[0];
+          context.set({ kind: "cluster", cluster_id: only.id, name: only.name, env: only.env || "" });
+          return only;
+        }
+        return null;
+        } finally {
+          clusterContextSyncing = false;
+        }
+      }
+      function drawClusterContext() {
+        const select = $("clctx"), context = clusterContextApi();
+        if (!select || !context) return;
+        const available = clMenuItems().filter(clusterContextAllowed);
+        const current = selectedContextCluster(clMenuItems());
+        const state = context.get();
+        select.innerHTML = '<option value="">选择集群</option>' +
+          available.map((cluster) => `<option value="${esc(cluster.id)}">${esc(cluster.name)}   ${esc(cluster.env || "未标记")}</option>`).join("");
+        select.value = current ? String(current.id) : "";
+        select.disabled = !clMenuReady() || !available.length;
+        select.setAttribute("aria-label", current ? "当前集群：" + current.name : "选择当前集群");
+      }
+      function contextPageKey() {
+        const parts = (location.hash || "").replace(/^#\/?/, "").split("/"), route = parts[0] || "sre";
+        if (route === "observe" && ["datasources", "channels", "data-sources"].includes(parts[1])) return "observe-platform";
+        if (route === "ai" && parts[1] === "config") return "ai-config";
+        return route;
+      }
+      function contextPageScope(name) {
+        if (name === "cluster" && (location.hash === "#/cluster/list" || location.hash.startsWith("#/cluster/list/"))) return "platform";
+        if (["cluster", "traffic", "netpol", "observe", "logs", "trace", "ai"].includes(name)) return "cluster";
+        if (["bastion", "hosts"].includes(name)) return "environment";
+        return "platform";
+      }
+      function ensurePageContext() {
+        const context = clusterContextApi();
+        if (!context) return null;
+        const key = contextPageKey();
+        if (!context.pageScope(key)) context.registerPageScope(key, contextPageScope(key));
+        context.enterPage(key);
+        return context.pageScope(key);
+      }
+      function resetClusterScopedViewState() {
+        if (typeof NET_VIEW !== "undefined") { NET_VIEW.flow = null; NET_VIEW.clusterId = ""; }
+        if (typeof ob !== "undefined") {
+          ob.cl = ""; ob.metricKey = ""; ob.metricAt = 0; ob.res = null; ob.liveValues = null;
+          ob.livePrevious = null; ob.liveTimes = []; ob.source = null; ob.ctx = null; ob.logs = []; ob.ev = []; ob.renderContext = "";
+        }
+        if (typeof OBD !== "undefined") OBD = null;
+        if (typeof LG !== "undefined") {
+          LG.cluster = ""; LG.live = false; LG.env = ""; LG.dsId = 0; LG.q = ""; LG.open.clear();
+        }
+        if (typeof tr !== "undefined") {
+          tr.cluster = ""; tr.list = null; tr.liveKey = ""; tr.loadedAt = 0; tr.ctx = null; tr.source = null; tr.note = "";
+          TR_SVCS.splice(0); TR_OPS.splice(0); Object.keys(TR_C).forEach((key) => delete TR_C[key]);
+        }
+        if (typeof ai !== "undefined") {
+          ai.hist = []; ai.histLoaded = false; ai.histTotal = 0;
+        }
+      }
       function drawTop() {
+        syncClusterContext(clMenuItems());
         const on = curLeaf(), w = wsCur();
         const parts = [[w.t, leaves(w)[0].h], on && on.p ? [on.p.t, on.p.kids[0].h] : null, [on ? on.t : routes[current()].label]].filter(Boolean);
         $("crumbs").innerHTML = `<span>星枢</span>` + parts.map(([t, h], i) => `<i>/</i>${i === parts.length - 1 ? `<b aria-current="page">${esc(t)}</b>` : `<a href="${h}">${esc(t)}</a>`}`).join("");
         const env = ENVS_ALL().find((e) => e[0] === nav.env) || ENVS_ALL()[0];
         $("envbtn").innerHTML = `<i class="x-edot" style="--d:${env[1]}"></i><b>${env[0] === "全部" ? "全部环境" : esc(env[0])}</b>${ic("chev")}`;
         $("envbtn").setAttribute("aria-label", "环境：" + env[0]);
+        drawClusterContext();
         const n = nav.read ? 0 : notes().length;
         $("badge").textContent = n; $("badge").hidden = !n;
         $("navtog").setAttribute("aria-expanded", String(mobile() ? nav.open : !nav.col));
+      }
+      $("clctx").onchange = function () {
+        const context = clusterContextApi();
+        if (!context) return;
+        const value = $("clctx").value;
+        if (!value) {
+          context.clear();
+          return;
+        }
+        const cluster = clMenuItems().find((item) => String(item.id) === value);
+        if (!cluster || !clusterContextAllowed(cluster)) return;
+        if (current() === "cluster") {
+          const parts = location.hash.slice(2).split("/");
+          if (parts[1] && parts[1] !== "list") {
+            parts[2] = String(cluster.id);
+            history.replaceState(null, "", "#/" + parts.filter(Boolean).join("/"));
+          }
+        }
+        context.set({ kind: "cluster", cluster_id: cluster.id, name: cluster.name, env: cluster.env || "" });
+        toast("已切换到集群 " + cluster.name);
+      };
+      if (clusterContextApi()) {
+        clusterContextApi().subscribe(function (detail) {
+          if (clusterContextSyncing) return;
+          resetClusterScopedViewState();
+          const scope = ensurePageContext();
+          drawTop();
+          if (scope !== "platform") render();
+        });
       }
 
       // Collapse (desktop) or drawer (under 768px)
@@ -16070,8 +16748,18 @@ spec:
       }
       setTimeout(clMenuPrewarm, 0);
     </script>
+    <script src="xs-cluster-extensions.js"></script>
+    <script src="xs-helm-apps.js"></script>
+    <script src="xs-crd-page.js"></script>
+    <script src="xs-project-quota.js"></script>
+    <script src="xs-component-center.js"></script>
+    <script src="xs-cluster-integrations.js"></script>
     <script src="xs-live-core.js"></script>
     <script src="xs-live-ops.js"></script>
+    <script src="xs-cicd-pipeline.js"></script>
+    <script src="xs-platform-settings.js"></script>
+    <script src="xs-channel-form.js"></script>
+    <script src="xs-cluster-registries.js"></script>
     <script>
       (function () {
         var dock = document.getElementById("kdock"), btn = document.getElementById("kcbtn");

@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/app"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/approval"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/audit"
 	matrixcrypto "github.com/yangguangdijia/xingshu-matrix/server/internal/crypto"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -23,6 +27,129 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/clientcmd"
 )
+
+func TestApprovedNamespaceCreateDryRunsThenPersistsOneExecutionAudit(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	var calls []string
+	cs.PrependReactor("create", "namespaces", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		create := action.(k8stesting.CreateActionImpl)
+		options := create.GetCreateOptions()
+		if len(options.DryRun) == 1 && options.DryRun[0] == metav1.DryRunAll {
+			calls = append(calls, "dry-run")
+		} else {
+			calls = append(calls, "create")
+		}
+		return true, create.GetObject().DeepCopyObject(), nil
+	})
+	pl := changePayload{ClusterID: 12, Cluster: "prod-a", Action: "ns_create",
+		Params: json.RawMessage(`{"name":"apps","labels":{"team":"web"}}`)}
+	ticket := &approval.Ticket{ID: 44, ApplicantID: 7, ApplicantName: "requester", Env: "prod"}
+	var entries []audit.Entry
+	result, err := executeApprovedNamespaceCreate(context.Background(), &kubeClients{cs: cs}, pl,
+		func(_ context.Context, entry audit.Entry) error {
+			calls = append(calls, "audit")
+			entries = append(entries, entry)
+			return nil
+		}, ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(calls, ","); got != "dry-run,create,audit" {
+		t.Fatalf("execution order = %s", got)
+	}
+	if len(entries) != 1 || entries[0].Result != audit.ResultSuccess ||
+		entries[0].Method != "APPROVAL" || entries[0].Action != "ns_create.execute" ||
+		entries[0].ResourceID != "apps" || entries[0].UserID == nil || *entries[0].UserID != ticket.ApplicantID {
+		t.Fatalf("expected exactly one correlated execution audit: %+v", entries)
+	}
+	if strings.Contains(string(entries[0].Detail), "web") {
+		t.Fatal("namespace labels leaked into execution audit")
+	}
+	if row, ok := result.(map[string]any); !ok || row["name"] != "apps" {
+		t.Fatalf("namespace result = %#v", result)
+	}
+}
+
+func TestApprovedNamespaceCreateDryRunFailureDoesNotMutateOrAudit(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	var calls []string
+	cs.PrependReactor("create", "namespaces", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		calls = append(calls, "dry-run")
+		return true, nil, fmt.Errorf("admission denied")
+	})
+	audits := 0
+	_, err := executeApprovedNamespaceCreate(context.Background(), &kubeClients{cs: cs},
+		changePayload{ClusterID: 12, Cluster: "prod-a", Action: "ns_create", Params: json.RawMessage(`{"name":"apps"}`)},
+		func(context.Context, audit.Entry) error { audits++; return nil },
+		&approval.Ticket{ID: 44, ApplicantID: 7, ApplicantName: "requester", Env: "prod"})
+	if err == nil {
+		t.Fatal("dry-run denial was accepted")
+	}
+	if got := strings.Join(calls, ","); got != "dry-run" || audits != 0 {
+		t.Fatalf("dry-run failure continued execution: calls=%s audit_count=%d", got, audits)
+	}
+}
+
+func TestApprovedNamespaceCreateFailureIsAuditedOnceWithoutSuccess(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	var calls []string
+	cs.PrependReactor("create", "namespaces", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		create := action.(k8stesting.CreateActionImpl)
+		if len(create.GetCreateOptions().DryRun) > 0 {
+			calls = append(calls, "dry-run")
+			return true, create.GetObject().DeepCopyObject(), nil
+		}
+		calls = append(calls, "create")
+		return true, nil, fmt.Errorf("create rejected")
+	})
+	var entries []audit.Entry
+	_, err := executeApprovedNamespaceCreate(context.Background(), &kubeClients{cs: cs},
+		changePayload{ClusterID: 12, Cluster: "prod-a", Action: "ns_create", Params: json.RawMessage(`{"name":"apps"}`)},
+		func(_ context.Context, entry audit.Entry) error {
+			calls = append(calls, "audit")
+			entries = append(entries, entry)
+			return nil
+		}, &approval.Ticket{ID: 44, ApplicantID: 7, ApplicantName: "requester", Env: "prod"})
+	if err == nil {
+		t.Fatal("failed namespace create was reported as success")
+	}
+	if got := strings.Join(calls, ","); got != "dry-run,create,audit" {
+		t.Fatalf("failed create execution/audit order = %s", got)
+	}
+	if len(entries) != 1 || entries[0].Result != audit.ResultFailure || entries[0].StatusCode < 400 {
+		t.Fatalf("failed create must produce one failure audit: %+v", entries)
+	}
+}
+
+func TestApprovedNamespaceCreateAuditFailureNeverReportsSuccess(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	var calls []string
+	cs.PrependReactor("create", "namespaces", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		create := action.(k8stesting.CreateActionImpl)
+		if len(create.GetCreateOptions().DryRun) > 0 {
+			calls = append(calls, "dry-run")
+		} else {
+			calls = append(calls, "create")
+		}
+		return true, create.GetObject().DeepCopyObject(), nil
+	})
+	_, err := executeApprovedNamespaceCreate(context.Background(), &kubeClients{cs: cs},
+		changePayload{ClusterID: 12, Cluster: "prod-a", Action: "ns_create", Params: json.RawMessage(`{"name":"apps"}`)},
+		func(_ context.Context, entry audit.Entry) error {
+			calls = append(calls, "audit")
+			if entry.Result != audit.ResultSuccess {
+				t.Fatalf("successful create audit result = %q", entry.Result)
+			}
+			return fmt.Errorf("database unavailable")
+		}, &approval.Ticket{ID: 44, ApplicantID: 7, ApplicantName: "requester", Env: "prod"})
+	var platform *httpx.Error
+	if !errors.As(err, &platform) || platform.Status != http.StatusServiceUnavailable {
+		t.Fatalf("audit failure should fail closed: %v", err)
+	}
+	if got := strings.Join(calls, ","); got != "dry-run,create,audit" {
+		t.Fatalf("execution/audit order = %s", got)
+	}
+}
 
 func kubeconfigFor(server string) string {
 	return fmt.Sprintf(`apiVersion: v1
