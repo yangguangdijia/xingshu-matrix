@@ -1,6 +1,6 @@
 # 星枢 Matrix 平台技术说明
 
-> 本文介绍平台架构、组件边界、资源接口与开发入口。当前文档对应 v1.19，逐版本变化见 [CHANGELOG.md](../CHANGELOG.md)，接口索引见 [docs/api/](api/)。
+> 本文介绍平台架构、组件边界、资源接口与开发入口。当前文档对应 v1.20，逐版本变化见 [CHANGELOG.md](../CHANGELOG.md)，接口索引见 [docs/api/](api/)。
 
 ---
 
@@ -24,10 +24,11 @@
 |---|---|---|
 | 后端 API | **Go 1.23**，Gin | `server/cmd/matrix-server`，单二进制；实测 Go 1.25 亦可构建 |
 | 主机 Agent | **Go 1.23**，gorilla/websocket，gopsutil | `server/cmd/matrix-agent`，Linux 常驻进程 |
+| 集群 agent | **Go 1.23**，gorilla/websocket，hashicorp/yamux | `server/cmd/matrix-cluster-agent`，在成员集群中以 Deployment 运行，主动连出到平台建立隧道 |
 | 数据库 | PostgreSQL 14+（pgx/v5） | 元数据、权限、审批、审计与任务记录；迁移位于各模块目录 |
 | 缓存 | Redis 7（go-redis v9，可选） | 健康检查已接入；多副本会话/锁待扩展 |
 | 对象存储 | MinIO / S3（规划） | 堡垒机录像、制品；当前录像存本地目录 |
-| K8s | client-go v0.31 | 集群管理、CI 任务（Job）、部署、`PrometheusRule` 读写 |
+| K8s | client-go v0.32 | 集群管理、CI 任务（Job）、部署、`PrometheusRule` 读写；所有模块通过 `app.ClusterAccess` 获取集群连接 |
 | 前端 | 原生 HTML/CSS/JavaScript 单页应用 | `public/index.html`，hash 路由，无构建依赖 |
 | 前端适配层 | `public/xs-api.js` + `xs-live-core.js` + `xs-live-ops.js` | API 客户端与实时渲染接管，后端不可用时回退演示渲染 |
 | 部署 | Docker 多阶段镜像、docker-compose、K8s 清单、Istio 网关、物理机脚本 | 见 `Dockerfile`、`docker-compose.yml`、`deploy/` |
@@ -44,8 +45,10 @@ matrix-server (Go)
    ├─ 通用中间件：RequestID → Recover → CORS → 访问日志 → Prometheus 指标 → 审计
    ├─ 核心：auth / rbac / users（含部门、用户组）/ settings / platform / audit / approval / ai
    ├─ 业务模块（internal/modules/*，统一实现 app.Module 接口）
-   │    cluster        ──► Kubernetes API Server（kubeconfig，client-go）
+   │    cluster        ──► Kubernetes API Server（kubeconfig 直连，client-go）
+   │                   ◄── matrix-cluster-agent（WebSocket + yamux 反向隧道；多副本经 PostgreSQL 登记并用 HMAC 签名转发）
    │                   ──► PrometheusRule（告警规则读写）
+   │                   ──► app.ClusterAccess：CI/CD、监控巡检和自动修复统一经此获取集群连接
    │    hosts          ◄── matrix-agent（WebSocket 长连接，JSON 帧）
    │    bastion        ──► 目标主机 SSH（x/crypto/ssh），guacd（RDP/VNC 规划）
    │    observability  ──► Prometheus / Loki / Elasticsearch / Jaeger / Tempo / Alertmanager
@@ -220,11 +223,11 @@ matrix-agent -server https://matrix.example.com -token mxe_xxx
 
 ```bash
 # 按当前发布版本构建镜像
-docker build --build-arg VERSION=v1.19 --build-arg COMMIT=$(git rev-parse --short HEAD) \
-  -t xingshu/matrix-server:v1.19 .
+docker build --build-arg VERSION=v1.20 --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  -t xingshu/matrix-server:v1.20 .
 
 # 离线环境：导出 OCI tar
-ctr -n k8s.io images export matrix-server-v1.19.tar.gz docker.io/xingshu/matrix-server:v1.19
+ctr -n k8s.io images export matrix-server-v1.20.tar.gz docker.io/xingshu/matrix-server:v1.20
 ```
 
 应用版本与部署镜像 tag 可由发布流程分别管理。构建时传入 `VERSION` 后，`GET /api/v1/version` 会返回二进制记录的应用版本。
@@ -246,6 +249,7 @@ push `main` / 打 `v*` / 手工触发；通过后推送 `ghcr.io/<owner>/xingshu
 
 | 版本 | 时间 | 主题 |
 | --- | --- | --- |
+| v1.20 | 2026-11-01 | Agent 反向隧道接入集群；CI/CD 与监控统一使用集群注册表；集群改名；Helm 市场、总览与中间件完善 |
 | v1.19 | 2026-10-27 | Kubernetes 存储、网络、配置、节点、伸缩和定时任务；多集群、应用交付与诊断体验完善 |
 | v1.18 | 2026-10-24 | 真实 trace 与环境范围、网络只读接口、应用运行清单；beta / 标签 / Release 已发布，未部署 |
 | v1.17 | 2026-10-21 | 堡垒机访问工作台与真实 SSH 会话；资产协议参数持久化；登录可访问性；镜像 v1.63（历史部署） |
