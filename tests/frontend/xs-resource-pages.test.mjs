@@ -362,9 +362,12 @@ test('component selection emits a scoped instance and storage fields use discove
 const observe = { resolvedDatasource: (data) => { if (!data.datasource || data.datasource.options.cluster_id !== '7') throw new Error('ownership mismatch'); return { ds: data.datasource, scope: 'cluster' }; } };
 function integrationAPI(path, opts) { if (path.endsWith('/integration-discovery')) return { result: { items: [{ type: 'loki', name: '<candidate>', namespace: 'obs', url_candidates: ['http://loki.obs.svc:3100'], connection_verified: false }], components: { loki: { state: 'available' } } } }; if (path.endsWith('/components')) return { items: [{ component: 'ingress-nginx', kind: 'Deployment', name: 'ingress-nginx', state: 'installed' }] }; if (path.endsWith('/resolve')) throw { status: 404, message: 'not bound' }; if (path.endsWith('/datasources/test')) return { ok: true, latency_ms: 12 }; if (path.endsWith('/datasources') && opts.method === 'POST') return { id: 10 }; throw new Error(path); }
 async function integrationForm(h) { await h.window.XSClusterIntegrations.render(h.el); await h.emit('click', h.el.querySelectorAll('[data-xi-edit]')[1]); const form = h.el.querySelector('[data-xi-form]'); form.elements.url.value = 'http://loki.obs.svc:3100'; return form; }
-test('integrations preserve discovered candidate vs reachability and full component entry', async () => {
+test('data source bindings keep discovery details separate from the component catalog', async () => {
   const h = harness('xs-cluster-integrations.js', { observe, api: async (p, o) => integrationAPI(p, o) }); const form = await integrationForm(h);
-  assert.match(h.el.querySelector('[data-xi-detail]').innerHTML, /未验证候选/); assert.match(h.el.querySelector('[data-xi-components]').innerHTML, /ingress-nginx/); assert.match(h.el.querySelector('[data-xi-components]').innerHTML, /#\/cluster\/components/); assert.doesNotMatch(h.el.innerHTML, /#\/cluster\/helm/);
+  assert.match(h.el.querySelector('[data-xi-detail]').innerHTML, /未验证候选/);
+  assert.match(h.el.innerHTML, /可观测数据源/);
+  assert.equal(h.el.querySelector('[data-xi-components]'), null);
+  assert.equal(h.calls.some((call) => call.path.endsWith('/components')), false);
   assert.equal(form.querySelector('[data-xi-save]').disabled, true); await h.emit('click', '[data-xi-test]'); assert.match(h.el.querySelector('[data-xi-status]').textContent, /测试通过/); assert.equal(form.querySelector('[data-xi-confirm]').disabled, false);
   await h.emit('input', form.elements.url, 'http://changed:3100'); assert.equal(form.querySelector('[data-xi-confirm]').disabled, true); assert.equal(form.querySelector('[data-xi-save]').disabled, true);
 });

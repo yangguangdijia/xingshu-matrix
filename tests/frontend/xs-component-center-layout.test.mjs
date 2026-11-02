@@ -20,7 +20,7 @@ function apiFor(inventory) {
 test('component inventory is primary and a non-empty successful inventory collapses installable components', async () => {
   const h = harness('xs-component-center.js', { api: apiFor([component]) });
   await h.window.XSComponentCenter.render(h.el);
-  assert.match(h.el.innerHTML, /集群组件库存/);
+  assert.match(h.el.innerHTML, /集群已安装组件/);
   assert.match(h.el.innerHTML, /<details[^>]*data-xcc-available/);
   assert.match(h.el.innerHTML, /<summary>可安装组件<\/summary>/);
   assert.equal(h.el.querySelector('[data-xcc-available]').open, false);

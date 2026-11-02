@@ -1297,7 +1297,7 @@
         var nodesSub = !cluster ? "请选择当前集群" : !nodesResult.ok ? "加载失败：" + errText(nodesResult.err) : clusterLabel;
         var podsSub = !cluster ? "请选择当前集群" : !podsResult.ok ? "加载失败：" + errText(podsResult.err) :
           clusterLabel + (podsIncomplete ? " · Pod 清单不完整" : "");
-        var metricSub = cluster ? "节点物理容量口径 · 等待 Prometheus 返回" : "请选择当前集群";
+        var metricSub = cluster ? "节点物理容量使用率，等待 Prometheus 返回" : "请选择当前集群";
         var html = shell("总览", "当前集群容量、节点负载、变更与告警", "");
         html += '<div class="x-cards x-cards5">' +
           kpi("集群数", String(clusters.length), clusters.length ? "已接入集群" : "尚未接入", "#/cluster/list") +
@@ -1309,7 +1309,7 @@
           kpi("内存（物理容量）", "—", metricSub, "#/observe", "mem") +
           '</div>';
 
-        html += '<section class="x-panel x-setform"><div class="x-sethead"><h2 class="x-h2">CPU / 内存（物理容量）· 24h</h2>' +
+        html += '<section class="x-panel x-setform"><div class="x-sethead"><h2 class="x-h2">CPU / 内存物理容量 24 小时趋势</h2>' +
           '<span class="x-frac">' + gEsc(clusterLabel) + '</span></div>' +
           '<div class="x-tbar" style="margin:0 0 8px"><span class="x-tag x-blue">CPU（物理容量）</span>' +
           '<span class="x-tag x-green">内存（物理容量）</span><span class="x-grow"></span>' +
@@ -1336,7 +1336,7 @@
         if (!cluster) topBody = '<p class="x-empty">请选择当前集群后查看节点负载。</p>';
         else if (!nodesResult.ok) topBody = '<p class="x-aerr" role="alert">节点加载失败：' + gEsc(errText(nodesResult.err)) + '</p>';
         else if (!topRows.length) topBody = '<p class="x-empty">当前集群没有节点数据。</p>';
-        else topBody = tableHtml(["节点", "集群", "CPU", "内存", "Pods", "状态"], topRows);
+        else topBody = tableHtml(["节点", "集群", "CPU / 可分配", "内存 / 可分配", "Pods", "状态"], topRows);
 
         var noticeBody;
         if (!noticeResult.ok) {
@@ -1422,6 +1422,9 @@
               "已删除公告", function () { renderSreLive(el); });
           };
         });
+        setTimeout(function () {
+          if (isCurrent()) renderSreLive(el);
+        }, 30000);
       }).catch(function (err) {
         if (!isCurrent()) return;
         if (isAuthErr(err)) return kickLogin();
@@ -1525,9 +1528,9 @@
       var cpuValue = results[0].ok ? prometheusLatest(results[0].data) : null;
       var memValue = results[1].ok ? prometheusLatest(results[1].data) : null;
       setSreMetric(el, "cpu", cpuValue, !results[0].ok ? "查询失败：" + sreMetricError(results[0].err) :
-        cpuValue == null ? "Prometheus 返回空结果" : "节点物理容量口径 · 当前采样");
+        cpuValue == null ? "Prometheus 返回空结果" : "物理容量口径，当前采样");
       setSreMetric(el, "mem", memValue, !results[1].ok ? "查询失败：" + sreMetricError(results[1].err) :
-        memValue == null ? "Prometheus 返回空结果" : "节点物理容量口径 · 当前采样");
+        memValue == null ? "Prometheus 返回空结果" : "物理容量口径，当前采样");
       var cpuPoints = results[2].ok ? prometheusValues(results[2].data) : [];
       var memPoints = results[3].ok ? prometheusValues(results[3].data) : [];
       var notes = [];
@@ -2325,9 +2328,9 @@
     events: "事件",
     logs: "Pod 日志",
     hosts: "主机纳管",
-    integrations: "接入配置",
+    integrations: "数据源绑定",
     registries: "镜像仓库",
-    components: "组件中心",
+    components: "组件目录",
     helm: "Helm 应用",
     crd: "CRD",
     projects: "项目与配额"
@@ -2653,51 +2656,68 @@
   }
 
   function clNodesPage(el, seq, cur, box) {
-    apiGet("/clusters/" + cur.id + "/nodes").then(function (data) {
-      if (!alive(seq, el) || !box) return;
-      var items = itemsOf(data);
-      var metricsOk = !!(data && data.metrics_available);
-      var body = items.length ? tableHtml(
-        ["节点", "状态", "角色", "IP", "版本", "CPU", "内存", "操作"],
-        items.map(function (n) {
-          var usage = n.usage || null;
-          return [
-            '<a class="x-name" href="javascript:void(0)" data-node="' + gEsc(n.name) + '" title="查看节点详情">' + gEsc(n.name) + "</a>",
-            n.ready ? tagHtml("Ready", "ok") : tagHtml(n.status || "NotReady", "bad"),
-            gEsc((n.roles || []).join("、") || "worker"),
-            mono(n.internal_ip || "—"),
-            mono(n.kubelet_version || "—"),
-            barHtml(usage ? usage.cpu_percent : null),
-            barHtml(usage ? usage.memory_percent : null),
-            '<span class="x-kacts">' +
-              actBtn("详情", "node-detail", n.name, { title: "查看节点详情" }) +
-              (n.unschedulable ? actBtn("解除封锁", "node-uncordon", n.name) : actBtn("封锁", "node-cordon", n.name)) +
-              actBtn("驱逐", "node-drain", n.name) + "</span>"
-          ];
-        })
-      ) : '<p class="x-frac" style="margin:0">该集群没有节点数据。</p>';
-      box.innerHTML = panelHtml("节点", items.length + " 个" + (metricsOk ? "" : "   metrics-server 不可用（无 CPU/内存使用率）"),
-        toolbarHtml(searchInput("搜索节点名称 / IP / 角色") + '<span class="x-frac" data-live-none hidden>无匹配节点</span>') + body);
-      filterTable(box);
-      [].slice.call(el.querySelectorAll("[data-node]")).forEach(function (a) {
-        a.onclick = function () { clNodeDetail(cur, a.getAttribute("data-node")); };
+    var loading = false;
+    function loadNodes() {
+      if (loading) return;
+      loading = true;
+      var priorSearch = box && box.querySelector("[data-live-q]");
+      var query = priorSearch ? priorSearch.value : "";
+      apiGet("/clusters/" + cur.id + "/nodes").then(function (data) {
+        if (!alive(seq, el) || !box) return;
+        var items = itemsOf(data);
+        var metricsOk = !!(data && data.metrics_available);
+        var body = items.length ? tableHtml(
+          ["节点", "状态", "角色", "IP", "版本", "CPU / 可分配", "内存 / 可分配", "操作"],
+          items.map(function (n) {
+            var usage = n.usage || null;
+            return [
+              '<a class="x-name" href="javascript:void(0)" data-node="' + gEsc(n.name) + '" title="查看节点详情">' + gEsc(n.name) + "</a>",
+              n.ready ? tagHtml("Ready", "ok") : tagHtml(n.status || "NotReady", "bad"),
+              gEsc((n.roles || []).join("、") || "worker"),
+              mono(n.internal_ip || "—"),
+              mono(n.kubelet_version || "—"),
+              barHtml(usage ? usage.cpu_percent : null),
+              barHtml(usage ? usage.memory_percent : null),
+              '<span class="x-kacts">' +
+                actBtn("详情", "node-detail", n.name, { title: "查看节点详情" }) +
+                (n.unschedulable ? actBtn("解除封锁", "node-uncordon", n.name) : actBtn("封锁", "node-cordon", n.name)) +
+                actBtn("驱逐", "node-drain", n.name) + "</span>"
+            ];
+          })
+        ) : '<p class="x-frac" style="margin:0">该集群没有节点数据。</p>';
+        box.innerHTML = panelHtml("节点", items.length + " 个" + (metricsOk ? " · 每 15 秒更新" : " · metrics-server 不可用"),
+          toolbarHtml(searchInput("搜索节点名称 / IP / 角色").replace('data-live-q', 'data-live-q value="' + gEsc(query) + '"') +
+            '<span class="x-frac" data-live-none hidden>无匹配节点</span>') + body);
+        filterTable(box);
+        [].slice.call(el.querySelectorAll("[data-node]")).forEach(function (a) {
+          a.onclick = function () { clNodeDetail(cur, a.getAttribute("data-node")); };
+        });
+        bindActs(el, function (act, id) {
+          var basePath = "/clusters/" + cur.id + "/nodes/" + encodeURIComponent(id);
+          if (act === "node-detail") clNodeDetail(cur, id);
+          else if (act === "node-cordon") doAction(apiPost(basePath + "/cordon", null), "已封锁节点 " + id, repaint);
+          else if (act === "node-uncordon") doAction(apiPost(basePath + "/uncordon", null), "已解除封锁 " + id, repaint);
+          else if (act === "node-drain") {
+            confirmDialog("驱逐节点", "确认驱逐节点 <b>" + gEsc(id) + "</b>？节点会先被封锁，DaemonSet 之外的 Pod 将被迁移。", "驱逐", function () {
+              doAction(apiPost(basePath + "/drain", null), "已提交驱逐节点 " + id, repaint);
+            });
+          }
+        });
+      }, function (err) {
+        if (!alive(seq, el) || !box) return;
+        if (isAuthErr(err)) return kickLogin();
+        box.innerHTML = errorPanel(err);
+      }).then(function () {
+        loading = false;
+      }, function () {
+        loading = false;
       });
-      bindActs(el, function (act, id) {
-        var basePath = "/clusters/" + cur.id + "/nodes/" + encodeURIComponent(id);
-        if (act === "node-detail") clNodeDetail(cur, id);
-        else if (act === "node-cordon") doAction(apiPost(basePath + "/cordon", null), "已封锁节点 " + id, repaint);
-        else if (act === "node-uncordon") doAction(apiPost(basePath + "/uncordon", null), "已解除封锁 " + id, repaint);
-        else if (act === "node-drain") {
-          confirmDialog("驱逐节点", "确认驱逐节点 <b>" + gEsc(id) + "</b>？节点会先被封锁，DaemonSet 之外的 Pod 将被迁移。", "驱逐", function () {
-            doAction(apiPost(basePath + "/drain", null), "已提交驱逐节点 " + id, repaint);
-          });
-        }
-      });
-    }, function (err) {
-      if (!alive(seq, el) || !box) return;
-      if (isAuthErr(err)) return kickLogin();
-      box.innerHTML = errorPanel(err);
-    });
+    }
+    loadNodes();
+    var refreshTimer = setInterval(function () {
+      if (!alive(seq, el)) { clearInterval(refreshTimer); return; }
+      loadNodes();
+    }, 15000);
   }
 
   function clNamespacesPage(el, seq, cur, box) {

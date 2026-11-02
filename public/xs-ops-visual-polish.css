@@ -164,6 +164,99 @@
   gap: 8px;
 }
 
+.ops-metrics-page:fullscreen {
+  overflow: auto;
+  padding: 20px;
+  background: #f4f7f8;
+}
+
+.ops-observe-dashboard {
+  min-width: 0;
+  margin-bottom: 16px;
+}
+
+.ops-observe-dashboard > .x-h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.ops-dashboard-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 4px 0 12px;
+  color: var(--x-sub);
+  font-size: 12px;
+}
+
+.ops-dashboard-meta strong {
+  color: var(--x-text);
+  font-size: 15px;
+}
+
+.ops-dashboard-meta time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-metric-trend-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ops-metric-trend {
+  min-width: 0;
+  padding: 14px 16px 10px;
+  border: 1px solid var(--x-line);
+  border-radius: 6px;
+  background: var(--x-card, #fff);
+}
+
+.ops-metric-trend header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ops-metric-trend h3 {
+  margin: 0;
+  color: var(--x-sub);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ops-metric-trend header strong {
+  color: var(--x-text);
+  font-size: 23px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-metric-trend svg {
+  display: block;
+  width: 100%;
+  height: 235px;
+  margin-top: 8px;
+  overflow: visible;
+}
+
+.ops-chart-grid line {
+  stroke: var(--x-line);
+  stroke-width: 1;
+}
+
+.ops-chart-grid text {
+  fill: var(--x-sub);
+  font-size: 11px;
+}
+
+.ops-metrics-page:fullscreen .ops-metric-trend svg {
+  height: min(30vh, 330px);
+}
+
 .ops-metric-card {
   min-width: 0;
   padding: 14px 16px;
@@ -306,6 +399,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .ops-metric-trend-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .x-cluster-source-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -314,6 +411,10 @@
 @media (max-width: 480px) {
   .ops-metric-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ops-metrics-page:fullscreen {
+    padding: 10px;
   }
 
   .x-cluster-source-form {

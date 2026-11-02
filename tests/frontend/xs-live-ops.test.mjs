@@ -22,6 +22,7 @@ const context = vm.createContext({
   setTimeout, setInterval, clearInterval
 });
 const liveOpsSource = fs.readFileSync(new URL("../../public/xs-live-ops.js", import.meta.url), "utf8");
+const visualCSS = fs.readFileSync(new URL("../../public/xs-ops-visual-polish.css", import.meta.url), "utf8");
 vm.runInContext(liveOpsSource, context);
 vm.runInContext(fs.readFileSync(new URL("../../public/xs-observability.js", import.meta.url), "utf8"), context);
 const ops = window.XSLiveOps._internals;
@@ -58,6 +59,20 @@ test("pipeline form builds the backend stage contract", () => {
     { name: "deploy-prod", type: "deploy", deploy_env: "prod" },
     { name: "notify", type: "jenkins", jenkins_id: 4, jenkins_job: "release/notify", params: { COMMIT: "${COMMIT}" } }
   ]);
+});
+
+test("metrics page is a full-screen dashboard with large trends and timed refresh", () => {
+  const dashboard = liveOpsSource.slice(liveOpsSource.indexOf("function obsMetrics"), liveOpsSource.indexOf("function runProm"));
+  assert.match(liveOpsSource, /range: "24h"/);
+  assert.match(dashboard, /data-dashboard-fullscreen/);
+  assert.match(dashboard, /requestFullscreen/);
+  assert.match(dashboard, /setInterval\(function \(\)[\s\S]*?loadMetricSummary\(OB\.scope\.cluster, OB\.scope\)[\s\S]*?\}, 30000\)/);
+  assert.match(dashboard, /ops-metric-trend-grid/);
+  assert.match(dashboard, /metricTrend\(items\[0\]/);
+  assert.match(dashboard, /metricTrend\(items\[1\]/);
+  assert.match(dashboard, /metricTrend\(items\[2\]/);
+  assert.match(visualCSS, /\.ops-metrics-page:fullscreen/);
+  assert.match(visualCSS, /\.ops-metric-trend-grid\s*\{[\s\S]*?repeat\(3/);
 });
 
 test("pipeline stages reject unsafe or incomplete configurations", () => {
@@ -127,7 +142,7 @@ test("cluster metrics auto-load from the resolved Prometheus datasource", () => 
   assert.match(liveOpsSource, /node_memory_MemAvailable_bytes/);
   assert.match(liveOpsSource, /kube_pod_status_phase/);
   assert.match(liveOpsSource, /loadMetricSummary\(OB\.scope\.cluster, OB\.scope\)/);
-  assert.match(liveOpsSource, /data-config-ds>配置数据源/);
+  assert.match(liveOpsSource, /data-config-ds>数据源绑定/);
   assert.match(liveOpsSource, /location\.hash = "#\/cluster\/integrations"/);
   assert.doesNotMatch(liveOpsSource, /Math\.random\(|mock|generated series/i);
 });

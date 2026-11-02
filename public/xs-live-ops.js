@@ -888,7 +888,7 @@
     history.replaceState(null, "", "#/observe/events");
     return id;
   }
-  var OB = { promId: 0, range: "1h", query: "up", templateQuery: "" };
+  var OB = { promId: 0, range: "24h", query: "up", templateQuery: "" };
 
   function renderObserveLive(el) {
     var pg = obPage();
@@ -1070,9 +1070,19 @@
   }
 
   function obsMetrics(el) {
-    var p = livePage(el, "指标监控", "", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn" type="button" data-config-ds>配置数据源</button>', true);
+    var p = livePage(el, "指标监控", "", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn" type="button" data-dashboard-fullscreen>全屏</button><button class="x-btn" type="button" data-config-ds>数据源绑定</button>', true);
+    p.el.classList.add("ops-metrics-page");
     el.querySelector("[data-refresh]").onclick = function () { obsMetrics(el); };
     el.querySelector("[data-config-ds]").onclick = function () { location.hash = "#/cluster/integrations"; };
+    var fullscreen = el.querySelector("[data-dashboard-fullscreen]");
+    if (fullscreen) fullscreen.onclick = function () {
+      if (document.fullscreenElement === p.el) document.exitFullscreen();
+      else if (p.el.requestFullscreen) p.el.requestFullscreen();
+    };
+    var fullscreenHandler = function () {
+      if (fullscreen) fullscreen.textContent = document.fullscreenElement === p.el ? "退出全屏" : "全屏";
+    };
+    document.addEventListener("fullscreenchange", fullscreenHandler);
     function load() {
       var t = p.newToken();
       var cluster = activeCluster();
@@ -1092,6 +1102,14 @@
     }
     p.retry = load;
     load();
+    var refreshTimer = setInterval(function () {
+      if (!p.active()) {
+        clearInterval(refreshTimer);
+        document.removeEventListener("fullscreenchange", fullscreenHandler);
+        return;
+      }
+      if (OB.scope) loadMetricSummary(OB.scope.cluster, OB.scope);
+    }, 30000);
 
     function dsTable(list) {
       if (!list.length) return emptyHTML("未配置数据源。点击“新建数据源”接入 Prometheus / Loki / Alertmanager / Jaeger / Tempo。");
@@ -1106,7 +1124,8 @@
       if (!proms.length) return panelHTML("PromQL 查询", emptyHTML("未接入 Prometheus 数据源，无法执行查询。"));
       var opts = proms.map(function (d) { return { v: d.id, t: (d.name || ("#" + d.id)) + (d.env ? "   " + d.env : "") }; });
       var ranges = [{ v: "15m", t: "近 15 分钟" }, { v: "1h", t: "近 1 小时" }, { v: "6h", t: "近 6 小时" }, { v: "24h", t: "近 24 小时" }, { v: "7d", t: "近 7 天" }];
-      return panelHTML("集群指标", '<div data-obsm-dashboard aria-live="polite">' + loadingHTML("正在读取当前集群指标…") + "</div>") +
+      return '<section class="ops-observe-dashboard"><h2 class="x-h2">集群指标大屏</h2><div data-obsm-dashboard aria-live="polite">' +
+        loadingHTML("正在读取当前集群指标…") + "</div></section>" +
         panelHTML("PromQL 查询", barHTML([
         '<select class="x-select" data-promds aria-label="Prometheus 数据源" style="width:auto">' + opts.map(function (o) { return '<option value="' + E(o.v) + '"' + (String(o.v) === String(OB.promId) ? " selected" : "") + ">" + E(o.t) + "</option>"; }).join("") + "</select>",
         '<select class="x-select" data-promrange aria-label="时间范围" style="width:auto">' + ranges.map(function (r) { return '<option value="' + r.v + '"' + (r.v === OB.range ? " selected" : "") + ">" + r.t + "</option>"; }).join("") + "</select>",
@@ -1132,6 +1151,40 @@
       return '<div class="x-card ops-metric-card"><p>' + E(item.title) + "</p><strong>" + E(shown) +
         (value == null ? "" : '<small>' + E(item.unit || "") + "</small>") + "</strong>" +
         (trend || '<span class="x-frac">当前窗口无数据</span>') + "</div>";
+    }
+    function metricTrend(item, result, color) {
+      var values = result && result.data && result.data.result && result.data.result[0] &&
+        Array.isArray(result.data.result[0].values) ? result.data.result[0].values : [];
+      var samples = values.map(function (sample) {
+        var time = Number(sample && sample[0]), value = Number(sample && sample[1]);
+        return [time, sample && sample[1] != null && isFinite(value) ? value : null];
+      }).filter(function (sample) { return isFinite(sample[0]); });
+      var current = latestMetric(result);
+      if (!samples.some(function (sample) { return sample[1] != null; })) {
+        return '<article class="ops-metric-trend"><header><h3>' + E(item.title) + '</h3><strong>—</strong></header><p class="x-empty">当前范围没有可绘制的数据</p></article>';
+      }
+      var width = 760, height = 250, margin = { top: 18, right: 18, bottom: 30, left: 46 };
+      var x = function (i) { return margin.left + i / Math.max(1, samples.length - 1) * (width - margin.left - margin.right); };
+      var y = function (v) { return margin.top + (100 - Math.max(0, Math.min(100, v))) / 100 * (height - margin.top - margin.bottom); };
+      var d = "", drawing = false;
+      samples.forEach(function (sample, i) {
+        if (sample[1] == null) { drawing = false; return; }
+        d += (drawing ? " L" : " M") + x(i).toFixed(1) + "," + y(sample[1]).toFixed(1);
+        drawing = true;
+      });
+      var grid = [0, 25, 50, 75, 100].map(function (v) {
+        return '<line x1="' + margin.left + '" y1="' + y(v) + '" x2="' + (width - margin.right) + '" y2="' + y(v) + '" />' +
+          '<text x="' + (margin.left - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + v + '%</text>';
+      }).join("");
+      var firstTime = new Date(samples[0][0] * 1000), lastTime = new Date(samples[samples.length - 1][0] * 1000);
+      var timeLabel = function (date) { return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }); };
+      return '<article class="ops-metric-trend"><header><h3>' + E(item.title) + '</h3><strong>' +
+        (current == null ? "—" : Number(current).toFixed(1) + E(item.unit || "")) + '</strong></header>' +
+        '<svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + E(item.title) + '近 ' + E(OB.range) + '趋势图">' +
+        '<g class="ops-chart-grid">' + grid +
+        '<text x="' + margin.left + '" y="' + (height - 5) + '">' + E(timeLabel(firstTime)) + '</text>' +
+        '<text x="' + (width - margin.right) + '" y="' + (height - 5) + '" text-anchor="end">' + E(timeLabel(lastTime)) + '</text></g>' +
+        '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="3" vector-effect="non-scaling-stroke" /></svg></article>';
     }
     function loadMetricSummary(cluster, source) {
       var box = p.box.querySelector("[data-obsm-dashboard]");
@@ -1162,7 +1215,14 @@
         if (!p.active() || context !== clusterKey() || !box.isConnected) return;
         var failures = results.filter(function (result) { return !result.ok; }).length;
         box.innerHTML = (failures ? '<p class="x-aerr" role="status">' + failures + ' 项指标查询失败，其余结果仍可查看。<button class="x-btn" type="button" data-metric-retry>重试</button></p>' : "") +
-          '<div class="ops-metric-grid">' + items.map(function (item, index) {
+          '<div class="ops-dashboard-meta"><strong>' + E(cluster.name || ("集群 #" + cluster.id)) + '</strong><span>近 ' + E(OB.range) + '</span><time>' +
+          E(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })) + ' 更新</time></div>' +
+          '<div class="ops-metric-trend-grid">' + [
+            metricTrend(items[0], results[0].ok ? results[0].value : null, "#2563eb"),
+            metricTrend(items[1], results[1].ok ? results[1].value : null, "#159570"),
+            metricTrend(items[2], results[2].ok ? results[2].value : null, "#d97706")
+          ].join("") + '</div><div class="ops-metric-grid">' + items.slice(3).map(function (item, index) {
+            index += 3;
             return results[index].ok ? metricCard(item, results[index].value) : '<div class="x-card ops-metric-card"><p>' + E(item.title) + '</p><strong>—</strong><span class="x-frac">查询失败：' + E(errMsg(results[index].error)) + '</span></div>';
           }).join("") + "</div>";
         var retry = box.querySelector('[data-metric-retry]');

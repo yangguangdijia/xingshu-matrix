@@ -93,12 +93,26 @@ test("node list exposes the shared search marker and no-match state", () => {
 test("24h chart names both physical-capacity series and has no fixed hex grid", () => {
   const chart = section("function renderSreChart", "function loadSreMetrics");
   const overview = section("function renderSreLive", "function sreMetricError");
-  assert.match(overview, /CPU \/ 内存（物理容量）· 24h/);
+  assert.match(overview, /CPU \/ 内存物理容量 24 小时趋势/);
+  assert.doesNotMatch(overview, /物理容量口径 ·/);
   assert.match(overview, /CPU \/ 内存占 Kubernetes Allocatable/);
   assert.match(chart, /节点物理容量 CPU 与内存使用率 24 小时曲线/);
   assert.match(chart, /x-sre-line--cpu/);
   assert.match(chart, /x-sre-line--memory/);
   assert.doesNotMatch(chart, /stroke=\"#[0-9a-fA-F]{3,8}\"/);
+});
+
+test("node usage is refreshed while the node list stays searchable", () => {
+  const nodes = section("function clNodesPage", "function clNamespacesPage");
+  assert.match(nodes, /setInterval\(function \(\)[\s\S]*?loadNodes\(\)[\s\S]*?\}, 15000\)/);
+  assert.match(nodes, /priorSearch\.value/);
+  assert.match(nodes, /每 15 秒更新/);
+});
+
+test("overview refreshes cluster metrics and node loads without an explicit reload", () => {
+  const overview = section("function renderSreLive", "function sreMetricError");
+  assert.match(overview, /setTimeout\(function \(\)[\s\S]*?renderSreLive\(el\)[\s\S]*?\}, 30000\)/);
+  assert.match(overview, /节点物理容量使用率，等待 Prometheus 返回/);
 });
 
 

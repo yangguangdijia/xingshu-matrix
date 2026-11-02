@@ -28,8 +28,6 @@
       var urls = found ? found.items.flatMap(function (r) { return Array.isArray(r.url_candidates) ? r.url_candidates : []; }) : [];
       return '<tr><td><strong>' + esc(labels[e.type]) + '</strong></td><td>' + (source ? val(source.ds.name) + '<small>' + val(source.ds.url) + '</small><small>' + (source.scope === 'central' ? '中央共享 · 编辑将创建集群专用绑定' : '集群专用') + '</small>' : e.error && e.error.status === 404 ? '未绑定' : '<span class="xi-error">' + esc(failure(e.error)) + '</span>') + '</td><td>' + (urls.length ? urls.map(function (u) { return '<small>' + esc(u) + '</small>'; }).join('') : '无候选地址') + '</td><td>' + (found ? val(states[found.state] || found.state) + (found.error ? '<small class="xi-error">' + esc(found.error) + '</small>' : '') + '<small>' + (urls.length ? '候选不代表可达，保存前必须测试' : '') + '</small>' : '<span class="xi-error">发现失败：' + esc(failure(s.discovery.error)) + '</span>') + '</td><td><button class="x-btn" type="button" data-xi-edit="' + i + '"' + (can('datasource:manage') && (source || e.error && e.error.status === 404) ? '' : ' disabled') + '>配置 / 选择</button>' + (source ? '<button class="x-btn" type="button" data-xi-test-bound="' + i + '"' + (can('datasource:read') ? '' : ' disabled') + '>测试连接</button>' : '') + '</td></tr>';
     }).join('') + '</tbody></table></div>';
-    var components = s.el.querySelector('[data-xi-components]');
-    components.innerHTML = '<div class="xi-toolbar"><h3>组件库存</h3><a class="x-btn" href="#/cluster/components">完整组件目录 / 安装</a></div>' + (!s.components.ok ? '<p class="xi-error" role="alert">组件发现失败：' + esc(failure(s.components.error)) + '</p>' : !Array.isArray(s.components.value.items) ? '<p class="xi-error">组件库存格式无效</p>' : !s.components.value.items.length ? '<p class="xi-state">未发现已安装组件</p>' : '<div class="xi-scroll"><table class="x-table xi-table"><thead><tr><th>组件</th><th>类型</th><th>Namespace</th><th>发现状态</th></tr></thead><tbody>' + s.components.value.items.map(function (r) { return '<tr><td>' + val(r.name || r.component || r.key) + '</td><td>' + val(r.kind || r.category || r.type) + '</td><td>' + val(r.namespace) + '</td><td>' + val(r.state || r.status || '未知') + '</td></tr>'; }).join('') + '</tbody></table></div>');
   }
   function field(label, name, value, attrs) { return '<label>' + esc(label) + '<input class="x-input" name="' + name + '" value="' + esc(value) + '" ' + (attrs || '') + '></label>'; }
   function open(s, index) {
@@ -100,9 +98,9 @@
     finally { if (live(s) && s.edit === e) { e.busy = false; form.querySelector('[data-xi-editable]').disabled = !!e.done; button.disabled = !!e.done || !e.tested; } }
   }
   async function load(s) {
-    var results = await Promise.all([settle(api(s, base(s) + '/integration-discovery')), settle(api(s, base(s) + '/components')), Promise.all(types.map(function (type) { return settle(api(s, '/observability/datasources/resolve', 'GET', undefined, { type: type }).then(function (data) { return resolve(data, s, type); })); }))]);
+    var results = await Promise.all([settle(api(s, base(s) + '/integration-discovery')), Promise.all(types.map(function (type) { return settle(api(s, '/observability/datasources/resolve', 'GET', undefined, { type: type }).then(function (data) { return resolve(data, s, type); })); }))]);
     if (!live(s)) return;
-    s.discovery = results[0]; s.components = results[1]; s.entries = types.map(function (type, i) { return { type: type, source: results[2][i].ok ? results[2][i].value : null, error: results[2][i].error }; }); draw(s);
+    s.discovery = results[0]; s.entries = types.map(function (type, i) { return { type: type, source: results[1][i].ok ? results[1][i].value : null, error: results[1][i].error }; }); draw(s);
   }
   function destroy(el) { var s = mounts.get(el); if (!s) return; mounts.delete(el); s.controller.abort(); if (s.unsubscribe) s.unsubscribe(); if (s.edit) s.edit.tested = ''; ['click', 'input', 'change', 'submit'].forEach(function (t) { el.removeEventListener(t, s[t]); }); el.innerHTML = ''; }
   function render(el, ctx) {
@@ -111,7 +109,7 @@
     var s = { el: el, context: context, snapshot: context.get(), controller: new AbortController(), entries: [] }; mounts.set(el, s);
     s.unsubscribe = context.subscribe(function () { if (mounts.get(el) === s) render(el, ctx); });
     if (s.snapshot.kind !== 'cluster' || !s.snapshot.cluster_id) { el.innerHTML = '<p class="xi-state">请选择单个集群</p>'; return Promise.resolve(); }
-    el.innerHTML = '<section class="xi-root" aria-label="集群接入配置"><div class="xi-toolbar"><h2>接入配置</h2><button class="x-btn" type="button" data-xi-refresh>刷新</button><button class="x-btn" type="button" data-xi-discover' + (can('cluster:manage') || can('datasource:manage') ? '' : ' disabled') + '>刷新发现</button></div><p data-xi-notice role="status"></p><div data-xi-list><p class="xi-state" role="status">正在读取集群绑定与候选…</p></div><section class="xi-detail" data-xi-detail hidden></section><section class="xi-components" data-xi-components></section></section>';
+    el.innerHTML = '<section class="xi-root" aria-label="可观测数据源绑定"><div class="xi-toolbar"><h2>可观测数据源</h2><button class="x-btn" type="button" data-xi-refresh>刷新</button><button class="x-btn" type="button" data-xi-discover' + (can('cluster:manage') || can('datasource:manage') ? '' : ' disabled') + '>刷新服务发现</button></div><p data-xi-notice role="status"></p><div data-xi-list><p class="xi-state" role="status">正在读取集群绑定与候选…</p></div><section class="xi-detail" data-xi-detail hidden></section></section>';
     s.click = function (event) {
       var b = event.target.closest('button'); if (!b || !el.contains(b) || !live(s)) return;
       if (b.hasAttribute('data-xi-refresh') && !(s.edit && s.edit.busy)) return render(el, ctx);
