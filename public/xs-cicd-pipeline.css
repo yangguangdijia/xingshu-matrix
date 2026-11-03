@@ -104,3 +104,57 @@
   .x-cicd-log-tools .x-cicd-follow { margin-left: 0; }
   .x-cicd-section, .x-cicd-history { padding: 12px; }
 }
+
+/* 2026-11-03 对标 KubeSphere DevOps：列表统计、阶段图、编辑器模式切换 */
+.x-cicd-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 16px; }
+.x-cicd-kpis > div { background: #fff; border: 1px solid var(--x-line); border-radius: 8px; padding: 14px 18px; display: flex; flex-direction: column; gap: 4px; }
+.x-cicd-kpis span { font-size: 12px; color: var(--x-sub); }
+.x-cicd-kpis b { font-size: 24px; font-weight: 600; color: var(--x-text); font-variant-numeric: tabular-nums; }
+.x-cicd-kpis em { font-style: normal; font-size: 12px; color: var(--x-sub); }
+.x-cicd-kpis .x-cicd-kpi--busy { color: #2f6fec; }
+.x-cicd-kpis .x-cicd-kpi--bad { color: #d64545; }
+.x-cicd-table--list td { vertical-align: top; padding-top: 12px; padding-bottom: 12px; }
+.x-cicd-sub { display: block; margin-top: 4px; font-size: 12px; color: var(--x-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 340px; }
+.x-cicd-sub a { color: inherit; }
+.x-cicd-stagepath { color: #5b6475; }
+.x-cicd-arrow { font-style: normal; margin: 0 4px; color: #a0a7b4; }
+.x-cicd-strip { display: inline-flex; gap: 3px; align-items: center; padding-top: 3px; }
+.x-cicd-dot { display: inline-block; width: 8px; height: 18px; border-radius: 2px; background: #e8ebf0; }
+.x-cicd-dot--ok { background: #2fa36b; }
+.x-cicd-dot--bad { background: #d64545; }
+.x-cicd-dot--busy { background: #2f6fec; }
+.x-cicd-dot--neutral { background: #b7bdc8; }
+.x-cicd-rate { display: inline-block; width: 64px; height: 6px; border-radius: 3px; background: #edf0f4; vertical-align: middle; margin-right: 8px; overflow: hidden; }
+.x-cicd-rate b { display: block; height: 100%; border-radius: 3px; }
+.x-cicd-rate--ok b { background: #2fa36b; }
+.x-cicd-rate--warn b { background: #e0a125; }
+.x-cicd-rate--bad b { background: #d64545; }
+
+.x-cicd-graph { list-style: none; margin: 4px 0 14px; padding: 4px 2px 8px; display: flex; gap: 36px; overflow-x: auto; }
+.x-cicd-node { position: relative; flex: 0 0 auto; }
+.x-cicd-node + .x-cicd-node::before { content: ""; position: absolute; left: -36px; top: 50%; width: 36px; height: 2px; background: #d5dae2; }
+.x-cicd-node--ok + .x-cicd-node::before { background: #2fa36b; }
+.x-cicd-node button { display: flex; flex-direction: column; gap: 6px; width: 176px; text-align: left; padding: 12px 14px; background: #fff; border: 1px solid var(--x-line); border-left: 3px solid #b7bdc8; border-radius: 8px; cursor: pointer; color: var(--x-text); font: inherit; }
+.x-cicd-node button:hover { box-shadow: 0 2px 8px rgba(20, 30, 50, .08); }
+.x-cicd-node--ok button { border-left-color: #2fa36b; }
+.x-cicd-node--bad button { border-left-color: #d64545; background: #fffafa; }
+.x-cicd-node--busy button { border-left-color: #2f6fec; }
+.x-cicd-node.is-running button { animation: xCicdPulse 1.6s ease-in-out infinite; }
+.x-cicd-node.is-active button { border-color: #2f6fec; box-shadow: 0 0 0 2px rgba(47, 111, 236, .15); }
+.x-cicd-node-type { font-size: 11px; color: var(--x-sub); }
+.x-cicd-node strong { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.x-cicd-node-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.x-cicd-node-meta em { font-style: normal; font-size: 12px; color: var(--x-sub); font-variant-numeric: tabular-nums; }
+.x-cicd-node-err { font-size: 12px; color: #c03b3b; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@keyframes xCicdPulse { 50% { box-shadow: 0 0 0 3px rgba(47, 111, 236, .18); } }
+.x-cicd-stage-more summary { cursor: pointer; font-size: 13px; color: var(--x-sub); margin: 4px 0 10px; }
+
+.x-cicd-modebar { display: inline-flex; border: 1px solid var(--x-line); border-radius: 6px; overflow: hidden; margin: 0 0 14px; }
+.x-cicd-modebar button { border: 0; background: #fff; padding: 6px 16px; font: inherit; font-size: 13px; cursor: pointer; color: var(--x-sub); }
+.x-cicd-modebar button + button { border-left: 1px solid var(--x-line); }
+.x-cicd-modebar button.is-on { background: var(--x-blue-bg); color: #2f6fec; font-weight: 600; }
+.x-cicd-yaml { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; background: #fafbfc; }
+[data-editor-stage] legend { display: flex; align-items: center; gap: 8px; width: 100%; }
+.x-cicd-legend-tools { margin-left: auto; display: inline-flex; gap: 4px; }
+.x-btn--sm { padding: 2px 8px; font-size: 12px; min-height: 0; }
+@media (max-width: 900px) { .x-cicd-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

@@ -2,7 +2,10 @@
 (function () {
   "use strict";
 
+  var root = window;
   var instances = new WeakMap();
+  var FIELD_FOR = { image: "build test script", registry_secret: "build", deploy_env: "deploy", jenkins_id: "jenkins", jenkins_job: "jenkins",
+    commands: "test script", env: "build test script", params: "jenkins" };
   var ACTIVE = { queued: true, pending: true, running: true, cancelling: true };
   var LABEL = {
     queued: "排队中", pending: "等待中", running: "运行中", cancelling: "取消中",
@@ -79,9 +82,11 @@
       }).join("") + "</div>" : '<p class="x-cicd-empty">尚未配置阶段。</p>') + "</section>";
   }
   function runSummary(run) {
-    return '<section class="x-cicd-section" aria-label="运行摘要"><h2>运行摘要</h2><dl class="x-cicd-grid x-cicd-grid--summary">' +
+    var act = ACTIVE[run.status] ? '<button class="x-btn" type="button" data-action="cancel-run" data-id="' + escapeHTML(run.id) + '">取消运行</button>' :
+      '<button class="x-btn" type="button" data-action="rerun" data-id="' + escapeHTML(run.id) + '">重新运行</button>';
+    return '<section class="x-cicd-section" aria-label="运行摘要"><div class="x-cicd-section-head"><h2>运行 #' + escapeHTML(run.id) + " " + status(run.status) + '</h2><span class="x-cicd-actions">' + act + '</span></div><dl class="x-cicd-grid x-cicd-grid--summary">' +
       record("运行 ID", '<span class="x-cicd-mono">#' + escapeHTML(run.id) + "</span>") + record("状态", status(run.status)) +
-      record("触发方式", val(run.trigger)) + record("触发人", val(run.triggered_by || run.triggered_by_id)) +
+      record("触发方式", triggerText(run.trigger)) + record("触发人", val(run.triggered_by || run.triggered_by_id)) +
       record("分支", val(run.branch), "x-cicd-break") + record("完整 Commit", val(run.commit), "x-cicd-mono x-cicd-break") +
       record("镜像标签", val(run.image_tag), "x-cicd-mono x-cicd-break") + record("创建时间", date(run.created_at)) +
       record("开始时间", date(run.started_at)) + record("结束时间", date(run.finished_at)) +
@@ -89,12 +94,10 @@
       (run.error ? record("运行错误", val(run.error), "x-cicd-error x-cicd-break") : "") +
       "</dl></section>";
   }
-  function runStages(run) {
+  function runStages(run, current) {
     var stages = Array.isArray(run.stages) ? run.stages : [];
-    return '<section class="x-cicd-section" aria-label="执行阶段"><h2>执行阶段</h2>' +
-      (stages.length ? '<ol class="x-cicd-flow">' + stages.map(function (s, i) {
-        return '<li>' + status(s.status) + '<strong>' + escapeHTML(stageName(s, i)) + "</strong></li>";
-      }).join("") + '</ol><div class="x-cicd-stages">' + stages.map(function (s, i) {
+    return '<section class="x-cicd-section" aria-label="执行阶段"><h2>执行阶段</h2>' + stageGraph(run, current) +
+      (stages.length ? '<details class="x-cicd-stage-more"><summary>阶段明细（Job、审批单、起止时间）</summary><div class="x-cicd-stages">' + stages.map(function (s, i) {
         return '<article class="x-cicd-stage"><header><span class="x-cicd-mono">' + (Number.isInteger(+s.idx) ? +s.idx + 1 : i + 1) +
           "</span><strong>" + escapeHTML(stageName(s, i)) + "</strong>" + status(s.status) + '</header><dl class="x-cicd-grid">' +
           record("类型", val(s.type)) + record("Job", val(s.job_name), "x-cicd-break") +
@@ -103,7 +106,58 @@
           record("耗时", s.started_at ? escapeHTML(duration(s.started_at, s.finished_at)) : "—") +
           (s.error ? record("错误", val(s.error), "x-cicd-error x-cicd-break") : "") +
           "</dl></article>";
-      }).join("") + "</div>" : '<p class="x-cicd-empty">该运行暂无阶段执行记录。</p>') + "</section>";
+      }).join("") + "</div></details>" : "") + "</section>";
+  }
+  var TYPE_LABEL = { build: "镜像构建", test: "测试", script: "脚本", deploy: "部署", jenkins: "Jenkins" };
+  function secs(value) {
+    if (value == null || !isFinite(value)) return "—";
+    var s = Math.round(value);
+    return s >= 3600 ? Math.floor(s / 3600) + "小时" + Math.floor(s % 3600 / 60) + "分" : s >= 60 ? Math.floor(s / 60) + "分" + (s % 60) + "秒" : s + "秒";
+  }
+  function ago(value) {
+    if (!value) return "—";
+    var t = new Date(value).getTime(); if (!isFinite(t)) return "—";
+    var d = Math.max(0, Math.floor((Date.now() - t) / 1000));
+    return d < 60 ? "刚刚" : d < 3600 ? Math.floor(d / 60) + " 分钟前" : d < 86400 ? Math.floor(d / 3600) + " 小时前" : Math.floor(d / 86400) + " 天前";
+  }
+  function kindOf(raw) {
+    return /^(succeeded|approved)$/.test(raw) ? "ok" : /^(failed|rejected)$/.test(raw) ? "bad" :
+      /^(queued|pending|running|cancelling|awaiting_approval)$/.test(raw) ? "busy" : "neutral";
+  }
+  function triggerText(t) {
+    t = String(t || "");
+    if (t === "manual") return "手动";
+    if (/^retry:/.test(t)) return "重试 #" + escapeHTML(t.slice(6));
+    if (/^webhook:/.test(t)) return "代码推送";
+    return val(t);
+  }
+  function recentStrip(list) {
+    var items = (list || []).slice(0, 10).reverse();
+    var pad = 10 - items.length, html = "";
+    for (var i = 0; i < pad; i++) html += '<i class="x-cicd-dot"></i>';
+    return '<span class="x-cicd-strip" aria-label="最近 10 次运行">' + html + items.map(function (st) {
+      return '<i class="x-cicd-dot x-cicd-dot--' + kindOf(st) + '" title="' + escapeHTML(LABEL[st] || st) + '"></i>';
+    }).join("") + "</span>";
+  }
+  function rateCell(stats) {
+    if (!stats || stats.success_rate == null) return '<span class="x-cicd-muted">—</span>';
+    var pct = Math.round(stats.success_rate * 100), cls = pct >= 90 ? "ok" : pct >= 60 ? "warn" : "bad";
+    return '<span class="x-cicd-rate x-cicd-rate--' + cls + '"><b style="width:' + pct + '%"></b></span><span class="x-cicd-numeric">' + pct +
+      '%</span><span class="x-cicd-muted"> ' + stats.succeeded + "/" + stats.finished + "</span>";
+  }
+  function stageGraph(run, current) {
+    var stages = Array.isArray(run.stages) ? run.stages : [];
+    if (!stages.length) return '<p class="x-cicd-empty">该运行暂无阶段执行记录。</p>';
+    return '<ol class="x-cicd-graph">' + stages.map(function (s, i) {
+      var idx = s.idx == null ? i : s.idx, k = kindOf(String(s.status || ""));
+      return '<li class="x-cicd-node x-cicd-node--' + k + (String(idx) === String(current) ? " is-active" : "") + (s.status === "running" ? " is-running" : "") +
+        '"><button type="button" data-action="stage-log" data-id="' + escapeHTML(idx) + '" title="查看该阶段日志">' +
+        '<span class="x-cicd-node-type">' + escapeHTML(TYPE_LABEL[s.type] || s.type || "") + '</span>' +
+        '<strong>' + escapeHTML(stageName(s, i)) + "</strong>" +
+        '<span class="x-cicd-node-meta">' + status(s.status) + '<em>' + (s.started_at ? escapeHTML(duration(s.started_at, s.finished_at)) : "—") + "</em></span>" +
+        (s.error ? '<span class="x-cicd-node-err" title="' + escapeHTML(s.error) + '">' + escapeHTML(s.error) + "</span>" : "") +
+        "</button></li>";
+    }).join("") + "</ol>";
   }
   function formatLog(line, names) {
     var stage = Number(line.stage), label = isFinite(stage) && stage >= 0 ? (names[stage] || "阶段 " + (stage + 1)) : "系统";
@@ -177,23 +231,37 @@
         '</div>';
     }
     function paintList() {
+      var kpi = { total: state.pipelines.length, running: 0, fin: 0, ok: 0, failedLast: 0 };
+      state.pipelines.forEach(function (pl) {
+        var st = pl.stats || {}, last = st.last_run;
+        kpi.fin += st.finished || 0; kpi.ok += st.succeeded || 0;
+        if (last && ACTIVE[last.status]) kpi.running++;
+        if (last && last.status === "failed") kpi.failedLast++;
+      });
+      var kpiHTML = '<div class="x-cicd-kpis">' +
+        '<div><span>流水线</span><b>' + kpi.total + '</b></div>' +
+        '<div><span>运行中</span><b class="x-cicd-kpi--busy">' + kpi.running + '</b></div>' +
+        '<div><span>最近一次失败</span><b class="x-cicd-kpi--bad">' + kpi.failedLast + '</b></div>' +
+        '<div><span>近期成功率</span><b>' + (kpi.fin ? Math.round(kpi.ok / kpi.fin * 100) + "%" : "—") + '</b><em>' + (kpi.fin ? kpi.ok + "/" + kpi.fin + " 次" : "暂无完成运行") + "</em></div></div>";
       var rows = state.pipelines.map(function (pl) {
-        var app = itemById(state.apps, pl.app_id);
-        return '<tr><td class="x-cicd-mono">#' + escapeHTML(pl.id) +
-          '</td><td class="x-cicd-title"><a href="#/cicd/pipeline/' + encodeURIComponent(pl.id) + '">' + val(pl.name) +
-          '</a></td><td class="x-cicd-title">' + nameOf(state.apps, pl.app_id) +
-          '</td><td>' + status(pl.on_push ? "running" : "pending").replace(pl.on_push ? "运行中" : "等待中", pl.on_push ? "推送触发" : "手动触发") +
-          '</td><td class="x-cicd-numeric">' + (Array.isArray(pl.stages) ? pl.stages.length : 0) +
-          '</td><td class="x-cicd-date">' + date(pl.updated_at) +
+        var st = pl.stats || {}, last = st.last_run;
+        var stageTypes = (Array.isArray(pl.stages) ? pl.stages : []).map(function (s) { return escapeHTML(s.name || s.type); }).join('<i class="x-cicd-arrow">›</i>');
+        return '<tr><td class="x-cicd-title"><a href="#/cicd/pipeline/' + encodeURIComponent(pl.id) + '">' + val(pl.name) +
+          '</a><span class="x-cicd-sub">' + nameOf(state.apps, pl.app_id) + ' · ' + (pl.on_push ? "代码推送触发" : "手动触发") + '</span><span class="x-cicd-sub x-cicd-stagepath">' + (stageTypes || "无阶段") +
+          '</span></td><td>' + (last ? status(last.status) + '<span class="x-cicd-sub"><a href="#/cicd/pipeline/' + encodeURIComponent(pl.id) + '">#' + escapeHTML(last.id) + "</a> · " + val(last.branch) + " · " + escapeHTML(ago(last.created_at)) + "</span>" : '<span class="x-cicd-muted">未运行</span>') +
+          '</td><td>' + (last ? triggerText(last.trigger) + '<span class="x-cicd-sub">' + val(last.triggered_by) + "</span>" : "—") +
+          '</td><td>' + recentStrip(st.recent) +
+          '</td><td>' + rateCell(st) +
+          '</td><td class="x-cicd-numeric">' + secs(st.avg_duration_sec) +
           '</td><td class="x-cicd-row-actions"><a class="x-btn" href="#/cicd/pipeline/' + encodeURIComponent(pl.id) +
           '">详情</a><button class="x-btn" type="button" data-action="edit" data-id="' + escapeHTML(pl.id) +
           '">编辑</button><button class="x-btn" type="button" data-action="run" data-id="' + escapeHTML(pl.id) + '">运行</button></td></tr>';
       }).join("");
-      el.innerHTML = '<main class="x-cicd-page">' + header("流水线", "管理构建、测试和部署的执行定义") +
+      el.innerHTML = '<main class="x-cicd-page">' + header("流水线", "管理构建、测试和部署的执行定义") + kpiHTML +
         (state.relatedErrors.apps ? '<p class="x-cicd-alert" role="status">应用信息暂不可用：' + escapeHTML(state.relatedErrors.apps) + '</p>' : "") +
         '<section class="x-cicd-section"><div class="x-cicd-section-head"><h2>流水线定义</h2><span>' + state.pipelines.length +
-        ' 条</span></div><div class="x-cicd-table-wrap"><table class="x-table x-cicd-table"><colgroup><col class="x-cicd-col-id"><col class="x-cicd-col-flex"><col class="x-cicd-col-flex"><col class="x-cicd-col-state"><col class="x-cicd-col-count"><col class="x-cicd-col-date"><col class="x-cicd-col-actions"></colgroup>' +
-        '<thead><tr><th>ID</th><th>名称</th><th>应用</th><th>触发</th><th>阶段数</th><th>更新时间</th><th class="x-cicd-row-actions">操作</th></tr></thead><tbody>' +
+        ' 条</span></div><div class="x-cicd-table-wrap"><table class="x-table x-cicd-table x-cicd-table--list">' +
+        '<thead><tr><th>流水线</th><th>最近运行</th><th>触发</th><th>最近 10 次</th><th>成功率（近 20 次）</th><th>平均耗时</th><th class="x-cicd-row-actions">操作</th></tr></thead><tbody>' +
         (rows || '<tr><td colspan="7" class="x-cicd-empty">暂无流水线。新建后会显示在这里。</td></tr>') +
         '</tbody></table></div></section>' + integrationsHTML() + modalHTML() + '</main>';
       var argoHost = el.querySelector(".x-cicd-connections .x-cicd-connection:last-child");
@@ -244,7 +312,7 @@
         record("默认分支", val(app && app.branch)) + record("执行集群", target ? val(target.name) : "#" + escapeHTML(pl.runner_target_id)) +
         record("命名空间", val(target && target.namespace)) + record("触发方式", pl.on_push ? "代码推送" : "手动") +
         record("更新时间", date(pl.updated_at)) + '</dl></section>';
-      var runContent = state.run ? runSummary(state.run) + runStages(state.run) + logPanel() :
+      var runContent = state.run ? runSummary(state.run) + runStages(state.run, state.log.stage) + logPanel() :
         state.runError ? '<p class="x-cicd-alert" role="alert">运行详情加载失败：' + escapeHTML(state.runError) +
           ' <button class="x-btn" type="button" data-action="retry-run">重试</button></p>' :
           state.runs.length ? '<p class="x-cicd-empty">正在加载运行详情…</p>' : '<p class="x-cicd-empty">暂无运行记录。</p>';
@@ -398,34 +466,47 @@
       var opts = function (items, selected) { return items.map(function (item) {
         return '<option value="' + escapeHTML(item.id) + '"' + (String(item.id) === String(selected) ? " selected" : "") + '>' + val(item.name) + '</option>';
       }).join(""); };
+      var area = function (title, name, value, t) {
+        var f = FIELD_FOR[name];
+        return '<label class="x-cicd-wide" data-for="' + f + '"' + (f.split(" ").indexOf(t) < 0 ? " hidden" : "") + '>' + title +
+          '<textarea class="x-input" name="' + name + '" rows="3" spellcheck="false">' + escapeHTML(value) + '</textarea></label>';
+      };
       var stageFields = stages.map(function (s, i) {
-        return '<fieldset data-editor-stage><legend>阶段 ' + (i + 1) + '</legend><div class="x-cicd-editor-grid">' +
+        var t = s.type || "build";
+        return '<fieldset data-editor-stage><legend><span class="x-cicd-mono" data-stage-no>' + (i + 1) + '</span> <span data-stage-title>' + escapeHTML(s.name || "新阶段") + '</span>' +
+          '<span class="x-cicd-legend-tools"><button class="x-btn x-btn--sm" type="button" data-action="move-stage" data-id="-1" title="上移">↑</button>' +
+          '<button class="x-btn x-btn--sm" type="button" data-action="move-stage" data-id="1" title="下移">↓</button>' +
+          '<button class="x-btn x-btn--sm" type="button" data-action="remove-stage">移除</button></span></legend><div class="x-cicd-editor-grid">' +
           editorField("名称", "name", s.name, true) + '<label>类型<select class="x-select" name="type">' +
           ["build", "test", "script", "deploy", "jenkins"].map(function (type) {
-            return '<option value="' + type + '"' + (s.type === type ? " selected" : "") + '>' + type + '</option>';
-          }).join("") + '</select></label>' + editorField("镜像", "image", s.image) +
-          editorField("镜像仓库 Secret", "registry_secret", s.registry_secret) + editorField("部署环境", "deploy_env", s.deploy_env) +
-          editorField("Jenkins ID", "jenkins_id", s.jenkins_id, false, "number") + editorField("Jenkins Job", "jenkins_job", s.jenkins_job) +
+            return '<option value="' + type + '"' + (t === type ? " selected" : "") + '>' + TYPE_LABEL[type] + '（' + type + '）</option>';
+          }).join("") + '</select></label>' + editorField("镜像", "image", s.image, false, "text", t) +
+          editorField("镜像仓库 Secret", "registry_secret", s.registry_secret, false, "text", t) + editorField("部署环境", "deploy_env", s.deploy_env, false, "text", t) +
+          editorField("Jenkins ID", "jenkins_id", s.jenkins_id, false, "number", t) + editorField("Jenkins Job", "jenkins_job", s.jenkins_job, false, "text", t) +
           editorField("超时（秒）", "timeout_sec", s.timeout_sec, false, "number") +
-          '<label class="x-cicd-wide">命令（每行一条）<textarea class="x-input" name="commands" rows="2">' + escapeHTML((s.commands || []).join("\n")) + '</textarea></label>' +
-          '<label class="x-cicd-wide">环境变量（每行 KEY=VALUE）<textarea class="x-input" name="env" rows="2">' + escapeHTML(mapText(s.env)) + '</textarea></label>' +
-          '<label class="x-cicd-wide">Jenkins 参数（每行 KEY=VALUE）<textarea class="x-input" name="params" rows="2">' + escapeHTML(mapText(s.params)) + '</textarea></label>' +
+          area("命令（每行一条）", "commands", (s.commands || []).join("\n"), t) +
+          area("环境变量（每行 KEY=VALUE，敏感值用 secret://名称/键）", "env", mapText(s.env), t) +
+          area("Jenkins 参数（每行 KEY=VALUE）", "params", mapText(s.params), t) +
           '<div class="x-cicd-wide x-cicd-jenkins-tools" data-jenkins-tools' + (s.type === "jenkins" ? "" : " hidden") + '><button class="x-btn" type="button" data-action="discover-jenkins">检测 Jenkins 参数</button><span class="x-cicd-muted" data-jenkins-status>从 Jenkins Job 读取公开参数，敏感值不会回填。</span></div></div>' +
-          '<button class="x-btn" type="button" data-action="remove-stage">移除阶段</button></fieldset>';
+          '</fieldset>';
       }).join("");
       showModal('<div class="x-cicd-dialog-backdrop" data-action="close-modal"><section class="x-cicd-dialog x-cicd-dialog--wide" role="dialog" aria-modal="true" aria-label="' +
         (existing ? "编辑" : "新建") + '流水线"><h2>' + (existing ? "编辑" : "新建") +
-        '流水线</h2><form data-cicd-form="pipeline" data-id="' + escapeHTML(existing && existing.id || "") + '">' +
-        editorField("名称", "name", existing && existing.name, true) + '<div class="x-cicd-editor-grid"><label>应用<select class="x-select" name="app_id">' +
+        '流水线</h2><form data-cicd-form="pipeline" data-mode="visual" data-id="' + escapeHTML(existing && existing.id || "") + '">' +
+        '<div class="x-cicd-modebar" role="tablist"><button type="button" class="is-on" data-action="editor-mode" data-id="visual">可视化编排</button><button type="button" data-action="editor-mode" data-id="yaml">YAML</button></div>' +
+        '<div data-visual>' +
+        editorField("流水线名称", "pipeline_name", existing && existing.name, true) + '<div class="x-cicd-editor-grid"><label>应用<select class="x-select" name="app_id">' +
         opts(state.apps, existing && existing.app_id) + '</select></label><label>执行集群<select class="x-select" name="runner_target_id">' +
         opts(state.targets, existing && existing.runner_target_id) + '</select></label></div><label class="x-cicd-check"><input type="checkbox" name="on_push"' +
         (existing && existing.on_push ? " checked" : "") + ' /> 代码推送时自动触发</label><div data-stage-editor>' + stageFields +
-        '</div><button class="x-btn" type="button" data-action="add-stage">添加阶段</button><p class="x-cicd-alert" data-form-error role="alert" hidden></p>' +
+        '</div><button class="x-btn" type="button" data-action="add-stage">添加阶段</button></div>' +
+        '<div data-yaml hidden><textarea class="x-input x-cicd-yaml" name="yaml" rows="22" spellcheck="false"></textarea></div><p class="x-cicd-alert" data-form-error role="alert" hidden></p>' +
         '<footer><button class="x-btn" type="button" data-action="close-modal">取消</button><button class="x-btn x-btn--pri" type="submit">' +
         (existing ? "保存" : "创建") + '</button></footer></form></section></div>');
     }
-    function editorField(title, name, value, required, type) {
-      return '<label>' + title + '<input class="x-input" name="' + name + '" type="' + (type || "text") + '" value="' + escapeHTML(value || "") + '"' + (required ? " required" : "") + ' /></label>';
+    function editorField(title, name, value, required, type, stageType) {
+      var forTypes = stageType != null && FIELD_FOR[name];
+      return '<label' + (forTypes ? ' data-for="' + forTypes + '"' + (forTypes.split(" ").indexOf(stageType) < 0 ? " hidden" : "") : "") + '>' + title + '<input class="x-input" name="' + name + '" type="' + (type || "text") + '" value="' + escapeHTML(value || "") + '"' + (required ? " required" : "") + ' /></label>';
     }
     function connectionEditor(kind) {
       var title = kind === "target" ? "接入执行集群" : "接入 Jenkins";
@@ -510,6 +591,41 @@
         return s;
       });
     }
+    function renumber() {
+      el.querySelectorAll("[data-stage-editor] [data-editor-stage]").forEach(function (row, i) {
+        var no = row.querySelector("[data-stage-no]"); if (no) no.textContent = i + 1;
+        var title = row.querySelector("[data-stage-title]"), name = row.elements.namedItem("name");
+        if (title && name) title.textContent = name.value.trim() || "新阶段";
+      });
+    }
+    function formPayload(form, existing) {
+      return {
+        name: form.elements.namedItem("pipeline_name").value.trim(), app_id: +form.elements.namedItem("app_id").value,
+        runner_target_id: +form.elements.namedItem("runner_target_id").value,
+        on_push: form.elements.namedItem("on_push").checked, stages: editorStages(form, existing)
+      };
+    }
+    function switchMode(form, mode) {
+      if (!form || form.getAttribute("data-mode") === mode) return;
+      var id = form.getAttribute("data-id"), existing = itemById(state.pipelines, id), err = form.querySelector("[data-form-error]");
+      if (err) err.hidden = true;
+      var task;
+      try {
+        task = mode === "yaml" ? xs.post("/cicd/pipelines/yaml/render", formPayload(form, existing)) :
+          xs.post("/cicd/pipelines/yaml/parse", { yaml: form.elements.namedItem("yaml").value });
+      } catch (e) { formError(form, e); return; }
+      task.then(function (data) {
+        if (!active()) return;
+        if (mode === "yaml") {
+          form.elements.namedItem("yaml").value = data && data.yaml || "";
+          form.querySelector("[data-visual]").hidden = true; form.querySelector("[data-yaml]").hidden = false;
+          form.setAttribute("data-mode", "yaml");
+          form.querySelectorAll("[data-action=editor-mode]").forEach(function (b) { b.classList.toggle("is-on", b.getAttribute("data-id") === "yaml"); });
+        } else {
+          pipelineEditor(Object.assign({}, existing || {}, data, { id: existing && existing.id }));
+        }
+      }).catch(function (e) { if (active()) formError(form, e); });
+    }
     function formError(form, err) { var node = form.querySelector("[data-form-error]"); if (node) { node.hidden = false; node.textContent = message(err); } }
     function submit(form) {
       var type = form.getAttribute("data-cicd-form"), id = form.getAttribute("data-id");
@@ -536,13 +652,14 @@
           branch: form.elements.namedItem("branch").value.trim(), commit: form.elements.namedItem("commit").value.trim()
         });
         else {
-          var existing = itemById(state.pipelines, id), payload = {
-            name: form.elements.namedItem("name").value.trim(), app_id: +form.elements.namedItem("app_id").value,
-            runner_target_id: +form.elements.namedItem("runner_target_id").value,
-            on_push: form.elements.namedItem("on_push").checked, stages: editorStages(form, existing)
+          var existing = itemById(state.pipelines, id);
+          var save = function (payload) {
+            if (!payload.name || !payload.app_id || !payload.runner_target_id) throw new Error("请填写名称、应用和执行集群");
+            return existing ? xs.put("/cicd/pipelines/" + encodeURIComponent(id), payload) : xs.post("/cicd/pipelines", payload);
           };
-          if (!payload.name || !payload.app_id || !payload.runner_target_id) throw new Error("请填写名称、应用和执行集群");
-          task = existing ? xs.put("/cicd/pipelines/" + encodeURIComponent(id), payload) : xs.post("/cicd/pipelines", payload);
+          task = form.getAttribute("data-mode") === "yaml"
+            ? xs.post("/cicd/pipelines/yaml/parse", { yaml: form.elements.namedItem("yaml").value }).then(save)
+            : save(formPayload(form, existing));
         }
       } catch (err) { formError(form, err); if (button) button.disabled = false; return; }
       task.then(function () { if (active()) { closeModal(); load(); } }).catch(function (err) {
@@ -565,7 +682,26 @@
       if (action === "retry-run" && state.runs.length) selectRun(state.runs[0].id);
       if (action === "more-log" || action === "retry-log") loadLogs();
       if (action === "download-log") downloadLogs();
-      if (action === "remove-stage") { var row = button.closest("[data-editor-stage]"); if (row) row.remove(); }
+      if (action === "stage-log") { state.log.stage = state.log.stage === id ? "" : id; paint(); }
+      if (action === "cancel-run" || action === "rerun") {
+        if (action === "cancel-run" && typeof root.confirm === "function" && !root.confirm("确定取消运行 #" + id + "？")) return;
+        button.disabled = true;
+        xs.post("/cicd/runs/" + encodeURIComponent(id) + (action === "rerun" ? "/retry" : "/cancel"), {}).then(function (r) {
+          if (root.XS && root.XS.toast) root.XS.toast(action === "rerun" ? "已提交重新运行 #" + (r && r.id || "") : "已请求取消");
+          if (!active()) return;
+          if (action === "rerun" && r && r.id) { fetchRuns(state.seq); selectRun(r.id); } else selectRun(id);
+        }).catch(function (err) { button.disabled = false; if (root.XS && root.XS.toast) root.XS.toast((action === "rerun" ? "重新运行" : "取消") + "失败：" + message(err)); });
+      }
+      if (action === "remove-stage") { var row = button.closest("[data-editor-stage]"); if (row) row.remove(); renumber(); }
+      if (action === "move-stage") {
+        var cur = button.closest("[data-editor-stage]");
+        if (cur) {
+          if (id === "-1" && cur.previousElementSibling) cur.parentNode.insertBefore(cur, cur.previousElementSibling);
+          if (id === "1" && cur.nextElementSibling) cur.parentNode.insertBefore(cur.nextElementSibling, cur);
+          renumber();
+        }
+      }
+      if (action === "editor-mode") switchMode(button.closest("form"), id);
       if (action === "add-stage") {
         var list = el.querySelector("[data-stage-editor]");
         if (list) {
@@ -573,7 +709,7 @@
           if (row) {
             var clone = row.cloneNode(true);
             clone.querySelectorAll("input,textarea").forEach(function (input) { input.value = ""; });
-            list.appendChild(clone);
+            list.appendChild(clone); renumber();
           }
         }
       }
@@ -586,9 +722,11 @@
         var stage = node.closest("[data-editor-stage]");
         var tools = stage && stage.querySelector("[data-jenkins-tools]");
         if (tools) tools.hidden = node.value !== "jenkins";
+        if (stage) stage.querySelectorAll("[data-for]").forEach(function (f) { f.hidden = f.getAttribute("data-for").split(" ").indexOf(node.value) < 0; });
       }
     }
     function input(event) {
+      if (event.target.matches("[data-editor-stage] [name=name]")) renumber();
       if (event.target.matches("[data-log-search]")) {
         var node = event.target, start = node.selectionStart;
         state.log.search = node.value; paint();

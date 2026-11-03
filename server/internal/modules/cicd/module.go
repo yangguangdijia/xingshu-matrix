@@ -151,11 +151,14 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.PUT("/pipelines/:id", manage, m.updatePipeline)
 	g.DELETE("/pipelines/:id", manage, m.deleteRow("cicd_pipelines", "pipeline"))
 	g.POST("/pipelines/:id/run", run, m.runPipelineHTTP)
+	g.POST("/pipelines/yaml/render", read, m.renderPipelineYAML)
+	g.POST("/pipelines/yaml/parse", read, m.parsePipelineYAML)
 
 	g.GET("/runs", read, m.listRuns)
 	g.GET("/runs/:id", read, m.getRun)
 	g.GET("/runs/:id/logs", read, m.runLogs)
 	g.POST("/runs/:id/cancel", run, m.cancelRun)
+	g.POST("/runs/:id/retry", run, m.retryRun)
 
 	if d.Public != nil {
 		d.Public.POST("/cicd/webhooks/:appId", m.webhook)
@@ -319,6 +322,8 @@ type Pipeline struct {
 	OnPush         bool      `json:"on_push"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+
+	Stats *PipelineStats `json:"stats,omitempty"` // list only; ignored on write
 }
 
 var nameRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
@@ -918,6 +923,22 @@ func (m *Module) listPipelines(c *gin.Context) {
 			return
 		}
 		out = append(out, p.public())
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	ids := make([]int64, 0, len(out))
+	for _, p := range out {
+		ids = append(ids, p.ID)
+	}
+	stats, err := m.pipelineStats(c, ids)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	for _, p := range out {
+		p.Stats = stats[p.ID]
 	}
 	httpx.OK(c, out)
 }
