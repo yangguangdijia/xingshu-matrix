@@ -262,7 +262,7 @@
           if (hpa) {
             var hs = hpa.spec || {}, cm = (hpa.status && hpa.status.currentMetrics || []).filter(function (m) { return m.resource && m.resource.name === "cpu"; })[0];
             var cpu = cm && cm.resource.current && cm.resource.current.averageUtilization;
-            tags.push({ t: "HPA " + hs.minReplicas + "–" + hs.maxReplicas + (cpu != null ? " · CPU " + cpu + "%" : ""), bg: "#eaf1ff", fg: "#2563eb" });
+            tags.push({ t: "HPA " + hs.minReplicas + "–" + hs.maxReplicas + (cpu != null ? " · " + cpu + "%" : ""), bg: "#eaf1ff", fg: "#2563eb" });
           }
           if (x.kind === "StatefulSet") tags.push({ t: "持久卷", bg: "#f3ecff", fg: "#7c3aed" });
           if (guarded) tags.push({ t: "网络策略", bg: "#e8f7ef", fg: "#0f8a5f" });
