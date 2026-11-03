@@ -111,7 +111,9 @@ test("node usage is refreshed while the node list stays searchable", () => {
 
 test("overview refreshes cluster metrics and node loads without an explicit reload", () => {
   const overview = section("function renderSreLive", "function sreMetricError");
-  assert.match(overview, /setTimeout\(function \(\)[\s\S]*?renderSreLive\(el\)[\s\S]*?\}, 30000\)/);
+  assert.match(overview, /setTimeout\(function tick\(\)[\s\S]*?renderSreLive\(el, true\)[\s\S]*?\}, 15000\)/);
+  assert.match(overview, /document\.hidden/);
+  assert.match(overview, /全部集群/);
   assert.match(overview, /节点物理容量使用率，等待 Prometheus 返回/);
 });
 

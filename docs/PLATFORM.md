@@ -1,6 +1,6 @@
 # 星枢 Matrix 平台技术说明
 
-> 本文介绍平台架构、组件边界、资源接口与开发入口。当前文档对应 v1.20，逐版本变化见 [CHANGELOG.md](../CHANGELOG.md)，接口索引见 [docs/api/](api/)。
+> 本文介绍平台架构、组件边界、资源接口与开发入口。当前文档对应 v1.24，逐版本变化见 [CHANGELOG.md](../CHANGELOG.md)，接口索引见 [docs/api/](api/)。
 
 ---
 
@@ -223,11 +223,11 @@ matrix-agent -server https://matrix.example.com -token mxe_xxx
 
 ```bash
 # 按当前发布版本构建镜像
-docker build --build-arg VERSION=v1.20 --build-arg COMMIT=$(git rev-parse --short HEAD) \
-  -t xingshu/matrix-server:v1.20 .
+docker build --build-arg VERSION=v1.24 --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  -t xingshu/matrix-server:v1.24 .
 
 # 离线环境：导出 OCI tar
-ctr -n k8s.io images export matrix-server-v1.20.tar.gz docker.io/xingshu/matrix-server:v1.20
+ctr -n k8s.io images export matrix-server-v1.24.tar.gz docker.io/xingshu/matrix-server:v1.24
 ```
 
 应用版本与部署镜像 tag 可由发布流程分别管理。构建时传入 `VERSION` 后，`GET /api/v1/version` 会返回二进制记录的应用版本。
@@ -249,6 +249,7 @@ push `main` / 打 `v*` / 手工触发；通过后推送 `ghcr.io/<owner>/xingshu
 
 | 版本 | 时间 | 主题 |
 | --- | --- | --- |
+| v1.24 | 2026-11-03 | 登录页重做（真实页面 + WebGL 动效）；总览跨集群汇总与数据原地刷新；组件目录一键安装；备份默认 Velero；监控大屏与系统设置补全 |
 | v1.20 | 2026-11-01 | Agent 反向隧道接入集群；CI/CD 与监控统一使用集群注册表；集群改名；Helm 市场、总览与中间件完善 |
 | v1.19 | 2026-10-27 | Kubernetes 存储、网络、配置、节点、伸缩和定时任务；多集群、应用交付与诊断体验完善 |
 | v1.18 | 2026-10-24 | 真实 trace 与环境范围、网络只读接口、应用运行清单；beta / 标签 / Release 已发布，未部署 |

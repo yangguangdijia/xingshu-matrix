@@ -13,7 +13,7 @@
     if (!el) return;
     var token = (el._xsRegistryToken || 0) + 1; el._xsRegistryToken = token;
     var selected = context(); var id = selected && selected.kind === "cluster" && selected.cluster_id;
-    el.innerHTML = '<div class="xs-platform"><div class="xs-platform-head"><h2>集群镜像源与镜像仓库</h2><button class="x-btn" type="button" data-reg-refresh>刷新</button></div><section class="xs-platform-section"><h3>当前集群拉取凭据</h3><div data-reg-secrets role="status">' + (id ? "正在读取 Secret 元数据..." : "请选择单个目标集群") + '</div></section><section class="xs-platform-section"><h3>新 K3s 集群镜像加速模板</h3><div data-reg-mirror role="status">正在加载模板...</div></section></div>';
+    el.innerHTML = '<div class="xs-platform"><div class="xs-platform-head"><h2>镜像仓库（当前集群）</h2><button class="x-btn" type="button" data-reg-refresh>刷新</button></div><section class="xs-platform-section"><h3>当前集群拉取凭据</h3><div data-reg-secrets role="status">' + (id ? "正在读取 Secret 元数据..." : "请选择单个目标集群") + '</div></section><section class="xs-platform-section"><h3>新建集群时的镜像加速（部署新集群时可选用）</h3><div data-reg-mirror role="status">正在加载模板...</div></section></div>';
     el.querySelector("[data-reg-refresh]").onclick = function () { render(el); };
     var secretsBox = el.querySelector("[data-reg-secrets]"); var mirrorBox = el.querySelector("[data-reg-mirror]");
     function active() { return el._xsRegistryToken === token && (!id || (context() && context().kind === "cluster" && String(context().cluster_id) === String(id))); }

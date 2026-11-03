@@ -494,3 +494,37 @@
 .xs-platform-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; }
 .xs-platform-grid label { display: grid; gap: 6px; min-width: 0; }
 .xs-platform-scroll { max-width: 100%; overflow-x: auto; }
+
+/* 指标监控大屏：全屏时切换为深色大屏主题 */
+.ops-metrics-page:fullscreen {
+  padding: 24px 28px;
+  background: radial-gradient(1200px 600px at 20% 0%, #14295c, #0a1530 70%);
+  color: #dbe7ff;
+  --x-card: #11224a;
+  --x-line: rgba(120, 160, 255, .24);
+  --x-sub: #8fa8d8;
+  --x-text: #eaf2ff;
+}
+.ops-metrics-page:fullscreen .ops-metric-trend,
+.ops-metrics-page:fullscreen .ops-metric-card {
+  background: linear-gradient(160deg, #122550, #0e1d3f);
+  border-color: rgba(120, 160, 255, .26);
+  box-shadow: 0 0 26px rgba(40, 110, 255, .14);
+}
+.ops-metrics-page:fullscreen .ops-metric-trend header strong,
+.ops-metrics-page:fullscreen .ops-metric-card strong {
+  color: #7fe9ff;
+  font-size: 32px;
+}
+.ops-metrics-page:fullscreen .ops-metric-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+.ops-metrics-page:fullscreen .ops-dashboard-meta strong {
+  font-size: 22px;
+  color: #fff;
+}
+.ops-metrics-page:fullscreen .ops-observe-dashboard > .x-h2 {
+  font-size: 20px;
+  color: #fff;
+}

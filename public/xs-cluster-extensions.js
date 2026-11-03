@@ -1089,7 +1089,7 @@
       if (!Array.isArray(schedules)) schedules = list(schedules);
       var providers = backup.providers || backup.velero && backup.velero.providers || [];
       if (!Array.isArray(providers)) providers = list(providers);
-      var activeTab = "snapshots";
+      var activeTab = "velero";
       function draw() {
         var tabs = '<div class="x-toolbar" style="margin-bottom:10px"><button class="x-btn' + (activeTab === "snapshots" ? " x-btn--pri" : "") + '" type="button" data-backup-tab="snapshots">VolumeSnapshot</button>' +
           '<button class="x-btn' + (activeTab === "velero" ? " x-btn--pri" : "") + '" type="button" data-backup-tab="velero">Velero</button></div>';
@@ -1140,10 +1140,12 @@
               '<button class="x-btn" type="button" data-schedule-edit="' + esc(meta.name || item.name || "") + '">查看/编辑</button>'];
           });
           var providerNames = providers.map(function (x) { return typeof x === "string" ? x : x.name || x.kind; }).filter(Boolean);
-          var unavailable = results[0].ok ? "" : '<div role="alert">' + esc(errorText(results[0].error)) + "</div>" +
-            empty("Velero 备份接口不可用", "需要 GET /clusters/:id/backups 与 POST /clusters/:id/backups/apply；不会显示模拟数据。");
+          var veleroInfo = results[0].ok && backup.velero ? backup.velero : null;
+          var veleroMissing = !!(veleroInfo && veleroInfo.available === false && /^(missing|partial)$/.test(veleroInfo.state || ""));
+          var unavailable = veleroMissing ? empty("当前集群尚未安装 Velero", "安装并配置备份存储位置后，才能创建 Kubernetes 备份与定时备份；此处不会显示模拟数据。") + '<p class="x-frac"><a class="x-btn x-btn--pri" href="#/cluster/components">前往组件目录安装 Velero</a></p>' : results[0].ok ? "" : '<div role="alert">' + esc(errorText(results[0].error)) + "</div>" +
+            empty("Velero 备份接口不可用", "需要 GET /clusters/:id/backups 与 POST /clusters/:id/backups/apply；不会显示模拟数据。") + '<p class="x-frac"><a class="x-btn" href="#/cluster/components">前往组件目录安装 Velero</a></p>';
           box.innerHTML = panel("备份恢复", tabs + unavailable +
-            (results[0].ok ? '<div class="x-toolbar"><button class="x-btn x-btn--pri" type="button" data-schedule-create>新建定时备份</button><span class="x-frac">Provider：' + esc(providerNames.join(", ") || "未发现") + " · StorageLocation：" + esc(locations.join(", ") || "未发现") + "</span></div>" +
+            (results[0].ok && !veleroMissing ? '<div class="x-toolbar"><button class="x-btn x-btn--pri" type="button" data-schedule-create>新建定时备份</button><span class="x-frac">Provider：' + esc(providerNames.join(", ") || "未发现") + " · StorageLocation：" + esc(locations.join(", ") || "未发现") + "</span></div>" +
               panel("Velero Schedule", table(["命名空间", "名称", "计划", "操作"], scheduleRows)) +
               panel("备份记录", table(["类型", "命名空间", "名称", "状态", "创建时间"], backupRows)) : ""));
           var create = box.querySelector("[data-schedule-create]");

@@ -1233,7 +1233,7 @@
 
   // 总览：沿用旧版布局（5 张 KPI + 24h 曲线 + 节点 TOP5 + 平台公告 + 变更/告警 + 环境筛选），
   // 数据全部取自后端；取不到的区块保留完整卡片与操作入口，只标注"未接入"。
-  function renderSreLive(el) {
+  function renderSreLive(el, silent) {
     var seq = bump();
     var context = window.XSClusterContext;
     var contextSnapshot = null;
@@ -1247,7 +1247,7 @@
     function isCurrent() {
       return alive(seq, el) && (!context || typeof context.isCurrent !== "function" || context.isCurrent(contextSnapshot));
     }
-    mount(el, shell("总览", "当前集群容量、节点负载、变更与告警", "") + loadingPanel("正在加载总览…"));
+    if (!silent) mount(el, shell("总览", "当前集群容量、节点负载、变更与告警", "") + loadingPanel("正在加载总览…"));
     Promise.all([
       wrap(apiGet("/clusters", { page_size: 200 }).then(function (data) {
         if (isCurrent()) window.XS_CLUSTERS = itemsOf(data);
@@ -1269,6 +1269,12 @@
         wrap(apiGet("/clusters/" + cluster.id + "/workloads/pods", { page_size: 200 }, { scope: "cluster" })),
         wrap(apiGet("/observability/alerts", { page_size: 200, status: "firing", cluster_id: cluster.id }, { scope: "cluster" }))
       ] : [Promise.resolve(null), Promise.resolve(null), Promise.resolve(null)];
+      scopedRequests.push(Promise.all(clusters.map(function (c) {
+        return Promise.all([
+          wrap(apiGet("/clusters/" + c.id + "/nodes", null)),
+          wrap(apiGet("/clusters/" + c.id + "/workloads/pods", { page_size: 200 }))
+        ]).then(function (r) { return { cluster: c, nodes: r[0], pods: r[1] }; });
+      })));
 
       Promise.all(scopedRequests).then(function (scoped) {
         if (!isCurrent()) return;
@@ -1295,15 +1301,24 @@
         }
 
         var nodesSub = !cluster ? "请选择当前集群" : !nodesResult.ok ? "加载失败：" + errText(nodesResult.err) : clusterLabel;
+        var allStat = { nodes: 0, ready: 0, pods: 0, ok: false, podsIncomplete: false, failed: 0, parts: [] };
+        (scoped[3] || []).forEach(function (row) {
+          var nList = row.nodes.ok ? itemsOf(row.nodes.data) : null, pList = row.pods.ok ? itemsOf(row.pods.data) : null;
+          if (nList) { allStat.ok = true; allStat.nodes += nList.length; allStat.ready += nList.filter(function (n) { return !!n.ready; }).length; } else allStat.failed++;
+          if (pList) { allStat.pods += pList.length; if (listIsIncomplete(row.pods.data, pList)) allStat.podsIncomplete = true; }
+          allStat.parts.push((row.cluster.name || "#" + row.cluster.id) + " " + (nList ? nList.filter(function (n) { return !!n.ready; }).length + "/" + nList.length : "失败"));
+        });
+        var allNodesSub = clusters.length ? "全部 " + clusters.length + " 个集群：" + allStat.parts.join("，") : "尚未接入集群";
+        var allPodsSub = "全部 " + clusters.length + " 个集群" + (allStat.podsIncomplete ? " · 部分 Pod 清单不完整" : "") + (allStat.failed ? " · " + allStat.failed + " 个集群读取失败" : "");
         var podsSub = !cluster ? "请选择当前集群" : !podsResult.ok ? "加载失败：" + errText(podsResult.err) :
           clusterLabel + (podsIncomplete ? " · Pod 清单不完整" : "");
         var metricSub = cluster ? "节点物理容量使用率，等待 Prometheus 返回" : "请选择当前集群";
         var html = shell("总览", "当前集群容量、节点负载、变更与告警", "");
         html += '<div class="x-cards x-cards5">' +
           kpi("集群数", String(clusters.length), clusters.length ? "已接入集群" : "尚未接入", "#/cluster/list") +
-          kpi("节点 Ready / 总数", nodesResult && nodesResult.ok ? ready + " / " + nodes.length : "—", nodesSub,
+          kpi("节点 Ready / 总数（全部集群）", allStat.ok ? allStat.ready + " / " + allStat.nodes : "—", allNodesSub,
             cluster ? clusterResourceHash("cluster", "nodes", cluster.id) : "#/cluster/nodes") +
-          kpi("Pod 总数", podsTotal, podsSub,
+          kpi("Pod 总数（全部集群）", allStat.ok ? String(allStat.pods) + (allStat.podsIncomplete ? "+" : "") : "—", allPodsSub,
             cluster ? clusterResourceHash("cluster", "workloads", cluster.id) : "#/cluster/workloads") +
           kpi("CPU（物理容量）", "—", metricSub, "#/observe", "cpu") +
           kpi("内存（物理容量）", "—", metricSub, "#/observe", "mem") +
@@ -1392,7 +1407,7 @@
           (alertsResult && alertsResult.ok ? alerts.length : "—") + ' 条</span></h2>' +
           '<a class="x-btn" href="#/observe/events">查看监控告警</a></div>' + alertBody + '</section></div>';
 
-        mount(el, html);
+        if (silent && el.querySelector('.x-cards5')) patchSre(el, html); else mount(el, html);
         if (cluster) loadSreMetrics(cluster, clusters, nodes, el, seq, context, contextSnapshot);
 
         [].slice.call(el.querySelectorAll(".x-go")).forEach(function (target) {
@@ -1422,9 +1437,11 @@
               "已删除公告", function () { renderSreLive(el); });
           };
         });
-        setTimeout(function () {
-          if (isCurrent()) renderSreLive(el);
-        }, 30000);
+        setTimeout(function tick() {
+          if (!isCurrent()) return;
+          if (document.hidden) { setTimeout(tick, 5000); return; }
+          renderSreLive(el, true);
+        }, 15000);
       }).catch(function (err) {
         if (!isCurrent()) return;
         if (isAuthErr(err)) return kickLogin();
@@ -1434,6 +1451,22 @@
       if (!isCurrent()) return;
       if (isAuthErr(err)) return kickLogin();
       mount(el, shell("总览", "当前集群容量、节点负载、变更与告警", "") + errorPanel(err));
+    });
+  }
+
+  // 静默刷新：只替换数据节点，不重建页面（图表由 loadSreMetrics 原地更新）
+  function patchSre(el, html) {
+    var tmp = document.createElement('div'); tmp.innerHTML = html;
+    ['.x-cards5 .x-kpi', '.x-wide > .x-panel', '.x-two > .x-panel'].forEach(function (sel, k) {
+      var a = el.querySelectorAll(sel), b = tmp.querySelectorAll(sel);
+      for (var i = 0; i < a.length && i < b.length; i++) {
+        if (k === 0) {
+          if (a[i].hasAttribute('data-sre-metric')) continue;
+          var sa = a[i].querySelector('strong'), sb = b[i].querySelector('strong'), fa = a[i].querySelector('.x-frac'), fb = b[i].querySelector('.x-frac');
+          if (sa && sb && sa.textContent !== sb.textContent) sa.textContent = sb.textContent;
+          if (fa && fb && fa.textContent !== fb.textContent) fa.textContent = fb.textContent;
+        } else a[i].innerHTML = b[i].innerHTML;
+      }
     });
   }
 
@@ -1461,13 +1494,13 @@
     return path ? '<path class="' + className + '" d="' + path.slice(1) + '" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"></path>' : "";
   }
 
-  function renderSreChart(cpuPoints, memPoints, notes) {
+  function renderSreChart(cpuPoints, memPoints, notes, boxWidth) {
     var valid = cpuPoints.concat(memPoints).filter(function (point) { return point[1] != null; });
     var noteHtml = notes.length ? '<p class="x-frac" role="status" style="margin:8px 0 0">' + gEsc(notes.join("；")) + '</p>' : "";
     if (!valid.length) {
       return '<p class="x-frac" style="text-align:center;padding-top:82px">24h 内没有可绘制的 CPU 或内存数据。</p>' + noteHtml;
     }
-    var width = 800, height = 210, margin = { top: 12, right: 18, bottom: 28, left: 48 };
+    var width = Math.max(420, Math.round(boxWidth || 800)), height = 210, margin = { top: 12, right: 18, bottom: 28, left: 48 };
     var times = valid.map(function (point) { return point[0] * 1000; });
     var minTime = Math.min.apply(null, times), maxTime = Math.max.apply(null, times);
     var xScale = function (time) {
@@ -1538,7 +1571,7 @@
       else if (!cpuPoints.length) notes.push("CPU 曲线为空");
       if (!results[3].ok) notes.push("内存曲线查询失败：" + sreMetricError(results[3].err));
       else if (!memPoints.length) notes.push("内存曲线为空");
-      if (chart && chart.isConnected) chart.innerHTML = renderSreChart(cpuPoints, memPoints, notes);
+      if (chart && chart.isConnected) chart.innerHTML = renderSreChart(cpuPoints, memPoints, notes, chart.clientWidth);
     }).catch(function (err) {
       failAll(err);
     });
@@ -2771,8 +2804,9 @@
           return;
         }
         if (act === "ns-del") {
-          if (!confirm("删除命名空间 " + id + "？其中的所有资源都会被删除。")) return;
-          return doAction(apiDel("/clusters/" + cur.id + "/namespaces/" + encodeURIComponent(id)), "已删除命名空间 " + id, function () { repaint(); });
+          return confirmDialog("删除命名空间", "确认删除命名空间 <b>" + gEsc(id) + "</b>？其中的 Deployment、Service、配置、存储声明等所有资源都会一并删除，且无法恢复。", "确认删除", function () {
+            doAction(apiDel("/clusters/" + cur.id + "/namespaces/" + encodeURIComponent(id)), "已删除命名空间 " + id, function () { repaint(); });
+          });
         }
       });
     }, function (err) {
@@ -2899,12 +2933,14 @@
           return;
         }
         if (act === "wl-restart") {
-          if (!confirm("滚动重启 " + kind + "/" + name + "？")) return;
-          return doAction(apiPost(base + "/restart", null), "已触发 " + name + " 滚动重启", function () { repaint(); });
+          return confirmDialog("滚动重启", "确认滚动重启 <b>" + gEsc(kind + "/" + name) + "</b>？Pod 会逐个重建，期间服务可能短暂波动。", "确认重启", function () {
+            doAction(apiPost(base + "/restart", null), "已触发 " + name + " 滚动重启", function () { repaint(); });
+          });
         }
         if (act === "wl-del") {
-          if (!confirm("删除 " + kind + "/" + name + "？此操作不可撤销。")) return;
-          return doAction(apiDel(base), "已删除 " + name, function () { repaint(); });
+          return confirmDialog("删除工作负载", "确认删除 <b>" + gEsc(kind + "/" + name) + "</b>？其管理的 Pod 会被终止，服务将中断，此操作不可撤销。", "确认删除", function () {
+            doAction(apiDel(base), "已删除 " + name, function () { repaint(); });
+          });
         }
       });
     }, function (err) {
