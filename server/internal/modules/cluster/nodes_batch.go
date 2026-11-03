@@ -9,8 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
 )
@@ -21,13 +21,13 @@ import (
 // real provider integration; until one exists the API reports that explicitly.
 
 type nodeGroup struct {
-	Name          string    `json:"name"`
-	LabelValue    string    `json:"label_value"`
-	Nodes         []string  `json:"nodes"`
-	Ready         int       `json:"ready"`
-	Unschedulable int       `json:"unschedulable"`
-	Roles         []string  `json:"roles"`
-	Taints        []string  `json:"taints"`
+	Name          string   `json:"name"`
+	LabelValue    string   `json:"label_value"`
+	Nodes         []string `json:"nodes"`
+	Ready         int      `json:"ready"`
+	Unschedulable int      `json:"unschedulable"`
+	Roles         []string `json:"roles"`
+	Taints        []string `json:"taints"`
 }
 
 type nodeBatchLabelItem struct {
@@ -49,8 +49,8 @@ type nodeBatchTaintItem struct {
 }
 
 type nodeBatchTaintsParams struct {
-	Nodes  []string            `json:"nodes"`
-	Taints []corev1.Taint      `json:"taints"`
+	Nodes  []string             `json:"nodes"`
+	Taints []corev1.Taint       `json:"taints"`
 	Items  []nodeBatchTaintItem `json:"items"`
 }
 

@@ -26,19 +26,19 @@ import (
 
 // IngressRow is an Ingress summary with its real controller status.
 type IngressRow struct {
-	Namespace     string                                    `json:"namespace"`
-	Name          string                                    `json:"name"`
-	UID           types.UID                                 `json:"uid"`
-	ResourceVersion string                                  `json:"resource_version"`
-	ClassName     string                                    `json:"class_name"`
-	Hosts         []string                                  `json:"hosts"`
-	Rules         []networkingv1.IngressRule                `json:"rules"`
-	TLS           []networkingv1.IngressTLS                 `json:"tls"`
-	LoadBalancer  []networkingv1.IngressLoadBalancerIngress `json:"load_balancer"`
-	AddressStatus string                                    `json:"address_status"` // ready | pending
-	Labels        map[string]string                         `json:"labels"`
-	Annotations   map[string]string                         `json:"annotations"`
-	CreatedAt     metav1.Time                               `json:"created_at"`
+	Namespace       string                                    `json:"namespace"`
+	Name            string                                    `json:"name"`
+	UID             types.UID                                 `json:"uid"`
+	ResourceVersion string                                    `json:"resource_version"`
+	ClassName       string                                    `json:"class_name"`
+	Hosts           []string                                  `json:"hosts"`
+	Rules           []networkingv1.IngressRule                `json:"rules"`
+	TLS             []networkingv1.IngressTLS                 `json:"tls"`
+	LoadBalancer    []networkingv1.IngressLoadBalancerIngress `json:"load_balancer"`
+	AddressStatus   string                                    `json:"address_status"` // ready | pending
+	Labels          map[string]string                         `json:"labels"`
+	Annotations     map[string]string                         `json:"annotations"`
+	CreatedAt       metav1.Time                               `json:"created_at"`
 }
 
 func ingressRow(in networkingv1.Ingress) IngressRow {

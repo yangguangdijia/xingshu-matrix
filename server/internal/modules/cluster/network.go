@@ -14,26 +14,26 @@ import (
 
 // NetworkServiceRow is the service discovery data used by the topology view.
 type NetworkServiceRow struct {
-	Namespace           string                         `json:"namespace"`
-	Name                string                         `json:"name"`
-	UID                 types.UID                      `json:"uid"`
-	ResourceVersion     string                         `json:"resource_version"`
-	Type                corev1.ServiceType             `json:"type"`
-	ClusterIP           string                         `json:"cluster_ip"`
-	ClusterIPs          []string                       `json:"cluster_ips"`
-	ExternalIPs         []string                       `json:"external_ips"`
-	ExternalName        string                         `json:"external_name,omitempty"`
-	LoadBalancer        []corev1.LoadBalancerIngress  `json:"load_balancer"`
-	LoadBalancerIP      string                         `json:"load_balancer_ip,omitempty"`
-	AddressStatus       string                         `json:"address_status"`
-	LoadBalancerClass   string                         `json:"load_balancer_class,omitempty"`
-	ExternalTrafficPol  corev1.ServiceExternalTrafficPolicy `json:"external_traffic_policy,omitempty"`
-	SessionAffinity     corev1.ServiceAffinity         `json:"session_affinity,omitempty"`
-	Ports               []corev1.ServicePort           `json:"ports"`
-	Selector            map[string]string              `json:"selector"`
-	Labels              map[string]string              `json:"labels"`
-	Annotations         map[string]string              `json:"annotations"`
-	CreatedAt           metav1.Time                    `json:"created_at"`
+	Namespace          string                              `json:"namespace"`
+	Name               string                              `json:"name"`
+	UID                types.UID                           `json:"uid"`
+	ResourceVersion    string                              `json:"resource_version"`
+	Type               corev1.ServiceType                  `json:"type"`
+	ClusterIP          string                              `json:"cluster_ip"`
+	ClusterIPs         []string                            `json:"cluster_ips"`
+	ExternalIPs        []string                            `json:"external_ips"`
+	ExternalName       string                              `json:"external_name,omitempty"`
+	LoadBalancer       []corev1.LoadBalancerIngress        `json:"load_balancer"`
+	LoadBalancerIP     string                              `json:"load_balancer_ip,omitempty"`
+	AddressStatus      string                              `json:"address_status"`
+	LoadBalancerClass  string                              `json:"load_balancer_class,omitempty"`
+	ExternalTrafficPol corev1.ServiceExternalTrafficPolicy `json:"external_traffic_policy,omitempty"`
+	SessionAffinity    corev1.ServiceAffinity              `json:"session_affinity,omitempty"`
+	Ports              []corev1.ServicePort                `json:"ports"`
+	Selector           map[string]string                   `json:"selector"`
+	Labels             map[string]string                   `json:"labels"`
+	Annotations        map[string]string                   `json:"annotations"`
+	CreatedAt          metav1.Time                         `json:"created_at"`
 }
 
 func networkServiceRow(s corev1.Service) NetworkServiceRow {

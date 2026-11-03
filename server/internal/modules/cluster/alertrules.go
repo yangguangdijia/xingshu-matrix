@@ -25,6 +25,43 @@ import (
 // the cluster change gate permits the mutation.
 
 var promRuleGVR = schema.GroupVersionResource{Group: "monitoring.coreos.com", Version: "v1", Resource: "prometheusrules"}
+var prometheusGVR = schema.GroupVersionResource{Group: "monitoring.coreos.com", Version: "v1", Resource: "prometheuses"}
+
+// prometheusRuleLabels 读取集群中 Prometheus CR 的 ruleSelector.matchLabels，返回需要打在 PrometheusRule 上的标签，
+// 以及会加载该规则的 Prometheus 实例（namespace/name）。kube-prometheus-stack 默认只加载带 release=<发布名> 的规则，
+// 不打标签的规则会被静默忽略。同一键在不同实例上取值冲突时跳过后来的实例。
+func prometheusRuleLabels(ctx context.Context, kc *kubeClients, ruleNamespace string) (map[string]string, []string) {
+	labels := map[string]string{}
+	var loaders []string
+	list, err := kc.dyn.Resource(prometheusGVR).List(ctx, metav1.ListOptions{Limit: 20})
+	if err != nil || list == nil {
+		return labels, loaders
+	}
+	for _, item := range list.Items {
+		match, found, _ := unstructured.NestedStringMap(item.Object, "spec", "ruleSelector", "matchLabels")
+		_, nsSelSet, _ := unstructured.NestedFieldNoCopy(item.Object, "spec", "ruleNamespaceSelector")
+		if !nsSelSet && item.GetNamespace() != ruleNamespace {
+			continue // 未设置 ruleNamespaceSelector 时只加载自身命名空间的规则
+		}
+		if found {
+			conflict := false
+			for k, v := range match {
+				if old, ok := labels[k]; ok && old != v {
+					conflict = true
+				}
+			}
+			if conflict {
+				continue
+			}
+			for k, v := range match {
+				labels[k] = v
+			}
+		}
+		loaders = append(loaders, item.GetNamespace()+"/"+item.GetName())
+	}
+	return labels, loaders
+}
+
 var alertRuleNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var promDurationRe = regexp.MustCompile(`^(?:[0-9]+(?:ms|s|m|h|d|w|y))+$`)
 
@@ -229,6 +266,17 @@ func (m *Module) applyAlertRule(parent context.Context, cl *Cluster, in alertRul
 	if err := unstructured.SetNestedSlice(obj.Object, groups, "spec", "groups"); err != nil {
 		return nil, httpx.BadRequest("PrometheusRule 内容无效")
 	}
+	selectorLabels, loaders := prometheusRuleLabels(ctx, kc, in.Namespace)
+	if len(selectorLabels) > 0 {
+		objLabels := obj.GetLabels()
+		if objLabels == nil {
+			objLabels = map[string]string{}
+		}
+		for k, v := range selectorLabels {
+			objLabels[k] = v
+		}
+		obj.SetLabels(objLabels)
+	}
 	if obj.GetResourceVersion() == "" {
 		_, err = ri.Create(ctx, obj, metav1.CreateOptions{})
 	} else {
@@ -237,7 +285,7 @@ func (m *Module) applyAlertRule(parent context.Context, cl *Cluster, in alertRul
 	if err != nil {
 		return nil, httpx.BadRequest("写入 PrometheusRule 失败")
 	}
-	return gin.H{"prometheus_rule": ruleName, "namespace": in.Namespace}, nil
+	return gin.H{"prometheus_rule": ruleName, "namespace": in.Namespace, "loaded_by": loaders}, nil
 }
 
 func str(v any) string {

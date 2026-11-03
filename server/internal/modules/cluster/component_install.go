@@ -488,7 +488,7 @@ func prepareVerifiedComponentChart(ctx context.Context, kc *kubeClients, ch *cha
 		return errors.New("Helm release conflict check failed")
 	}
 	if len(releases.Items) > 0 {
-		return errors.New("a Helm release with this name already exists")
+		return httpx.Conflict("a Helm release with this name already exists in the target namespace")
 	}
 	discoveryClient := kc.cs.Discovery()
 	if discoveryClient == nil || discoveryClient.RESTClient() == nil {
@@ -605,7 +605,7 @@ func prepareVerifiedComponentChart(ctx context.Context, kc *kubeClients, ch *cha
 				obj.SetNamespace(in.Namespace)
 			}
 			if obj.GetNamespace() != in.Namespace {
-				return errors.New("chart resource targets a different namespace")
+				return fmt.Errorf("chart resource %s/%s targets namespace %q, outside release namespace %q", obj.GetKind(), obj.GetName(), obj.GetNamespace(), in.Namespace)
 			}
 		} else if obj.GetNamespace() != "" {
 			return errors.New("cluster-scoped chart resource has a namespace")

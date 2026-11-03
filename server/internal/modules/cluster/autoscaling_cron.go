@@ -63,8 +63,8 @@ type CronJobRunRow struct {
 }
 
 type cronJobParams struct {
-	Name            string              `json:"name"`
-	Namespace       string              `json:"namespace"`
+	Name            string               `json:"name"`
+	Namespace       string               `json:"namespace"`
 	UID             types.UID            `json:"uid"`
 	ResourceVersion string               `json:"resource_version"`
 	Labels          map[string]string    `json:"labels"`

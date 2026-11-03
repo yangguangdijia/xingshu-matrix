@@ -1108,7 +1108,7 @@
         document.removeEventListener("fullscreenchange", fullscreenHandler);
         return;
       }
-      if (OB.scope) loadMetricSummary(OB.scope.cluster, OB.scope);
+      if (OB.scope && !window.XSMonitoring) loadMetricSummary(OB.scope.cluster, OB.scope);
     }, 30000);
 
     function dsTable(list) {
@@ -1124,7 +1124,7 @@
       if (!proms.length) return panelHTML("PromQL 查询", emptyHTML("未接入 Prometheus 数据源，无法执行查询。"));
       var opts = proms.map(function (d) { return { v: d.id, t: (d.name || ("#" + d.id)) + (d.env ? "   " + d.env : "") }; });
       var ranges = [{ v: "15m", t: "近 15 分钟" }, { v: "1h", t: "近 1 小时" }, { v: "6h", t: "近 6 小时" }, { v: "24h", t: "近 24 小时" }, { v: "7d", t: "近 7 天" }];
-      return '<section class="ops-observe-dashboard"><h2 class="x-h2">集群指标大屏</h2><div data-obsm-dashboard aria-live="polite">' +
+      return '<section class="ops-observe-dashboard"><div data-obsm-dashboard aria-live="polite">' +
         loadingHTML("正在读取当前集群指标…") + "</div></section>" +
         panelHTML("PromQL 查询", barHTML([
         '<select class="x-select" data-promds aria-label="Prometheus 数据源" style="width:auto">' + opts.map(function (o) { return '<option value="' + E(o.v) + '"' + (String(o.v) === String(OB.promId) ? " selected" : "") + ">" + E(o.t) + "</option>"; }).join("") + "</select>",
@@ -1189,6 +1189,7 @@
     function loadMetricSummary(cluster, source) {
       var box = p.box.querySelector("[data-obsm-dashboard]");
       if (!box) return;
+      if (window.XSMonitoring) { window.XSMonitoring.mount(box, { cluster: cluster, source: source }); return; }
       var items = [
         { title: "CPU 使用率", unit: "%", decimals: 1, query: '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])))' },
         { title: "内存使用率", unit: "%", decimals: 1, query: '100 * (1 - sum(node_memory_MemAvailable_bytes{}) / sum(node_memory_MemTotal_bytes{}))' },

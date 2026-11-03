@@ -106,14 +106,10 @@ spec:
       containers:
         - name: node-exporter
           image: quay.io/prometheus/node-exporter:v1.10.2
-          args: [--path.procfs=/host/proc, --path.sysfs=/host/sys, --web.listen-address=:9100]
+          args: [--path.rootfs=/host, --web.listen-address=:9100]
           resources: { requests: { cpu: 10m, memory: 24Mi }, limits: { memory: 64Mi } }
-          volumeMounts:
-            - { name: proc, mountPath: /host/proc, readOnly: true }
-            - { name: sys, mountPath: /host/sys, readOnly: true }
-      volumes:
-        - { name: proc, hostPath: { path: /proc } }
-        - { name: sys, hostPath: { path: /sys } }
+          volumeMounts: [{ name: root, mountPath: /host, readOnly: true, mountPropagation: HostToContainer }]
+      volumes: [{ name: root, hostPath: { path: / } }]
 ---
 apiVersion: v1
 kind: ServiceAccount

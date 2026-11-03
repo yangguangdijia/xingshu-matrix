@@ -460,7 +460,7 @@ func executeConfigResource(ctx context.Context, kc *kubeClients, pl changePayloa
 			}
 			created, err := cs.CoreV1().ConfigMaps(p.Namespace).Create(ctx, &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: p.Namespace, Labels: p.Labels, Annotations: p.Annotations},
-				Data: p.Data, BinaryData: binaryData, Immutable: p.Immutable,
+				Data:       p.Data, BinaryData: binaryData, Immutable: p.Immutable,
 			}, metav1.CreateOptions{FieldManager: fieldManager})
 			if err != nil {
 				return nil, err

@@ -11462,6 +11462,7 @@
         const direction = window.matchMedia && window.matchMedia("(max-width: 640px)").matches ? "vertical" : "horizontal";
         return window.XSTrafficTopology.layout(nodes, edges, { direction });
       }
+      window.XSTrafficTrace = (ctx) => loadObservedTrace(ctx);
       async function loadObservedTrace(ctx) {
         const dsData = await XS.get("/observability/datasources");
         const source = XSObserve.datasource(netItems(dsData), ctx.all, ctx.cluster, ["jaeger", "tempo"]);
@@ -12136,7 +12137,7 @@
             page.draw(ctx, '<p class="x-aerr" role="alert">证书页面模块不可用，未读取或修改集群数据。</p>');
             return;
           }
-          if (pg.k === "topo") return renderNetworkFlowLive(el, { policy: true });
+          if (pg.k === "topo") return window.XSAppTopology ? window.XSAppTopology.render(el, page, ctx) : renderNetworkFlowLive(el, { policy: true });
           if (pg.k !== "topo") return window.XSNetworkConfig.render(el, pg, page, ctx);
           const serviceData = await XS.get(`/clusters/${encodeURIComponent(ctx.cluster.id)}/network/services`);
           const services = netItems(serviceData);
@@ -16788,6 +16789,8 @@ spec:
     <script src="xs-cluster-integrations.js"></script>
     <script src="xs-login-gl.js"></script>
     <script src="xs-live-core.js"></script>
+    <script src="xs-monitoring.js"></script>
+    <script src="xs-topo-cards.js"></script>
     <script src="xs-live-ops.js"></script>
     <script src="xs-cicd-pipeline.js"></script>
     <script src="xs-platform-settings.js"></script>

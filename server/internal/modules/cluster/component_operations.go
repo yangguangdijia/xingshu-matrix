@@ -311,6 +311,14 @@ func validateComponentRequest(key string, in componentInstallRequest) (Component
 			if err := setComponentValue(values, strings.Split(path, "."), replicas); err != nil {
 				return def, nil, httpx.BadRequest("chart value path is invalid")
 			}
+		case "port":
+			port, err := strconv.Atoi(value)
+			if err != nil || port < 1024 || port > 65535 {
+				return def, nil, httpx.BadRequest("port must be between 1024 and 65535")
+			}
+			if err := setComponentValue(values, strings.Split(path, "."), port); err != nil {
+				return def, nil, httpx.BadRequest("chart value path is invalid")
+			}
 		case "enum":
 			if !stringInList(field.Options, value) {
 				return def, nil, httpx.BadRequest("service type is invalid")

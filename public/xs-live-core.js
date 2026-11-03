@@ -2594,6 +2594,7 @@
     };
   }
 
+  var CL_VIEW = "list";
   function clListPage(el) {
     var seq = bump();
     mount(el, shell("集群列表", "已接入的 Kubernetes 集群", "") + loadingPanel("正在加载集群列表…"));
@@ -2624,8 +2625,13 @@
         ];
       });
       html += toolbarHtml(searchInput("搜索集群 / 环境 / API") + '<span class="x-frac" data-live-none hidden>无匹配集群</span>') +
-        panelHtml("集群", CLUSTERS.length + " 个", tableHtml(["集群", "环境", "版本", "状态", "最近检查", "创建人", "操作"], rows));
+        '<div class="xt-view" role="tablist" aria-label="视图" style="display:inline-flex;background:#f1f3f6;border-radius:8px;padding:3px;margin:0 0 14px">' +
+        ["list", "topo"].map(function (v) { return '<button type="button" data-clview="' + v + '" style="border:0;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:14px;' + (CL_VIEW === v ? "background:#fff;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08)" : "background:none;color:#4b5563") + '">' + (v === "list" ? "列表" : "拓扑") + "</button>"; }).join("") + "</div>" +
+        '<div data-cl-topo' + (CL_VIEW === "topo" ? "" : " hidden") + '></div><div data-cl-table' + (CL_VIEW === "topo" ? " hidden" : "") + ">" +
+        panelHtml("集群", CLUSTERS.length + " 个", tableHtml(["集群", "环境", "版本", "状态", "最近检查", "创建人", "操作"], rows)) + "</div>";
       mount(el, html);
+      [].forEach.call(el.querySelectorAll("[data-clview]"), function (b) { b.onclick = function () { CL_VIEW = b.getAttribute("data-clview"); clListPage(el); }; });
+      if (CL_VIEW === "topo" && window.XSResourceTopology) window.XSResourceTopology.render(el.querySelector("[data-cl-topo]"), CLUSTERS);
       bindActs(el, function (act, id) {
         var c = byId(CLUSTERS, id);
         if (!c) return;
