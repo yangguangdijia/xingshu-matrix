@@ -1,0 +1,21 @@
+/* 去说明小字 + 放宽间距（2026-11-03 用户要求：所有模块不显示解释性小字） */
+.x-desc,.x-aihint,.x-ahint,.x-sf-caption,.x-channel-help,.x-tip,.x-envnote,.x-cicd-note,.ops-sub,.flow-sub,.x-alert-note,
+.x-kpi .x-frac,.x-sethead>.x-frac,.x-sethead>div>.x-frac,.x-iamhd>.x-frac,.x-sethead>span.x-frac,
+.x-panel>.x-sethead .x-frac:not([role]),[data-xs-hint]{display:none!important}
+#view{padding:24px 28px!important}
+.x-panel{padding:20px 24px;border-radius:10px}
+.x-panel+.x-panel,.x-cards+.x-panel,.x-panel+.x-two,.x-panel+.x-wide,.x-two+.x-panel,.x-wide+.x-panel{margin-top:16px}
+.x-cards{gap:16px;margin-bottom:16px}
+.x-two,.x-wide{gap:16px}
+.x-tbar{gap:10px;margin-bottom:16px}
+.x-sethead{margin-bottom:16px;gap:12px}
+.x-h1{margin-bottom:4px}
+.x-h2{margin:0}
+.x-kpi{padding:18px 20px}
+.x-kpi strong{margin-top:8px;display:block}
+table td,table th{padding-top:11px!important;padding-bottom:11px!important}
+.x-form{gap:16px}
+.x-form label{gap:6px}
+.x-btn{min-height:32px;padding-left:14px;padding-right:14px}
+.x-tag{padding:2px 8px}
+#view h1+p,#view .x-h1+p,.x-channel-intro{display:none!important}

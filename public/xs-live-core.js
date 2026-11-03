@@ -1228,229 +1228,325 @@
   }
 
   /* ================================================================
-   * 5. 总览 #/sre —— /clusters、/hosts、/observability/alerts 汇总
+   * 5. 总览 #/sre —— 参考 KubeSphere「集群状态」重做
+   *    数据：/clusters、/nodes(含 metrics-server usage)、/workloads/pods、
+   *    /namespaces、/workloads/deployments、/network/services、/storage/claims、
+   *    /events(Warning)、/components、/observability/alerts、/platform/notices；
+   *    24h 趋势走 Prometheus 数据源（未接入时如实提示）。
    * ================================================================ */
+  var KS_SAMPLES = {};
+  function ksQty(v) {
+    if (v == null || v === "") return null;
+    var s = String(v), m = s.match(/^([0-9.]+)([a-zA-Z]*)$/);
+    if (!m) return null;
+    var n = parseFloat(m[1]), u = m[2];
+    var mul = { "": 1, m: 0.001, k: 1e3, K: 1e3, M: 1e6, G: 1e9, T: 1e12, Ki: 1024, Mi: 1048576, Gi: 1073741824, Ti: 1099511627776 };
+    return mul[u] == null ? null : n * mul[u];
+  }
+  function ksBytes(b) {
+    if (b == null || isNaN(b)) return "—";
+    var u = ["B", "KiB", "MiB", "GiB", "TiB"], i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return (b >= 100 ? b.toFixed(0) : b.toFixed(1)) + " " + u[i];
+  }
+  function ksTone(p, inv) { if (inv && p != null) p = 100 - p; return p == null ? "ks-grey" : p >= 85 ? "ks-red" : p >= 65 ? "ks-amber" : "ks-ok"; }
+  function ksRing(title, pct, main, sub, go, inv) {
+    var r = 34, c = 2 * Math.PI * r, v = pct == null ? 0 : Math.max(0, Math.min(100, pct));
+    return '<div class="ks-ring x-go" data-go="' + gEsc(go) + '" tabindex="0" role="link">' +
+      '<svg viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="' + r + '" class="ks-ring-bg"/>' +
+      '<circle cx="42" cy="42" r="' + r + '" class="ks-ring-fg ' + ksTone(pct, inv) + '" stroke-dasharray="' +
+      (c * v / 100).toFixed(1) + ' ' + c.toFixed(1) + '" transform="rotate(-90 42 42)"/>' +
+      '<text x="42" y="47" text-anchor="middle">' + (pct == null ? "—" : v.toFixed(0) + "%") + '</text></svg>' +
+      '<div class="ks-ring-txt"><p>' + gEsc(title) + '</p><strong>' + gEsc(main) + '</strong></div></div>';
+  }
+  function ksSpark(points, key, color) {
+    var pts = points.filter(function (p) { return p[key] != null; });
+    if (pts.length < 2) return '<p class="ks-muted ks-spark-empty">采样中…</p>';
+    var w = 560, h = 120, t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+    var d = pts.map(function (p, i) {
+      return (i ? "L" : "M") + ((p.t - t0) / (t1 - t0 || 1) * w).toFixed(1) + "," + (h - 6 - p[key] / 100 * (h - 12)).toFixed(1);
+    }).join(" ");
+    return '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" class="ks-spark">' +
+      [25, 50, 75].map(function (g) { var y = h - 6 - g / 100 * (h - 12); return '<line x1="0" x2="' + w + '" y1="' + y + '" y2="' + y + '"/>'; }).join("") +
+      '<path d="' + d + ' L' + w + ',' + h + ' L0,' + h + ' Z" fill="' + color + '" opacity=".10"/>' +
+      '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>';
+  }
+  function ksStack(parts) {
+    var total = parts.reduce(function (s, p) { return s + p.n; }, 0);
+    if (!total) return '<div class="ks-stack"><i style="flex:1;background:var(--x-line)"></i></div>';
+    return '<div class="ks-stack">' + parts.filter(function (p) { return p.n; }).map(function (p) {
+      return '<i title="' + gEsc(p.label + " " + p.n) + '" style="flex:' + p.n + ';background:' + p.color + '"></i>';
+    }).join("") + '</div><div class="ks-legend">' + parts.map(function (p) {
+      return '<span><b style="background:' + p.color + '"></b>' + gEsc(p.label) + ' <strong>' + p.n + '</strong></span>';
+    }).join("") + '</div>';
+  }
+  function ksCss() {
+    if (document.getElementById("ks-ov-css")) return;
+    var s = document.createElement("style"); s.id = "ks-ov-css";
+    s.textContent = [
+      ".ks-head{display:flex;align-items:center;gap:14px;padding:14px 18px;background:var(--x-card,#fff);border:1px solid var(--x-line);border-radius:10px;margin-bottom:14px;flex-wrap:wrap}",
+      ".ks-head h2{margin:0;font-size:17px}.ks-head .ks-meta{display:flex;gap:18px;flex-wrap:wrap;color:var(--x-sub,#6b7280);font-size:12.5px}",
+      ".ks-head .ks-meta b{color:var(--x-text,#1f2937);font-weight:600;margin-left:4px}.ks-head select{margin-left:auto}",
+      ".ks-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:1px}",
+      ".ks-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:14px}",
+      ".ks-grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-bottom:14px}",
+      ".ks-grid3{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;margin-bottom:14px}",
+      "@media(max-width:1180px){.ks-grid4{grid-template-columns:repeat(2,minmax(0,1fr))}.ks-grid2,.ks-grid3{grid-template-columns:1fr}}",
+      ".ks-ring{display:flex;align-items:center;gap:14px;padding:16px 18px;background:var(--x-card,#fff);border:1px solid var(--x-line);border-radius:10px;cursor:pointer}",
+      ".ks-ring:hover{border-color:var(--x-blue)}.ks-ring svg{width:84px;height:84px;flex:none}",
+      ".ks-ring-bg{fill:none;stroke:var(--x-line,#e5e7eb);stroke-width:8}.ks-ring-fg{fill:none;stroke-width:8;stroke-linecap:round}",
+      ".ks-ring text{font-size:15px;font-weight:600;fill:var(--x-text,#1f2937)}",
+      ".ks-ok{stroke:#16a34a;color:#16a34a}.ks-amber{stroke:#d97706;color:#d97706}.ks-red{stroke:#dc2626;color:#dc2626}.ks-grey{stroke:#9ca3af;color:#9ca3af}",
+      ".ks-ring-txt p{margin:0;color:var(--x-sub,#6b7280);font-size:12.5px}.ks-ring-txt strong{display:block;font-size:18px;margin:4px 0 2px}",
+      ".ks-ring-txt span{font-size:12px;color:var(--x-sub,#6b7280)}",
+      ".ks-counts{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0;background:var(--x-card,#fff);border:1px solid var(--x-line);border-radius:10px;margin-bottom:14px}",
+      ".ks-counts a{padding:14px 16px;text-decoration:none;color:inherit;border-right:1px solid var(--x-line)}.ks-counts a:last-child{border-right:0}",
+      ".ks-counts a:hover{background:var(--x-hover,#f5f7fb)}.ks-counts span{font-size:12.5px;color:var(--x-sub,#6b7280)}.ks-counts strong{display:block;font-size:22px;margin-top:4px}",
+      "@media(max-width:1180px){.ks-counts{grid-template-columns:repeat(3,1fr)}}",
+      ".ks-panel{background:var(--x-card,#fff);border:1px solid var(--x-line);border-radius:10px;padding:16px 18px;min-width:0}",
+      ".ks-panel h3{margin:0 0 12px;font-size:14.5px;display:flex;align-items:center;gap:8px}.ks-panel h3 .ks-r{margin-left:auto;font-weight:400}",
+      ".ks-muted{color:var(--x-sub,#6b7280);font-size:12.5px}",
+      ".ks-stack{display:flex;height:10px;border-radius:5px;overflow:hidden;gap:2px;margin:6px 0 10px}",
+      ".ks-legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12.5px;color:var(--x-sub,#6b7280)}.ks-legend b{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px}",
+      ".ks-legend strong{color:var(--x-text,#1f2937);margin-left:2px}",
+      ".ks-comp{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}",
+      ".ks-comp div{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--x-line);border-radius:8px;font-size:13px;min-width:0}",
+      ".ks-comp div em{margin-left:auto;font-style:normal;font-size:12px;color:var(--x-sub,#6b7280);white-space:nowrap}",
+      ".ks-comp div span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".ks-cond{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.ks-cond span{font-size:12px;padding:3px 8px;border-radius:4px;background:#f0fdf4;color:#15803d}.ks-cond span.bad{background:#fef2f2;color:#b91c1c}",
+      ".ks-spark{width:100%;height:120px;display:block}.ks-spark line{stroke:var(--x-line,#e5e7eb);stroke-dasharray:3 3}.ks-spark-empty{height:120px;display:flex;align-items:center;justify-content:center;margin:0}",
+      ".ks-tabs{display:inline-flex;border:1px solid var(--x-line);border-radius:6px;overflow:hidden}.ks-tabs button{border:0;background:none;padding:3px 10px;font-size:12px;cursor:pointer;color:var(--x-sub,#6b7280)}",
+      ".ks-tabs button.on{background:var(--x-blue,#2563eb);color:#fff}",
+      ".ks-rank{width:100%;border-collapse:collapse;font-size:13px}.ks-rank td,.ks-rank th{padding:8px 6px;border-bottom:1px solid var(--x-line);text-align:left}.ks-rank th{font-weight:500;color:var(--x-sub,#6b7280);font-size:12px}",
+      ".ks-bar{height:6px;border-radius:3px;background:var(--x-line,#e5e7eb);overflow:hidden;min-width:80px}.ks-bar i{display:block;height:100%}",
+      ".ks-ev{list-style:none;margin:0;padding:0}.ks-ev li{padding:8px 0;border-bottom:1px solid var(--x-line);font-size:13px;display:grid;grid-template-columns:auto 1fr auto;gap:4px 10px}",
+      ".ks-ev li p{grid-column:2/4;margin:0;color:var(--x-sub,#6b7280);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".ks-pill{font-size:11.5px;padding:1px 7px;border-radius:4px;background:#fff7ed;color:#c2410c;white-space:nowrap}"
+    ].join("\n");
+    document.head.appendChild(s);
+  }
 
-  // 总览：沿用旧版布局（5 张 KPI + 24h 曲线 + 节点 TOP5 + 平台公告 + 变更/告警 + 环境筛选），
-  // 数据全部取自后端；取不到的区块保留完整卡片与操作入口，只标注"未接入"。
   function renderSreLive(el, silent) {
     var seq = bump();
-    var context = window.XSClusterContext;
-    var contextSnapshot = null;
-    try {
-      contextSnapshot = context && typeof context.get === "function" ? context.get() :
-        context && typeof context.snapshot === "function" ? context.snapshot() :
-        context && typeof context.current === "function" ? context.current() : null;
-    } catch (err) {
-      console.error("[xs-live-core] cluster context", err);
-    }
-    function isCurrent() {
-      return alive(seq, el) && (!context || typeof context.isCurrent !== "function" || context.isCurrent(contextSnapshot));
-    }
-    if (!silent) mount(el, shell("总览", "当前集群容量、节点负载、变更与告警", "") + loadingPanel("正在加载总览…"));
-    Promise.all([
-      wrap(apiGet("/clusters", { page_size: 200 }).then(function (data) {
-        if (isCurrent()) window.XS_CLUSTERS = itemsOf(data);
-        return data;
-      })),
-      wrap(apiGet("/platform/notices"))
-    ]).then(function (initial) {
+    var context = window.XSClusterContext, snap = null;
+    try { snap = context && typeof context.get === "function" ? context.get() : null; } catch (e) {}
+    function isCurrent() { return alive(seq, el); }
+    var TITLE = "总览", DESC = "";
+    ksCss();
+    if (!silent) mount(el, shell(TITLE, DESC, "") + loadingPanel("正在读取集群状态…"));
+    Promise.all([wrap(apiGet("/clusters", { page_size: 200 })), wrap(apiGet("/platform/notices"))]).then(function (init) {
       if (!isCurrent()) return;
-      var clusterResult = initial[0], noticeResult = initial[1];
-      if (!clusterResult.ok) {
-        if (isAuthErr(clusterResult.err)) return kickLogin();
-        mount(el, shell("总览", "当前集群容量、节点负载、变更与告警", "") + errorPanel(clusterResult.err));
-        return;
+      if (!init[0].ok) {
+        if (isAuthErr(init[0].err)) return kickLogin();
+        return mount(el, shell(TITLE, DESC, "") + errorPanel(init[0].err));
       }
-      var clusters = itemsOf(clusterResult.data);
-      var cluster = overviewClusterFromState(contextSnapshot, clusters);
-      var scopedRequests = cluster ? [
-        wrap(apiGet("/clusters/" + cluster.id + "/nodes", null, { scope: "cluster" })),
-        wrap(apiGet("/clusters/" + cluster.id + "/workloads/pods", { page_size: 200 }, { scope: "cluster" })),
-        wrap(apiGet("/observability/alerts", { page_size: 200, status: "firing", cluster_id: cluster.id }, { scope: "cluster" }))
-      ] : [Promise.resolve(null), Promise.resolve(null), Promise.resolve(null)];
-      scopedRequests.push(Promise.all(clusters.map(function (c) {
-        return Promise.all([
-          wrap(apiGet("/clusters/" + c.id + "/nodes", null)),
-          wrap(apiGet("/clusters/" + c.id + "/workloads/pods", { page_size: 200 }))
-        ]).then(function (r) { return { cluster: c, nodes: r[0], pods: r[1] }; });
-      })));
-
-      Promise.all(scopedRequests).then(function (scoped) {
+      var clusters = itemsOf(init[0].data); window.XS_CLUSTERS = clusters;
+      if (!clusters.length) {
+        return mount(el, shell(TITLE, DESC, "") + '<section class="ks-panel" style="text-align:center;padding:48px">' +
+          '<h3 style="justify-content:center">尚未接入集群</h3><p class="ks-muted">接入 Kubernetes 集群后，这里显示资源用量、节点与组件状态。</p>' +
+          '<button class="x-btn x-btn--pri" type="button" data-goto="#/cluster/list">接入集群</button></section>');
+      }
+      var saved = null; try { saved = localStorage.getItem("xs.overview.cluster"); } catch (e) {}
+      var cluster = overviewClusterFromState(snap, clusters) ||
+        clusters.filter(function (c) { return String(c.id) === String(saved); })[0] || clusters[0];
+      if (context && typeof context.set === "function" && !overviewClusterFromState(snap, clusters)) {
+        try { context.set({ kind: "cluster", cluster_id: cluster.id, name: cluster.name || ("#" + cluster.id), env: cluster.env || "dev" }); } catch (e) { console.error(e); }
+        seq = bump();
+      }
+      var base = "/clusters/" + cluster.id;
+      var o = { scope: "cluster" };
+      Promise.all([
+        wrap(apiGet(base + "/nodes", null, o)),
+        wrap(apiGet(base + "/workloads/pods", { page_size: 500 }, o)),
+        wrap(apiGet(base + "/namespaces", null, o)),
+        wrap(apiGet(base + "/workloads/deployments", { page_size: 500 }, o)),
+        wrap(apiGet(base + "/network/services", { page_size: 500 }, o)),
+        wrap(apiGet(base + "/storage/claims", { page_size: 500 }, o)),
+        wrap(apiGet(base + "/events", { page_size: 50, type: "Warning" }, o)),
+        wrap(apiGet(base + "/components", null, o)),
+        wrap(apiGet("/observability/alerts", { page_size: 50, status: "firing", cluster_id: cluster.id }, o))
+      ]).then(function (r) {
         if (!isCurrent()) return;
-        var nodesResult = scoped[0], podsResult = scoped[1], alertsResult = scoped[2];
-        if ([nodesResult, podsResult, alertsResult].some(function (result) {
-          return result && result.err && isAuthErr(result.err);
-        })) return kickLogin();
-        var nodes = nodesResult && nodesResult.ok ? itemsOf(nodesResult.data) : [];
-        var pods = podsResult && podsResult.ok ? itemsOf(podsResult.data) : [];
-        var alerts = alertsResult && alertsResult.ok ? itemsOf(alertsResult.data) : [];
-        var notices = noticeResult.ok ? itemsOf(noticeResult.data) : [];
-        var ready = nodes.filter(function (node) { return !!node.ready; }).length;
-        var podsIncomplete = !!(podsResult && podsResult.ok && listIsIncomplete(podsResult.data, pods));
-        var podsByNode = podCountsByNode(pods);
-        var podsTotal = podsResult && podsResult.ok ? countLabel(pods.length, true, podsIncomplete) : "--";
-        var clusterLabel = cluster ? (cluster.name || "#" + cluster.id) : "未选择当前集群";
+        if (r.some(function (x) { return x && !x.ok && isAuthErr(x.err); })) return kickLogin();
+        var L = function (i) { return r[i].ok ? itemsOf(r[i].data) : null; };
+        var nodes = L(0) || [], pods = L(1) || [], events = L(6) || [], alerts = L(8) || [];
+        var comps = r[7].ok && r[7].data && r[7].data.items ? r[7].data.items : [];
+        var notices = init[1].ok ? itemsOf(init[1].data) : [];
 
-        function kpi(label, value, sub, go, metric) {
-          return '<div class="x-card x-kpi x-go" data-go="' + gEsc(go) + '"' +
-            (metric ? ' data-sre-metric="' + gEsc(metric) + '"' : "") +
-            ' tabindex="0" role="link" aria-label="' + gEsc(label + " " + value) + '">' +
-            '<p>' + gEsc(label) + '</p><strong>' + gEsc(value) + '</strong>' +
-            '<span class="x-frac">' + gEsc(sub) + '</span></div>';
-        }
-
-        var nodesSub = !cluster ? "请选择当前集群" : !nodesResult.ok ? "加载失败：" + errText(nodesResult.err) : clusterLabel;
-        var allStat = { nodes: 0, ready: 0, pods: 0, ok: false, podsIncomplete: false, failed: 0, parts: [] };
-        (scoped[3] || []).forEach(function (row) {
-          var nList = row.nodes.ok ? itemsOf(row.nodes.data) : null, pList = row.pods.ok ? itemsOf(row.pods.data) : null;
-          if (nList) { allStat.ok = true; allStat.nodes += nList.length; allStat.ready += nList.filter(function (n) { return !!n.ready; }).length; } else allStat.failed++;
-          if (pList) { allStat.pods += pList.length; if (listIsIncomplete(row.pods.data, pList)) allStat.podsIncomplete = true; }
-          allStat.parts.push((row.cluster.name || "#" + row.cluster.id) + " " + (nList ? nList.filter(function (n) { return !!n.ready; }).length + "/" + nList.length : "失败"));
+        // 资源汇总
+        var cpuCap = 0, memCap = 0, podCap = 0, cpuUse = 0, memUse = 0, hasUsage = false, ready = 0, unsched = 0, pressure = {};
+        nodes.forEach(function (n) {
+          var a = n.allocatable || {};
+          cpuCap += ksQty(a.cpu) || 0; memCap += ksQty(a.memory) || 0; podCap += ksQty(a.pods) || 0;
+          if (n.usage) { hasUsage = true; cpuUse += (n.usage.cpu_millicores || 0) / 1000; memUse += n.usage.memory_bytes || 0; }
+          if (n.ready) ready++; if (n.unschedulable) unsched++;
+          (n.conditions || []).forEach(function (c) {
+            if (c.type !== "Ready") { pressure[c.type] = pressure[c.type] || 0; if (c.status === "True") pressure[c.type]++; }
+          });
         });
-        var allNodesSub = clusters.length ? "全部 " + clusters.length + " 个集群：" + allStat.parts.join("，") : "尚未接入集群";
-        var allPodsSub = "全部 " + clusters.length + " 个集群" + (allStat.podsIncomplete ? " · 部分 Pod 清单不完整" : "") + (allStat.failed ? " · " + allStat.failed + " 个集群读取失败" : "");
-        var podsSub = !cluster ? "请选择当前集群" : !podsResult.ok ? "加载失败：" + errText(podsResult.err) :
-          clusterLabel + (podsIncomplete ? " · Pod 清单不完整" : "");
-        var metricSub = cluster ? "节点物理容量使用率，等待 Prometheus 返回" : "请选择当前集群";
-        var html = shell("总览", "当前集群容量、节点负载、变更与告警", "");
-        html += '<div class="x-cards x-cards5">' +
-          kpi("集群数", String(clusters.length), clusters.length ? "已接入集群" : "尚未接入", "#/cluster/list") +
-          kpi("节点 Ready / 总数（全部集群）", allStat.ok ? allStat.ready + " / " + allStat.nodes : "—", allNodesSub,
-            cluster ? clusterResourceHash("cluster", "nodes", cluster.id) : "#/cluster/nodes") +
-          kpi("Pod 总数（全部集群）", allStat.ok ? String(allStat.pods) + (allStat.podsIncomplete ? "+" : "") : "—", allPodsSub,
-            cluster ? clusterResourceHash("cluster", "workloads", cluster.id) : "#/cluster/workloads") +
-          kpi("CPU（物理容量）", "—", metricSub, "#/observe", "cpu") +
-          kpi("内存（物理容量）", "—", metricSub, "#/observe", "mem") +
+        var podActive = pods.filter(function (p) { return p.phase !== "Succeeded" && p.phase !== "Failed"; }).length;
+        var cpuPct = hasUsage && cpuCap ? cpuUse / cpuCap * 100 : null;
+        var memPct = hasUsage && memCap ? memUse / memCap * 100 : null;
+        var podPct = podCap ? podActive / podCap * 100 : null;
+        var nodePct = nodes.length ? ready / nodes.length * 100 : null;
+        var key = String(cluster.id), smp = KS_SAMPLES[key] = KS_SAMPLES[key] || [];
+        if (hasUsage) { smp.push({ t: Date.now(), cpu: cpuPct, mem: memPct }); if (smp.length > 240) smp.shift(); }
+        var noUsage = r[0].ok ? "metrics-server 未就绪，无实时用量" : "节点读取失败";
+
+        var html = shell(TITLE, DESC, "");
+        var apiOk = r[0].ok;
+        html += '<div class="ks-head"><h2>' + gEsc(cluster.name || "#" + cluster.id) + '</h2>' +
+          tagHtml(cluster.env || "—", "info") +
+          '<div class="ks-meta"><span><i class="ks-dot" style="background:' + (apiOk ? "#16a34a" : "#dc2626") + '"></i>API Server<b>' + (apiOk ? "可达" : "不可达") + '</b></span>' +
+          '<span>版本<b>' + gEsc((nodes[0] && nodes[0].kubelet_version) || cluster.version || "—") + '</b></span>' +
+          '<span>节点<b>' + nodes.length + '</b></span><span>架构<b>' + gEsc((nodes[0] && nodes[0].architecture) || "—") + '</b></span>' +
+          '<span>运行时<b>' + gEsc(((nodes[0] && nodes[0].container_runtime) || "—").split("://")[0]) + '</b></span>' +
+          '<span>指标<b>' + (hasUsage ? "metrics-server" : "未接入") + '</b></span></div>' +
+          (clusters.length > 1 ? '<select class="x-input" data-ks-cluster style="width:auto">' + clusters.map(function (c) {
+            return '<option value="' + gEsc(c.id) + '"' + (c.id === cluster.id ? " selected" : "") + '>' + gEsc(c.name) + '</option>'; }).join("") + '</select>' : "") +
           '</div>';
 
-        html += '<section class="x-panel x-setform"><div class="x-sethead"><h2 class="x-h2">CPU / 内存物理容量 24 小时趋势</h2>' +
-          '<span class="x-frac">' + gEsc(clusterLabel) + '</span></div>' +
-          '<div class="x-tbar" style="margin:0 0 8px"><span class="x-tag x-blue">CPU（物理容量）</span>' +
-          '<span class="x-tag x-green">内存（物理容量）</span><span class="x-grow"></span>' +
-          '<button class="x-btn" type="button" data-goto="#/settings">系统设置</button></div>' +
-          '<div class="x-ochart" data-sre-chart style="height:240px">' +
-          '<p class="x-frac" style="text-align:center;padding-top:100px">' +
-          gEsc(cluster ? "正在加载当前集群 24h 资源曲线…" : "请选择当前集群后查看真实资源曲线") +
-          '</p></div></section>';
+        html += '<div class="ks-grid4">' +
+          ksRing("CPU 使用", cpuPct, hasUsage ? cpuUse.toFixed(2) + " / " + cpuCap + " 核" : "—", hasUsage ? "占可分配（实时）" : noUsage, clusterResourceHash("cluster", "nodes", cluster.id)) +
+          ksRing("内存使用", memPct, hasUsage ? ksBytes(memUse) + " / " + ksBytes(memCap) : "—", hasUsage ? "占可分配（实时）" : noUsage, clusterResourceHash("cluster", "nodes", cluster.id)) +
+          ksRing("Pod 容量", podPct, podActive + " / " + podCap, "运行中 Pod 占节点 Pod 上限", clusterResourceHash("cluster", "workloads", cluster.id)) +
+          ksRing("节点就绪", nodePct, ready + " / " + nodes.length, "", clusterResourceHash("cluster", "nodes", cluster.id), true) +
+          '</div>';
 
-        var top = topNodesByCpu(nodes, 5);
-        var topRows = top.map(function (node) {
-          var cpu = nodeUsagePercent(node, "cpu_percent");
-          var mem = nodeUsagePercent(node, "memory_percent");
-          return [
-            '<span class="x-name">' + gEsc(node.name || "—") + '</span>',
-            '<span class="x-tag x-grey">' + gEsc(clusterLabel) + '</span>',
-            barHtml(cpu, cpu == null ? "—" : cpu + "%"),
-            barHtml(mem, mem == null ? "—" : mem + "%"),
-            gEsc(countLabel(podsByNode[String(node.name || "")] || 0, !!(podsResult && podsResult.ok), podsIncomplete)),
-            node.ready ? tagHtml("Ready", "ok") : tagHtml(node.status || "NotReady", "bad")
-          ];
-        });
-        var topBody;
-        if (!cluster) topBody = '<p class="x-empty">请选择当前集群后查看节点负载。</p>';
-        else if (!nodesResult.ok) topBody = '<p class="x-aerr" role="alert">节点加载失败：' + gEsc(errText(nodesResult.err)) + '</p>';
-        else if (!topRows.length) topBody = '<p class="x-empty">当前集群没有节点数据。</p>';
-        else topBody = tableHtml(["节点", "集群", "CPU / 可分配", "内存 / 可分配", "Pods", "状态"], topRows);
-
-        var noticeBody;
-        if (!noticeResult.ok) {
-          noticeBody = '<p class="x-aerr" role="alert">公告加载失败：' + gEsc(errText(noticeResult.err)) + '</p>';
-        } else {
-          noticeBody = notices.map(function (notice) {
-            return '<div class="x-listitem" style="padding:8px 0;border-bottom:1px solid var(--x-line)">' +
-              '<div style="display:flex;gap:8px;align-items:center">' +
-              (notice.pinned ? '<span class="x-tag x-blue">置顶</span>' : "") +
-              '<strong>' + gEsc(notice.title) + '</strong><span class="x-grow"></span>' +
-              '<span class="x-frac">' + gEsc((notice.created_by || "") + "   " + fmtTime(notice.created_at)) + '</span>' +
-              '<button class="x-btn" type="button" data-ndel="' + gEsc(notice.id) + '">删除</button></div>' +
-              (notice.body ? '<p class="x-frac" style="margin:4px 0 0">' + gEsc(notice.body) + '</p>' : "") + '</div>';
-          }).join("") || '<p class="x-empty">暂无公告</p>';
+        function cnt(label, i, go) {
+          var v = L(i); return '<a href="' + gEsc(go) + '"><span>' + label + '</span><strong>' + (v ? v.length : "—") + '</strong></a>';
         }
+        html += '<div class="ks-counts">' +
+          '<a href="' + gEsc(clusterResourceHash("cluster", "nodes", cluster.id)) + '"><span>节点</span><strong>' + nodes.length + '</strong></a>' +
+          cnt("命名空间", 2, "#/cluster/namespaces") + cnt("Deployment", 3, clusterResourceHash("cluster", "workloads", cluster.id)) +
+          cnt("Pod", 1, clusterResourceHash("cluster", "workloads", cluster.id)) + cnt("Service", 4, "#/network") + cnt("存储卷声明", 5, "#/cluster/storage") + '</div>';
 
-        html += '<div class="x-wide">' +
-          '<section class="x-panel" style="min-width:0"><div class="x-sethead"><h2 class="x-h2">节点 TOP5 负载</h2>' +
-          '<span class="x-frac">CPU / 内存占 Kubernetes Allocatable；按 CPU 降序，无 usage 的节点排后' +
-          (podsIncomplete ? '；Pods 为已读取下限（+）' : '') + '</span></div>' + topBody + '</section>' +
-          '<section class="x-panel" style="min-width:0"><div class="x-sethead"><h2 class="x-h2">平台公告</h2>' +
-          '<button class="x-btn" type="button" data-nadd>+ 发布公告</button></div>' + noticeBody + '</section></div>';
+        // 节点状态 + 组件状态
+        var condNames = { MemoryPressure: "内存压力", DiskPressure: "磁盘压力", PIDPressure: "PID 压力", NetworkUnavailable: "网络不可用" };
+        var nodePanel = '<section class="ks-panel"><h3>节点状态<span class="ks-r ks-muted">' + ready + ' 就绪 / ' + nodes.length + ' 总数</span></h3>' +
+          ksStack([{ label: "Ready", n: ready - unsched < 0 ? 0 : ready - unsched, color: "#16a34a" }, { label: "禁止调度", n: unsched, color: "#d97706" }, { label: "NotReady", n: nodes.length - ready, color: "#dc2626" }]) +
+          '<div class="ks-cond">' + Object.keys(condNames).filter(function (k) { return pressure[k] != null; }).map(function (k) {
+            return '<span class="' + (pressure[k] ? "bad" : "") + '">' + condNames[k] + (pressure[k] ? " " + pressure[k] + " 个节点" : " 正常") + '</span>';
+          }).join("") + '</div></section>';
 
-        var alertBody;
-        if (!cluster) {
-          alertBody = '<p class="x-empty">请选择当前集群后查看活跃告警。</p>';
-        } else if (!alertsResult.ok) {
-          alertBody = '<p class="x-aerr" role="alert">告警加载失败：' + gEsc(errText(alertsResult.err)) + '</p>';
-        } else if (!alerts.length) {
-          alertBody = '<p class="x-empty">当前集群没有触发中的告警。</p>';
-        } else {
-          alertBody = '<ul class="x-list">' + alerts.slice(0, 6).map(function (alert) {
-            var alertId = alertIdOf(alert);
-            var labels = alert.labels || {}, annotations = alert.annotations || {};
-            var severity = alert.severity || labels.severity || "P?";
-            var title = alert.summary || annotations.summary || annotations.description ||
-              alert.name || alert.alertname || labels.alertname || "告警";
-            var location = [labels.namespace,
-              labels.pod || labels.deployment || labels.statefulset || labels.service || labels.instance]
-              .filter(Boolean).join(" / ");
-            return '<li><span class="x-tag x-red">' + gEsc(severity) + '</span>' +
-              '<button type="button" class="x-tlink x-alert-open" data-sre-alert-open="' + gEsc(alertId) + '">' +
-              gEsc(title) + '</button>' +
-              '<span class="x-frac">' + (location ? gEsc(location) + " · " : "") +
-              gEsc(alert.status || "firing") + " · " + gEsc(fmtAgo(alert.starts_at || alert.created_at)) + '</span></li>';
+        var sysPods = pods.filter(function (p) { return p.namespace === "kube-system" && p.phase !== "Succeeded"; });
+        var sys = {};
+        sysPods.forEach(function (p) {
+          var name = String(p.owner || p.name).replace(/^[A-Za-z]+\//, "").replace(/-[a-z0-9]{8,10}$/, "");
+          var ok = p.phase === "Running" && /^(\d+)\/\1$/.test(p.ready || "");
+          sys[name] = sys[name] || { ok: 0, all: 0 }; sys[name].all++; if (ok) sys[name].ok++;
+        });
+        var compRows = [{ n: "kube-apiserver", s: apiOk ? "ok" : "bad", t: apiOk ? "可达" : "不可达" }];
+        Object.keys(sys).sort().forEach(function (k) { compRows.push({ n: k, s: sys[k].ok === sys[k].all ? "ok" : "bad", t: sys[k].ok + "/" + sys[k].all + " 就绪" }); });
+        if (!sys["metrics-server"]) compRows.push({ n: "metrics-server", s: hasUsage ? "ok" : "off", t: hasUsage ? "可用" : "未安装" });
+        var installed = comps.filter(function (c) { return c.state && c.state !== "missing"; });
+        var compPanel = '<section class="ks-panel"><h3>系统组件<span class="ks-r ks-muted">扩展组件 ' + installed.length + ' / ' + comps.length + ' 已安装 · <a href="#/cluster/components">管理</a></span></h3>' +
+          '<div class="ks-comp">' + compRows.map(function (c) {
+            var col = c.s === "ok" ? "#16a34a" : c.s === "bad" ? "#dc2626" : "#9ca3af";
+            return '<div><i class="ks-dot" style="background:' + col + '"></i><span>' + gEsc(c.n) + '</span><em>' + gEsc(c.t) + '</em></div>';
+          }).join("") + '</div></section>';
+        html += '<div class="ks-grid2">' + nodePanel + compPanel + '</div>';
+
+        // 实时采样曲线 + 24h Prometheus 趋势
+        html += '<div class="ks-grid2"><section class="ks-panel"><h3>CPU 使用率</h3>' +
+          '<div data-ks-spark="cpu">' + ksSpark(smp, "cpu", "#2563eb") + '</div></section>' +
+          '<section class="ks-panel"><h3>内存使用率</h3>' +
+          '<div data-ks-spark="mem">' + ksSpark(smp, "mem", "#16a34a") + '</div></section></div>';
+        html += '<section class="ks-panel" style="margin-bottom:14px"><h3>24 小时资源趋势</h3>' +
+          '<div class="x-ochart" data-sre-chart style="min-height:160px"><p class="ks-muted" style="text-align:center;padding-top:60px">加载中…</p></div></section>';
+
+        // Pod 状态 + Warning 事件
+        var ph = { Running: 0, Pending: 0, Succeeded: 0, Failed: 0, Unknown: 0 }, restarts = 0, nsCount = {};
+        pods.forEach(function (p) { ph[p.phase] = (ph[p.phase] || 0) + 1; restarts += p.restarts || 0; nsCount[p.namespace] = (nsCount[p.namespace] || 0) + 1; });
+        var nsTop = Object.keys(nsCount).sort(function (a, b) { return nsCount[b] - nsCount[a]; }).slice(0, 5);
+        var maxNs = nsTop.length ? nsCount[nsTop[0]] : 1;
+        var podPanel = '<section class="ks-panel"><h3>Pod 状态<span class="ks-r ks-muted">共 ' + pods.length + ' · 累计重启 ' + restarts + ' 次</span></h3>' +
+          ksStack([{ label: "运行中", n: ph.Running, color: "#16a34a" }, { label: "等待中", n: ph.Pending, color: "#d97706" },
+            { label: "已完成", n: ph.Succeeded, color: "#60a5fa" }, { label: "失败", n: ph.Failed, color: "#dc2626" }, { label: "未知", n: ph.Unknown || 0, color: "#9ca3af" }]) +
+          '<h3 style="margin:18px 0 8px;font-size:13.5px">命名空间 Pod TOP5</h3><table class="ks-rank"><tbody>' + nsTop.map(function (ns) {
+            return '<tr><td style="width:40%">' + gEsc(ns) + '</td><td><div class="ks-bar"><i style="width:' + (nsCount[ns] / maxNs * 100) + '%;background:#2563eb"></i></div></td><td style="width:40px;text-align:right">' + nsCount[ns] + '</td></tr>';
+          }).join("") + '</tbody></table></section>';
+        var evPanel = '<section class="ks-panel"><h3>最近 Warning 事件<span class="ks-r ks-muted">' + (r[6].ok ? events.length + " 条" : "读取失败") + ' · <a href="#/cluster/events">全部事件</a></span></h3>' +
+          (!r[6].ok ? '<p class="x-aerr">' + gEsc(errText(r[6].err)) + '</p>' : !events.length ? '<p class="x-empty">没有 Warning 事件</p>' :
+            '<ul class="ks-ev">' + events.slice(0, 6).map(function (e) {
+              return '<li><span class="ks-pill">' + gEsc(e.reason) + '</span><strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+                gEsc((e.namespace ? e.namespace + "/" : "") + (e.object_name || "")) + '</strong><span class="ks-muted">' + gEsc(fmtAgo(e.last_seen)) +
+                (e.count > 1 ? " ×" + e.count : "") + '</span><p title="' + gEsc(e.message) + '">' + gEsc(e.message) + '</p></li>';
+            }).join("") + '</ul>') + '</section>';
+        html += '<div class="ks-grid2">' + podPanel + evPanel + '</div>';
+
+        // 资源使用排行
+        var sortBy = el.__ksSort || "cpu";
+        var rank = nodes.slice().sort(function (a, b) {
+          var k = sortBy === "cpu" ? "cpu_percent" : "memory_percent";
+          return ((b.usage || {})[k] || -1) - ((a.usage || {})[k] || -1);
+        });
+        var podsByNode = podCountsByNode(pods);
+        function bar(p) { return p == null ? '<span class="ks-muted">—</span>' : '<div style="display:flex;align-items:center;gap:8px"><div class="ks-bar" style="flex:1"><i class="' + ksTone(p) + '" style="width:' + Math.min(100, p) + '%;background:currentColor"></i></div><span style="width:44px">' + p.toFixed(1) + '%</span></div>'; }
+        html += '<div class="ks-grid3"><section class="ks-panel"><h3>节点资源使用排行<span class="ks-r"><span class="ks-tabs">' +
+          '<button type="button" data-ks-sort="cpu" class="' + (sortBy === "cpu" ? "on" : "") + '">CPU</button><button type="button" data-ks-sort="mem" class="' + (sortBy === "mem" ? "on" : "") + '">内存</button></span></span></h3>' +
+          '<table class="ks-rank"><thead><tr><th>节点</th><th>角色</th><th>CPU</th><th>内存</th><th>Pods</th><th>状态</th></tr></thead><tbody>' +
+          rank.slice(0, 10).map(function (n) {
+            var u = n.usage || {};
+            return '<tr><td><a href="' + gEsc(clusterResourceHash("cluster", "nodes", cluster.id)) + '">' + gEsc(n.name) + '</a><div class="ks-muted">' + gEsc(n.internal_ip || "") + '</div></td>' +
+              '<td>' + gEsc((n.roles || []).join(",") || "worker") + '</td><td>' + bar(n.usage ? u.cpu_percent : null) + '</td><td>' + bar(n.usage ? u.memory_percent : null) + '</td>' +
+              '<td>' + (podsByNode[n.name] || 0) + ' / ' + gEsc((n.allocatable || {}).pods || "—") + '</td><td>' + (n.ready ? tagHtml("Ready", "ok") : tagHtml(n.status || "NotReady", "bad")) + '</td></tr>';
+          }).join("") + '</tbody></table></section>';
+
+        // 告警 + 公告
+        var alertBody = !r[8].ok ? '<p class="x-empty">未接入告警源</p>' : !alerts.length ? '<p class="x-empty">当前没有触发中的告警</p>' :
+          '<ul class="ks-ev">' + alerts.slice(0, 5).map(function (a) {
+            var lb = a.labels || {}, an = a.annotations || {};
+            return '<li><span class="ks-pill" style="background:#fef2f2;color:#b91c1c">' + gEsc(a.severity || lb.severity || "P?") + '</span><button type="button" class="x-tlink" data-sre-alert-open="' + gEsc(alertIdOf(a)) + '">' +
+              gEsc(a.summary || an.summary || a.name || lb.alertname || "告警") + '</button><span class="ks-muted">' + gEsc(fmtAgo(a.starts_at || a.created_at)) + '</span></li>';
           }).join("") + '</ul>';
-        }
-        html += '<div class="x-two">' +
-          '<section class="x-panel"><div class="x-sethead"><h2 class="x-h2">最近变更</h2>' +
-          '<a class="x-btn" href="#/release">查看发布单</a></div>' +
-          '<p class="x-empty">尚未接入发布记录：在「CI/CD › 发布单」创建发布后显示。</p></section>' +
-          '<section class="x-panel"><div class="x-sethead"><h2 class="x-h2">活跃告警 <span class="x-frac">' +
-          (alertsResult && alertsResult.ok ? alerts.length : "—") + ' 条</span></h2>' +
-          '<a class="x-btn" href="#/observe/events">查看监控告警</a></div>' + alertBody + '</section></div>';
+        html += '<div style="display:flex;flex-direction:column;gap:14px;min-width:0"><section class="ks-panel"><h3>活跃告警<span class="ks-r ks-muted">' + (r[8].ok ? alerts.length : "—") + ' 条 · <a href="#/observe/events">告警中心</a></span></h3>' + alertBody + '</section>' +
+          '<section class="ks-panel"><h3>平台公告<span class="ks-r"><button class="x-btn" type="button" data-nadd>+ 发布</button></span></h3>' +
+          (notices.length ? notices.slice(0, 4).map(function (n) {
+            return '<div style="padding:6px 0;border-bottom:1px solid var(--x-line);display:flex;gap:8px;align-items:center">' + (n.pinned ? '<span class="x-tag x-blue">置顶</span>' : "") +
+              '<strong style="font-size:13px">' + gEsc(n.title) + '</strong><span class="x-grow"></span><span class="ks-muted">' + gEsc(fmtAgo(n.created_at)) + '</span>' +
+              '<button class="x-btn" type="button" data-ndel="' + gEsc(n.id) + '">删除</button></div>';
+          }).join("") : '<p class="x-empty">暂无公告</p>') + '</section></div></div>';
 
-        if (silent && el.querySelector('.x-cards5')) patchSre(el, html); else mount(el, html);
-        if (cluster) loadSreMetrics(cluster, clusters, nodes, el, seq, context, contextSnapshot);
+        var scrollY = window.scrollY;
+        mount(el, html);
+        if (silent) window.scrollTo(0, scrollY);
+        loadSreMetrics(cluster, clusters, nodes, el, seq, null, null);
 
-        [].slice.call(el.querySelectorAll(".x-go")).forEach(function (target) {
-          var open = function () { var hash = target.getAttribute("data-go"); if (hash) goHash(hash); };
-          target.onclick = function (event) { if (!event.target.closest("a,button")) open(); };
-          target.onkeydown = function (event) {
-            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
-          };
+        [].slice.call(el.querySelectorAll(".x-go")).forEach(function (t) {
+          t.onclick = function () { goHash(t.getAttribute("data-go")); };
+          t.onkeydown = function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goHash(t.getAttribute("data-go")); } };
         });
-        [].slice.call(el.querySelectorAll("[data-goto]")).forEach(function (button) {
-          button.onclick = function () { goHash(button.getAttribute("data-goto")); };
+        [].slice.call(el.querySelectorAll("[data-goto]")).forEach(function (b) { b.onclick = function () { goHash(b.getAttribute("data-goto")); }; });
+        [].slice.call(el.querySelectorAll("[data-ks-sort]")).forEach(function (b) {
+          b.onclick = function () { el.__ksSort = b.getAttribute("data-ks-sort"); renderSreLive(el, true); };
         });
-        [].slice.call(el.querySelectorAll("[data-sre-alert-open]")).forEach(function (button) {
-          button.onclick = function () {
-            var id = button.getAttribute("data-sre-alert-open");
-            if (id && typeof window.XSOpenAlertDetail === "function") window.XSOpenAlertDetail(id);
-            else if (id) goHash("#/observe/events/" + encodeURIComponent(id));
-            else goHash("#/observe/events");
-          };
+        var sel = el.querySelector("[data-ks-cluster]");
+        if (sel) sel.onchange = function () {
+          try { localStorage.setItem("xs.overview.cluster", sel.value); } catch (e) {}
+          var c = clusters.filter(function (x) { return String(x.id) === sel.value; })[0];
+          if (c && context && typeof context.set === "function") { try { context.set({ kind: "cluster", cluster_id: c.id, name: c.name || ("#" + c.id), env: c.env || "dev" }); } catch (e) {} }
+          renderSreLive(el); };
+        [].slice.call(el.querySelectorAll("[data-sre-alert-open]")).forEach(function (b) {
+          b.onclick = function () { var id = b.getAttribute("data-sre-alert-open");
+            if (id && typeof window.XSOpenAlertDetail === "function") window.XSOpenAlertDetail(id); else goHash("#/observe/events"); };
         });
         var add = el.querySelector("[data-nadd]");
         if (add) add.onclick = function () { noticeDialog(renderSreLive.bind(null, el)); };
-        [].slice.call(el.querySelectorAll("[data-ndel]")).forEach(function (button) {
-          button.onclick = function () {
-            if (!confirm("删除这条公告？")) return;
-            doAction(apiDel("/platform/notices/" + encodeURIComponent(button.getAttribute("data-ndel"))),
-              "已删除公告", function () { renderSreLive(el); });
-          };
+        [].slice.call(el.querySelectorAll("[data-ndel]")).forEach(function (b) {
+          b.onclick = function () { if (!confirm("删除这条公告？")) return;
+            doAction(apiDel("/platform/notices/" + encodeURIComponent(b.getAttribute("data-ndel"))), "已删除公告", function () { renderSreLive(el); }); };
         });
         setTimeout(function tick() {
           if (!isCurrent()) return;
           if (document.hidden) { setTimeout(tick, 5000); return; }
           renderSreLive(el, true);
-        }, 15000);
-      }).catch(function (err) {
-        if (!isCurrent()) return;
-        if (isAuthErr(err)) return kickLogin();
-        mount(el, shell("总览", "当前集群容量、节点负载、变更与告警", "") + errorPanel(err));
+        }, smp.length < 3 ? 4000 : 15000);
       });
     }).catch(function (err) {
       if (!isCurrent()) return;
       if (isAuthErr(err)) return kickLogin();
-      mount(el, shell("总览", "当前集群容量、节点负载、变更与告警", "") + errorPanel(err));
+      mount(el, shell(TITLE, DESC, "") + errorPanel(err));
     });
   }
 
@@ -1538,7 +1634,9 @@
       var message = sreMetricError(err);
       setSreMetric(el, "cpu", null, message);
       setSreMetric(el, "mem", null, message);
-      if (chart && chart.isConnected) chart.innerHTML = '<p class="x-aerr" role="alert" style="text-align:center;padding-top:82px">' + gEsc(message) + '</p>';
+      if (chart && chart.isConnected) chart.innerHTML = Number(err && err.status) === 404 ?
+        '<div class="x-empty" style="padding-top:24px;text-align:center"><p style="margin:0 0 12px">未接入 Prometheus</p><button class="x-btn x-btn--pri" type="button" onclick="location.hash=\'#/cluster/integrations\'">接入数据源</button></div>' :
+        '<p class="x-aerr" role="alert" style="text-align:center;padding-top:82px">' + gEsc(message) + '</p>';
     }
     if (!observe || typeof observe.resolvedDatasource !== "function" || typeof observe.metricQueries !== "function") {
       failAll(new Error("Prometheus 数据源归属校验器不可用"));
