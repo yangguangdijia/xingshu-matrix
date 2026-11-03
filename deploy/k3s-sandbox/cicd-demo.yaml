@@ -68,8 +68,9 @@ spec:
             - { name: src, mountPath: /src }
       containers:
         - name: daemon
-          image: alpine/git:2.45.2
-          command: ["git", "daemon", "--reuseaddr", "--export-all", "--enable=receive-pack", "--base-path=/srv", "--listen=0.0.0.0", "--port=9418", "/srv"]
+          image: alpine:3.20
+          # alpine/git 不带 git-daemon，这里在启动时安装（仅沙箱）
+          command: ["sh", "-c", "apk add -q --no-cache git-daemon && exec git daemon \"$@\"", "--", "--reuseaddr", "--export-all", "--enable=receive-pack", "--base-path=/srv", "--listen=0.0.0.0", "--port=9418", "/srv"]
           ports: [{ containerPort: 9418 }]
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 64Mi } }
           volumeMounts: [{ name: repo, mountPath: /srv }]

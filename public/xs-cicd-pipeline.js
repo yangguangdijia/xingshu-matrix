@@ -161,7 +161,7 @@
   }
   function formatLog(line, names) {
     var stage = Number(line.stage), label = isFinite(stage) && stage >= 0 ? (names[stage] || "阶段 " + (stage + 1)) : "系统";
-    return "[" + (line.ts ? date(line.ts) : "—") + "] [" + label + "] " + String(line.line || "");
+    return "[" + (line.ts ? date(line.ts) : "—") + "] [" + label + "] " + String(line.line || "").replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "");
   }
 
   function createView(el) {
@@ -276,7 +276,7 @@
             (state.run && String(state.run.id) === String(r.id) ? ' aria-current="true"' : "") +
             '><span class="x-cicd-history-top"><strong>#' + escapeHTML(r.id) + '</strong>' + status(r.status) +
             '</span><span>' + date(r.started_at || r.created_at) + '</span><span>' + val(r.branch) +
-            ' · ' + (r.started_at ? escapeHTML(duration(r.started_at, r.finished_at)) : "—") + '</span></button></li>';
+            ' · ' + (r.started_at ? escapeHTML(duration(r.started_at, r.finished_at)) : "—") + ' · ' + triggerText(r.trigger) + '</span></button></li>';
         }).join("") + '</ol>' : '<p class="x-cicd-empty">还没有运行记录。运行流水线后可查看阶段和日志。</p>') +
         '<p class="x-cicd-muted">仅显示最近 50 次运行。</p></aside>';
     }
@@ -333,7 +333,7 @@
       function load(key, path, keys, query) {
         return get(path, query).then(function (data) {
           if (!active(token)) return;
-          state[key] = pl && key === "apps" ? [data] : array(data, [key].concat(keys));
+          state[key] = pl && key === "apps" ? [data] : array(data, ["items", key].concat(keys));
           delete state.relatedErrors[key];
           paint();
         }).catch(function (err) {
@@ -674,7 +674,11 @@
       if (action === "select-run") selectRun(id);
       if (action === "run") runModal(id);
       if (action === "create" || action === "edit") pipelineEditor(action === "edit" ? itemById(state.pipelines, id) : null);
-      if (action === "new-target") connectionEditor("target");
+      if (action === "new-target") {
+        // 执行集群只能引用「集群管理」中已注册的集群（后端不再接受 kubeconfig）
+        if (window.XSLiveOpsCICD && typeof window.XSLiveOpsCICD.targetModal === "function") window.XSLiveOpsCICD.targetModal(load);
+        else if (root.XS && root.XS.toast) root.XS.toast("执行集群接入模块不可用");
+      }
       if (action === "new-jenkins") connectionEditor("jenkins");
       if (action === "delete-target") removeConnection("target", id);
       if (action === "delete-jenkins") removeConnection("jenkins", id);
