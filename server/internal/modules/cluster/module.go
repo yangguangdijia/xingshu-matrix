@@ -493,15 +493,15 @@ func (h registryApprovalHandler) OnRejected(ctx context.Context, ticket *approva
 
 func (m *Module) executeRegistryChange(ctx context.Context, id, applicantID int64, expectedEnv string) (any, error) {
 	var row registryChangeRow
-	var clusterID int64
+	var clusterID *int64 // NULL for "create" changes
 	err := m.d.DB.QueryRow(ctx, `SELECT id,env,action,cluster_id,cluster,applicant_id,payload_enc
 		FROM cluster_registry_changes WHERE id=$1 AND expires_at>now()`, id).
 		Scan(&row.ID, &row.Env, &row.Action, &clusterID, &row.Cluster, &row.ApplicantID, &row.PayloadEnc)
 	if err != nil {
 		return nil, httpx.Conflict("集群注册审批暂存已失效或不存在")
 	}
-	if clusterID > 0 {
-		row.ClusterID = &clusterID
+	if clusterID != nil && *clusterID > 0 {
+		row.ClusterID = clusterID
 	}
 	if row.ApplicantID != applicantID || row.Env != expectedEnv || m.d.RBAC == nil {
 		return nil, httpx.Conflict("集群注册审批身份或环境已变更")
