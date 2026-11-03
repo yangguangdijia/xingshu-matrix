@@ -4,7 +4,9 @@
 package auth
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"unicode"
 	"unicode/utf8"
 
@@ -39,8 +41,9 @@ var ErrWeakPassword = errors.New("weak password")
 // ValidatePassword enforces the platform password policy: 8-72 bytes, at least
 // three of {lowercase, uppercase, digit, symbol}, and not containing the username.
 func ValidatePassword(pw, username string) error {
-	if utf8.RuneCountInString(pw) < 8 || len(pw) > 72 {
-		return httpx.Validation("密码长度需为 8-72 位")
+	pol := CurrentPolicy(context.Background())
+	if utf8.RuneCountInString(pw) < pol.PasswordMinLength || len(pw) > 72 {
+		return httpx.Validation(fmt.Sprintf("密码长度需为 %d-72 位", pol.PasswordMinLength))
 	}
 	var lower, upper, digit, symbol bool
 	for _, r := range pw {
@@ -63,8 +66,8 @@ func ValidatePassword(pw, username string) error {
 			classes++
 		}
 	}
-	if classes < 3 {
-		return httpx.Validation("密码需至少包含大写字母、小写字母、数字、符号中的三类")
+	if classes < pol.PasswordMinClasses {
+		return httpx.Validation(fmt.Sprintf("密码需至少包含大写字母、小写字母、数字、符号中的 %d 类", pol.PasswordMinClasses))
 	}
 	if username != "" && len(username) >= 3 && containsFold(pw, username) {
 		return httpx.Validation("密码不能包含用户名")
@@ -88,4 +91,8 @@ func toLower(s string) string {
 		r[i] = unicode.ToLower(r[i])
 	}
 	return string(r)
+}
+
+func policyRangeError(name string, lo, hi int) error {
+	return httpx.Validation(fmt.Sprintf("%s需在 %d-%d 之间", name, lo, hi))
 }

@@ -1,0 +1,150 @@
+# 轻量监控栈（沙箱/小集群用）：Prometheus + node-exporter + kube-state-metrics。
+# 生产环境请通过「组件目录」安装 kube-prometheus-stack 或接入已有 Prometheus。
+apiVersion: v1
+kind: Namespace
+metadata: { name: monitoring }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: prometheus, namespace: monitoring }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: xs-prometheus }
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/metrics, nodes/proxy, services, endpoints, pods]
+    verbs: [get, list, watch]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - nonResourceURLs: [/metrics, /metrics/cadvisor]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: xs-prometheus }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: xs-prometheus }
+subjects: [{ kind: ServiceAccount, name: prometheus, namespace: monitoring }]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: prometheus-config, namespace: monitoring }
+data:
+  prometheus.yml: |
+    global: { scrape_interval: 30s, evaluation_interval: 30s }
+    scrape_configs:
+      - job_name: node-exporter
+        kubernetes_sd_configs: [{ role: pod, namespaces: { names: [monitoring] } }]
+        relabel_configs:
+          - { source_labels: [__meta_kubernetes_pod_label_app], regex: node-exporter, action: keep }
+          - { source_labels: [__meta_kubernetes_pod_host_ip], target_label: __address__, replacement: "$1:9100" }
+          - { source_labels: [__meta_kubernetes_pod_node_name], target_label: node }
+      - job_name: kube-state-metrics
+        kubernetes_sd_configs: [{ role: pod, namespaces: { names: [monitoring] } }]
+        relabel_configs:
+          - { source_labels: [__meta_kubernetes_pod_label_app], regex: kube-state-metrics, action: keep }
+          - { source_labels: [__meta_kubernetes_pod_ip], target_label: __address__, replacement: "$1:8080" }
+        honor_labels: true
+      - job_name: kubelet-cadvisor
+        scheme: https
+        metrics_path: /metrics/cadvisor
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config: { insecure_skip_verify: true }
+        kubernetes_sd_configs: [{ role: node }]
+        relabel_configs:
+          - { source_labels: [__meta_kubernetes_node_name], target_label: node }
+      - job_name: kubelet
+        scheme: https
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config: { insecure_skip_verify: true }
+        kubernetes_sd_configs: [{ role: node }]
+        relabel_configs:
+          - { source_labels: [__meta_kubernetes_node_name], target_label: node }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: prometheus, namespace: monitoring, labels: { app: prometheus } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: prometheus } }
+  template:
+    metadata: { labels: { app: prometheus } }
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: quay.io/prometheus/prometheus:v3.7.3
+          args: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.path=/prometheus, --storage.tsdb.retention.time=3d, --storage.tsdb.retention.size=300MB, --web.enable-lifecycle]
+          ports: [{ containerPort: 9090, name: web }]
+          resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
+          readinessProbe: { httpGet: { path: /-/ready, port: 9090 }, periodSeconds: 10 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus }
+            - { name: data, mountPath: /prometheus }
+      volumes:
+        - { name: config, configMap: { name: prometheus-config } }
+        - { name: data, emptyDir: { sizeLimit: 400Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: prometheus, namespace: monitoring, labels: { app: prometheus } }
+spec:
+  selector: { app: prometheus }
+  ports: [{ name: web, port: 9090, targetPort: 9090 }]
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: { name: node-exporter, namespace: monitoring, labels: { app: node-exporter } }
+spec:
+  selector: { matchLabels: { app: node-exporter } }
+  template:
+    metadata: { labels: { app: node-exporter } }
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+        - name: node-exporter
+          image: quay.io/prometheus/node-exporter:v1.10.2
+          args: [--path.procfs=/host/proc, --path.sysfs=/host/sys, --web.listen-address=:9100]
+          resources: { requests: { cpu: 10m, memory: 24Mi }, limits: { memory: 64Mi } }
+          volumeMounts:
+            - { name: proc, mountPath: /host/proc, readOnly: true }
+            - { name: sys, mountPath: /host/sys, readOnly: true }
+      volumes:
+        - { name: proc, hostPath: { path: /proc } }
+        - { name: sys, hostPath: { path: /sys } }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: kube-state-metrics, namespace: monitoring }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: xs-kube-state-metrics }
+rules:
+  - apiGroups: ["", apps, batch, autoscaling, policy, networking.k8s.io, storage.k8s.io, coordination.k8s.io, discovery.k8s.io, certificates.k8s.io, admissionregistration.k8s.io]
+    resources: ["*"]
+    verbs: [list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: xs-kube-state-metrics }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: xs-kube-state-metrics }
+subjects: [{ kind: ServiceAccount, name: kube-state-metrics, namespace: monitoring }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: kube-state-metrics, namespace: monitoring, labels: { app: kube-state-metrics } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: kube-state-metrics } }
+  template:
+    metadata: { labels: { app: kube-state-metrics } }
+    spec:
+      serviceAccountName: kube-state-metrics
+      containers:
+        - name: kube-state-metrics
+          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.17.0
+          ports: [{ containerPort: 8080, name: http }]
+          resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 128Mi } }

@@ -44,6 +44,13 @@ const aadPrefix = "settings:"
 // ValidKey reports whether k is a valid setting key.
 func ValidKey(k string) bool { return len(k) <= 128 && keyRe.MatchString(k) }
 
+// Validators checks values of well-known keys before they are stored; OnChange
+// hooks run after a key is written or deleted. Both are filled at start-up.
+var (
+	Validators = map[string]func(json.RawMessage) error{}
+	OnChange   = map[string]func(){}
+)
+
 func moduleManagedKey(k string) bool {
 	return k == "platform.domain" || k == "aiops.policy" || k == "provision.registry_mirror" || k == "notify" || strings.HasPrefix(k, "notify.")
 }
@@ -201,6 +208,12 @@ func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 		if !httpx.Bind(c, &in) {
 			return
 		}
+		if v := Validators[key]; v != nil {
+			if err := v(in.Value); err != nil {
+				httpx.Fail(c, err)
+				return
+			}
+		}
 		audit.SetResource(c, "settings", key)
 		if !in.Secret {
 			audit.SetDetail(c, gin.H{"value": in.Value})
@@ -209,6 +222,9 @@ func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 		if err != nil {
 			httpx.Fail(c, err)
 			return
+		}
+		if fn := OnChange[key]; fn != nil {
+			fn()
 		}
 		httpx.OK(c, st)
 	})
@@ -222,6 +238,9 @@ func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 		if err := s.Delete(c.Request.Context(), key); err != nil {
 			httpx.Fail(c, err)
 			return
+		}
+		if fn := OnChange[key]; fn != nil {
+			fn()
 		}
 		httpx.OK(c, gin.H{"key": key})
 	})

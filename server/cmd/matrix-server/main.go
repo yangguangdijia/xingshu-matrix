@@ -178,6 +178,7 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 
 	approvalSvc := approval.New(&approval.PgRepo{DB: pool}, rbacSvc, log.With("component", "approval"))
 	settingsSvc := &settings.Service{DB: pool, Cipher: cipher}
+	registerPolicies(settingsSvc)
 	usersSvc := &users.Service{DB: pool, RBAC: rbacSvc, Sessions: authSvc}
 
 	tools := ai.NewToolRegistry()
@@ -217,6 +218,7 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 		}
 	}
 	go purgeSessions(ctx, authRepo, log)
+	go purgeByRetention(ctx, pool, settingsSvc, log.With("component", "retention"))
 
 	srv := &http.Server{
 		Addr: cfg.Server.Listen, Handler: engine,

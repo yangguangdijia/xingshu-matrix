@@ -96,9 +96,20 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	if u.LockedUntil != nil && u.LockedUntil.After(now) {
 		return nil, nil, lockedError(*u.LockedUntil, now)
 	}
+	pol := CurrentPolicy(ctx)
+	maxFail, lockFor, sessTTL := s.opts.MaxLoginFailures, s.opts.LockoutDuration, s.opts.RefreshTTL
+	if pol.MaxLoginFailures > 0 {
+		maxFail = pol.MaxLoginFailures
+	}
+	if pol.LockoutMinutes > 0 {
+		lockFor = time.Duration(pol.LockoutMinutes) * time.Minute
+	}
+	if pol.SessionHours > 0 {
+		sessTTL = time.Duration(pol.SessionHours) * time.Hour
+	}
 	if !VerifyPassword(u.PasswordHash, password) {
-		until := now.Add(s.opts.LockoutDuration)
-		failures, locked, err := s.repo.RecordLoginFailure(ctx, u.ID, s.opts.MaxLoginFailures, until)
+		until := now.Add(lockFor)
+		failures, locked, err := s.repo.RecordLoginFailure(ctx, u.ID, maxFail, until)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -106,7 +117,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 			s.log.Warn("account locked after repeated login failures", "user", u.Username, "ip", ip)
 			return nil, nil, lockedError(until, now)
 		}
-		return nil, nil, errBadCredentials.WithDetails(map[string]any{"remaining_attempts": s.opts.MaxLoginFailures - failures})
+		return nil, nil, errBadCredentials.WithDetails(map[string]any{"remaining_attempts": maxFail - failures})
 	}
 	if u.Status != "active" {
 		return nil, nil, errDisabled
@@ -114,7 +125,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	if err := s.repo.RecordLoginSuccess(ctx, u.ID, ip); err != nil {
 		return nil, nil, err
 	}
-	sess := &Session{ID: NewSessionID(), UserID: u.ID, UserAgent: truncate(userAgent, 512), IP: ip, ExpiresAt: now.Add(s.opts.RefreshTTL)}
+	sess := &Session{ID: NewSessionID(), UserID: u.ID, UserAgent: truncate(userAgent, 512), IP: ip, ExpiresAt: now.Add(sessTTL)}
 	refresh, hash := NewRefreshToken(sess.ID)
 	sess.RefreshHash = hash
 	if err := s.repo.CreateSession(ctx, sess); err != nil {
