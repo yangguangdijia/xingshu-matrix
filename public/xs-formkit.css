@@ -75,3 +75,5 @@
 .fk-foot { display: flex; align-items: center; gap: 8px; padding: 12px 24px 16px; border-top: 1px solid var(--x-line); margin-top: 8px; }
 .fk-foot-l { flex: 1; display: flex; gap: 8px; }
 @media (max-width: 640px) { .fk-grid { grid-template-columns: 1fr; } .fk-modal { top: 0; max-height: 100vh; border-radius: 0; width: 100vw; } }
+.fk-tabs--none { border-bottom: 0; margin-top: 0; }
+a.x-btn { text-decoration: none; display: inline-flex; align-items: center; }

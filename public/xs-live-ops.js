@@ -3072,7 +3072,7 @@
   }
 
   function deliveryList(el, helmEnv) {
-    var p = livePage(el, "应用", "CI/CD 应用列表与环境配置", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newapp>接入 Git 仓库</button>', "");
+    var p = livePage(el, "应用", "CI/CD 应用列表与环境配置", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newapp>+ 从代码仓库创建</button>', "");
     el.querySelector("[data-refresh]").onclick = function () { deliveryList(el); };
     el.querySelector("[data-newapp]").onclick = function () { appModal(function () { deliveryList(el); }); };
     var searchText = "", selectedEnv = "", applicationList = [];
@@ -3116,7 +3116,7 @@
         ]);
         var html = panelHTML("应用", filters + (rows.length
           ? tbl(["应用", "代码仓库", "默认分支", "镜像仓库", "部署环境", "更新时间", "操作"], rows)
-          : emptyHTML(applicationList.length ? "没有符合当前筛选条件的应用。" : "尚未创建应用。点击右上角「+ 新建应用」接入代码仓库与镜像仓库。")));
+          : emptyHTML(applicationList.length ? "没有符合当前筛选条件的应用。" : "尚未创建应用。点击右上角「+ 从代码仓库创建」，填写仓库地址、构建与部署环境即可。")));
         if (!p.paint(token, html)) return;
         var search = p.box.querySelector("[data-app-search]");
         var env = p.box.querySelector("[data-app-env]");
@@ -3150,6 +3150,7 @@
   }
 
   function appModal(done, app, initial) {
+    if (window.XSCICDForms && window.XSFormKit) return window.XSCICDForms.appForm(app && app.id != null ? app : null, done, initial);
     var editing = !!(app && app.id != null), source = assign({}, app || {}, initial || {});
     var defaultEnvs = editing ? (app.envs || []) : [{ name: "test", target_id: 1, namespace: "web-test", deployment: "web", container: "app" }];
     var envs = initial && initial.envs ? initial.envs : defaultEnvs;

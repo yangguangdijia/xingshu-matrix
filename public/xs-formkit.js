@@ -118,7 +118,8 @@
       default:
         ctl = '<input class="x-input' + (f.mono ? " x-mono" : "") + '" type="' + (f.type === "number" ? "number" : "text") + '"' + name + ph +
           (f.min != null ? ' min="' + f.min + '"' : "") + (f.max != null ? ' max="' + f.max + '"' : "") +
-          ' value="' + esc(val == null ? "" : val) + '"' + (f.readonly ? " readonly" : "") + ">";
+          ' value="' + esc(val == null ? "" : val) + '"' + (f.readonly ? " readonly" : "") + (f.options ? ' list="' + id + "-dl-" + esc(f.k) + '"' : "") + ">" +
+          (f.options ? '<datalist id="' + id + "-dl-" + esc(f.k) + '">' + opts(f.options).map(function (o) { return '<option value="' + esc(o.v) + '">' + esc(o.t) + "</option>"; }).join("") + "</datalist>" : "");
     }
     var extra = f.button ? '<button type="button" class="x-btn fk-inline-btn" data-fk-btn="' + esc(f.k) + '">' + esc(f.button.label) + "</button>" : "";
     return '<div class="fk-field' + (f.full || ["textarea", "code", "radio", "kv", "list", "checks"].indexOf(f.type) >= 0 ? " fk-full" : "") + '" data-fk-wrap="' + esc(f.k) + '"' + (visible(f, v) ? "" : " hidden") + ">" +
@@ -135,7 +136,7 @@
     it = it || {};
     return '<div class="fk-item" data-fk-item="' + i + '"><div class="fk-item-head"><b>' + esc((f.itemTitle || "项") + " " + (i + 1)) + "</b>" +
       '<button type="button" class="x-btn fk-del" data-fk-del aria-label="删除">移除</button></div><div class="fk-grid">' +
-      (f.item || []).map(function (sub) { return fieldHTML(sub, it, ""); }).join("") + "</div></div>";
+      (f.item || []).map(function (sub) { return fieldHTML(sub, it, "li" + i); }).join("") + "</div></div>";
   }
 
   /* ---------------------------------------------------------- reading */
@@ -228,13 +229,13 @@
       '<button type="button" class="fk-x" data-fk-close aria-label="关闭">×</button></header>' +
       (canAI ? '<div class="fk-ai"><span class="fk-ai-tag">AI</span><input class="x-input" data-fk-ai placeholder="' + esc(spec.aiExample ? "用一句话描述，例如：" + spec.aiExample : "用一句话描述要创建的内容") + '">' +
         '<button type="button" class="x-btn" data-fk-aigo>生成</button></div><p class="fk-ai-status" data-fk-aistatus role="status"></p>' : "") +
-      '<div class="fk-tabs" role="tablist"><button type="button" role="tab" class="on" data-fk-mode="form">可视化表单</button>' +
-      (spec.toObject ? '<button type="button" role="tab" data-fk-mode="yaml">YAML' + (spec.fromObject ? "（可编辑）" : "（预览）") + "</button>" : "") + "</div>" +
+      (spec.toObject ? '<div class="fk-tabs" role="tablist"><button type="button" role="tab" class="on" data-fk-mode="form">可视化表单</button>' +
+        '<button type="button" role="tab" data-fk-mode="yaml">YAML' + (spec.fromObject ? "（可编辑）" : "（预览）") + "</button></div>" : '<div class="fk-tabs fk-tabs--none"></div>') +
       '<div class="fk-body"><div class="fk-form" data-fk-root></div><div class="fk-yaml" hidden><textarea class="x-input fk-code" spellcheck="false" data-fk-yaml' + (spec.fromObject ? "" : " readonly") + '></textarea>' +
       '<p class="fk-help">' + (spec.fromObject ? "可直接修改 YAML，切回表单或提交时会解析校验。密码类字段以 ****** 显示，保持不变即沿用表单中的值。" : "由表单生成，仅供预览。") + "</p></div></div>" +
       '<p class="fk-status" data-fk-status role="alert" hidden></p>' +
       '<footer class="fk-foot"><span class="fk-foot-l">' + (spec.actions || []).map(function (a, i) { return '<button type="button" class="x-btn" data-fk-act="' + i + '">' + esc(a.label) + "</button>"; }).join("") + "</span>" +
-      '<button type="button" class="x-btn" data-fk-close>取消</button>' +
+      (spec.noCancel ? "" : '<button type="button" class="x-btn" data-fk-close>取消</button>') +
       (wizard ? '<button type="button" class="x-btn" data-fk-prev hidden>上一步</button><button type="button" class="x-btn x-btn--pri" data-fk-next>下一步</button>' : "") +
       '<button type="button" class="x-btn x-btn--pri" data-fk-submit' + (wizard ? " hidden" : "") + ">" + esc(spec.okText || "创建") + "</button></footer>";
     document.body.appendChild(mask);
@@ -252,18 +253,25 @@
     }
     function close() {
       document.removeEventListener("keydown", onKey, true);
+      root.removeEventListener("hashchange", onHash);
       mask.remove(); box.remove();
       if (prevFocus && prevFocus.focus) try { prevFocus.focus(); } catch (e) {}
     }
     function onKey(e) { if (e.key === "Escape" && !busy) { e.stopPropagation(); close(); } }
     document.addEventListener("keydown", onKey, true);
+    function onHash() { if (!busy) close(); }
+    root.addEventListener("hashchange", onHash);
 
     function render() {
       var secs = spec.sections || [];
+      lastSecKey = visibleSteps().join(",");
       var html = "";
       if (wizard) {
-        html += '<ol class="fk-steps">' + secs.map(function (s, i) {
-          return '<li class="' + (i === stepIdx ? "on" : i < stepIdx ? "done" : "") + '"><button type="button" data-fk-step="' + i + '"><i>' + (i < stepIdx ? "✓" : i + 1) + "</i>" + esc(s.title) + "</button></li>";
+        var vis = visibleSteps();
+        if (vis.indexOf(stepIdx) < 0) stepIdx = vis.filter(function (i) { return i < stepIdx; }).pop() || vis[0];
+        html += '<ol class="fk-steps">' + vis.map(function (i, n) {
+          var s = secs[i];
+          return '<li class="' + (i === stepIdx ? "on" : i < stepIdx ? "done" : "") + '"><button type="button" data-fk-step="' + i + '"><i>' + (i < stepIdx ? "✓" : n + 1) + "</i>" + esc(s.title) + "</button></li>";
         }).join("") + "</ol>";
       }
       html += secs.map(function (s, i) {
@@ -274,9 +282,10 @@
       }).join("");
       form.innerHTML = html;
       if (wizard) {
-        box.querySelector("[data-fk-prev]").hidden = stepIdx === 0;
-        box.querySelector("[data-fk-next]").hidden = stepIdx === secs.length - 1;
-        box.querySelector("[data-fk-submit]").hidden = stepIdx !== secs.length - 1;
+        var vs = visibleSteps(), last = vs[vs.length - 1];
+        box.querySelector("[data-fk-prev]").hidden = stepIdx === vs[0];
+        box.querySelector("[data-fk-next]").hidden = stepIdx === last;
+        box.querySelector("[data-fk-submit]").hidden = stepIdx !== last;
       }
       bind();
       (spec.sections || []).forEach(function (s) {
@@ -284,6 +293,15 @@
       });
     }
 
+    function visibleSteps() {
+      var out = [];
+      (spec.sections || []).forEach(function (s, i) { if (typeof s.show !== "function" || s.show(values)) out.push(i); });
+      return out;
+    }
+    function stepMove(d) {
+      var vs = visibleSteps(), at = vs.indexOf(stepIdx);
+      stepIdx = vs[Math.max(0, Math.min(vs.length - 1, at + d))];
+    }
     function loadOptions(f) {
       f._loaded = true;
       Promise.resolve().then(function () { return f.load(values); }).then(function (list) {
@@ -308,13 +326,16 @@
         var w = form.querySelector('[data-fk-wrap="' + f.k + '"]');
         if (w) w.hidden = !visible(f, values);
       });
-      if ((spec.sections || []).some(function (s) { return typeof s.show === "function"; })) render();
+      var key = visibleSteps().join(",");
+      if (key !== lastSecKey) render();
     }
+    var lastSecKey = "";
 
     function bind() {
       [].forEach.call(form.querySelectorAll("input,select,textarea"), function (el) {
         el.addEventListener("change", function () {
           var k = el.getAttribute("data-fk");
+          if (el.closest(".fk-item") && el.tagName === "SELECT") { sync(); render(); return; }
           var f = k && allFields(spec).filter(function (x) { return x.k === k; })[0];
           refreshVisibility();
           if (f && typeof f.onChange === "function") { f.onChange(values, api_); }
@@ -490,8 +511,8 @@
     (spec.actions || []).forEach(function (a, i) { box.querySelector('[data-fk-act="' + i + '"]').onclick = function () { run(a.run, this); }; });
     [].forEach.call(box.querySelectorAll("[data-fk-close]"), function (b) { b.onclick = function () { if (!busy) close(); }; });
     if (wizard) {
-      box.querySelector("[data-fk-next]").onclick = function () { if (checkStep()) { stepIdx++; render(); } };
-      box.querySelector("[data-fk-prev]").onclick = function () { sync(); stepIdx--; render(); };
+      box.querySelector("[data-fk-next]").onclick = function () { if (checkStep()) { stepMove(1); render(); } };
+      box.querySelector("[data-fk-prev]").onclick = function () { sync(); stepMove(-1); render(); };
     }
 
     if (canAI) {

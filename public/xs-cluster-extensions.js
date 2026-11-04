@@ -403,6 +403,11 @@
 
   function openWorkloadForm(args) {
     if (!can("workload:write")) return runtime.toast("需要 workload:write 权限");
+    if (root.XSWorkloadWizard && root.XSFormKit) {
+      return root.XSWorkloadWizard.open(Object.assign({}, args, { runtime: {
+        apiPost: runtime.apiPost, apiGet: runtime.apiGet, applyIssue: applyIssue, toast: runtime.toast
+      } }), function () { if (!runtime.alive || runtime.alive(args.seq, args.el)) runtime.repaint(); });
+    }
     var namespaces = args.namespaces || [];
     var kind = args.kind === "deployments" ? "Deployment" : args.kind === "statefulsets" ? "StatefulSet" :
       args.kind === "daemonsets" ? "DaemonSet" : args.kind === "jobs" ? "Job" : args.kind === "cronjobs" ? "CronJob" : "Pod";

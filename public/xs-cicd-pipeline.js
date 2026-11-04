@@ -4,7 +4,7 @@
 
   var root = window;
   var instances = new WeakMap();
-  var FIELD_FOR = { image: "build test script", registry_secret: "build", deploy_env: "deploy", jenkins_id: "jenkins", jenkins_job: "jenkins",
+  var FIELD_FOR = { image: "build test script", registry_secret: "build", registry_credential_id: "build", deploy_env: "deploy", jenkins_id: "jenkins", jenkins_job: "jenkins",
     commands: "test script", env: "build test script", params: "jenkins" };
   var ACTIVE = { queued: true, pending: true, running: true, cancelling: true };
   var LABEL = {
@@ -172,7 +172,7 @@
     }
     var state = {
       el: el, xs: xs, alive: true, seq: 0, runSeq: 0, logSeq: 0, controller: new AbortController(),
-      pipelines: [], apps: [], targets: [], jenkins: [], argos: [], selected: null, runs: [], run: null, runError: "", relatedErrors: {},
+      pipelines: [], apps: [], targets: [], jenkins: [], argos: [], creds: [], selected: null, runs: [], run: null, runError: "", relatedErrors: {},
       log: { rows: [], after: 0, more: false, busy: false, error: "", stage: "", search: "", follow: true },
       timer: null, modal: null, targetId: ""
     };
@@ -222,7 +222,8 @@
       var argoBody = window.XSLiveOpsCICD && typeof window.XSLiveOpsCICD.argoConnectionsHTML === "function"
         ? window.XSLiveOpsCICD.argoConnectionsHTML(state.argos)
         : '<p class="x-cicd-empty">Argo CD 接入模块不可用。</p>';
-      return '<div class="x-cicd-connections">' +
+      var credHTML = window.XSCICDForms ? window.XSCICDForms.credentialsPanelHTML(state.creds, state.relatedErrors.creds) : "";
+      return '<div class="x-cicd-connections">' + credHTML +
         connectionPanel("执行集群", "new-target",
           smallTable(["名称", "命名空间", "环境", "创建时间", "操作"], targetRows, "暂无执行集群。"), state.relatedErrors.targets) +
         connectionPanel("Jenkins", "new-jenkins",
@@ -265,6 +266,7 @@
         (rows || '<tr><td colspan="7" class="x-cicd-empty">暂无流水线。新建后会显示在这里。</td></tr>') +
         '</tbody></table></div></section>' + integrationsHTML() + modalHTML() + '</main>';
       var argoHost = el.querySelector(".x-cicd-connections .x-cicd-connection:last-child");
+      if (window.XSCICDForms && el.querySelector("[data-cred-new]")) window.XSCICDForms.bindCredentials(el, state.creds, load);
       if (argoHost && window.XSLiveOpsCICD && typeof window.XSLiveOpsCICD.bindArgoConnections === "function") {
         window.XSLiveOpsCICD.bindArgoConnections(argoHost, state.argos, load);
       }
@@ -346,10 +348,12 @@
       if (pl) {
         load("apps", "/cicd/applications/" + encodeURIComponent(pl.app_id), ["applications"]);
         load("targets", "/cicd/targets", ["targets"]);
+        load("creds", "/cicd/credentials", ["credentials"]);
         return;
       }
       load("apps", "/cicd/applications", ["applications"], { page: 1, page_size: 200 });
       load("targets", "/cicd/targets", ["targets"]);
+      load("creds", "/cicd/credentials", ["credentials"]);
       load("jenkins", "/cicd/jenkins", ["jenkins"]);
       load("argos", "/cicd/argocd", ["argocd"]);
     }
@@ -481,7 +485,12 @@
           ["build", "test", "script", "deploy", "jenkins"].map(function (type) {
             return '<option value="' + type + '"' + (t === type ? " selected" : "") + '>' + TYPE_LABEL[type] + '（' + type + '）</option>';
           }).join("") + '</select></label>' + editorField("镜像", "image", s.image, false, "text", t) +
-          editorField("镜像仓库 Secret", "registry_secret", s.registry_secret, false, "text", t) + editorField("部署环境", "deploy_env", s.deploy_env, false, "text", t) +
+          '<label data-for="build"' + (t === "build" ? "" : " hidden") + '>镜像推送凭证<select class="x-select" name="registry_credential_id"><option value="">不使用（公开或已配置 Secret）</option>' +
+            state.creds.filter(function (c) { return c.type === "registry"; }).map(function (c) {
+              return '<option value="' + escapeHTML(c.id) + '"' + (String(c.id) === String(s.registry_credential_id || "") ? " selected" : "") + '>' + escapeHTML(c.name + " · " + (c.host || "")) + '</option>';
+            }).join("") + '</select></label>' +
+          editorField("镜像仓库 Secret（高级）", "registry_secret", s.registry_secret, false, "text", t) +
+          '<label data-for="deploy"' + (t === "deploy" ? "" : " hidden") + '>部署环境<input class="x-input" name="deploy_env" list="x-cicd-envs" value="' + escapeHTML(s.deploy_env || "") + '" placeholder="应用里配置的环境名" /></label>' +
           editorField("Jenkins ID", "jenkins_id", s.jenkins_id, false, "number", t) + editorField("Jenkins Job", "jenkins_job", s.jenkins_job, false, "text", t) +
           editorField("超时（秒）", "timeout_sec", s.timeout_sec, false, "number") +
           area("命令（每行一条）", "commands", (s.commands || []).join("\n"), t) +
@@ -491,9 +500,14 @@
           '</fieldset>';
       }).join("");
       showModal('<div class="x-cicd-dialog-backdrop" data-action="close-modal"><section class="x-cicd-dialog x-cicd-dialog--wide" role="dialog" aria-modal="true" aria-label="' +
-        (existing ? "编辑" : "新建") + '流水线"><h2>' + (existing ? "编辑" : "新建") +
+        (existing && existing.id ? "编辑" : "新建") + '流水线"><h2>' + (existing && existing.id ? "编辑" : "新建") +
         '流水线</h2><form data-cicd-form="pipeline" data-mode="visual" data-id="' + escapeHTML(existing && existing.id || "") + '">' +
         '<div class="x-cicd-modebar" role="tablist"><button type="button" class="is-on" data-action="editor-mode" data-id="visual">可视化编排</button><button type="button" data-action="editor-mode" data-id="yaml">YAML</button></div>' +
+        '<datalist id="x-cicd-envs">' + envNames().map(function (n) { return '<option value="' + escapeHTML(n) + '"></option>'; }).join("") + '</datalist>' +
+        '<div class="fk-ai" style="margin:0 0 10px"><span class="fk-ai-tag">AI</span><input class="x-input" data-pl-ai placeholder="一句话描述，例如：给 shop-web 建流水线，先跑单元测试，再构建镜像推到 harbor，最后部署 test 环境" />' +
+        '<button class="x-btn" type="button" data-action="pipeline-ai">生成</button></div><p class="fk-ai-status" data-pl-ai-status role="status"></p>' +
+        (existing ? "" : '<div class="x-cicd-templates"><span class="x-cicd-muted">从模板开始：</span><button class="x-btn x-btn--sm" type="button" data-action="pipeline-tpl" data-id="full">测试 → 构建 → 部署</button>' +
+          '<button class="x-btn x-btn--sm" type="button" data-action="pipeline-tpl" data-id="build">仅构建镜像</button><button class="x-btn x-btn--sm" type="button" data-action="pipeline-tpl" data-id="jenkins">触发 Jenkins</button></div>') +
         '<div data-visual>' +
         editorField("流水线名称", "pipeline_name", existing && existing.name, true) + '<div class="x-cicd-editor-grid"><label>应用<select class="x-select" name="app_id">' +
         opts(state.apps, existing && existing.app_id) + '</select></label><label>执行集群<select class="x-select" name="runner_target_id">' +
@@ -502,7 +516,7 @@
         '</div><button class="x-btn" type="button" data-action="add-stage">添加阶段</button></div>' +
         '<div data-yaml hidden><textarea class="x-input x-cicd-yaml" name="yaml" rows="22" spellcheck="false"></textarea></div><p class="x-cicd-alert" data-form-error role="alert" hidden></p>' +
         '<footer><button class="x-btn" type="button" data-action="close-modal">取消</button><button class="x-btn x-btn--pri" type="submit">' +
-        (existing ? "保存" : "创建") + '</button></footer></form></section></div>');
+        (existing && existing.id ? "保存" : "创建") + '</button></footer></form></section></div>');
     }
     function editorField(title, name, value, required, type, stageType) {
       var forTypes = stageType != null && FIELD_FOR[name];
@@ -559,6 +573,59 @@
         }
       }).finally(function () { button.disabled = false; });
     }
+    function envNames() {
+      var names = [];
+      state.apps.forEach(function (a) { (a.envs || []).forEach(function (e) { if (e.name && names.indexOf(e.name) < 0) names.push(e.name); }); });
+      return names;
+    }
+    function pipelineTemplate(kind, form) {
+      var app = itemById(state.apps, form.elements.namedItem("app_id").value) || state.apps[0] || {};
+      var env = (app.envs || [])[0], reg = state.creds.filter(function (c) { return c.type === "registry"; })[0];
+      var build = { name: "image", type: "build" };
+      if (reg) build.registry_credential_id = reg.id;
+      var stages = kind === "jenkins" ? [{ name: "jenkins", type: "jenkins", jenkins_id: state.jenkins[0] && state.jenkins[0].id, jenkins_job: "" }]
+        : kind === "build" ? [build]
+        : [{ name: "unit-test", type: "test", image: "golang:1.23", commands: ["go test ./..."] }, build].concat(env ? [{ name: "deploy-" + env.name, type: "deploy", deploy_env: env.name }] : []);
+      pipelineEditor({ name: (app.name || "app") + "-ci", app_id: app.id, runner_target_id: state.targets[0] && state.targets[0].id, on_push: kind !== "jenkins", stages: stages });
+    }
+    function pipelineAI(form, button) {
+      var input = form.parentNode.querySelector("[data-pl-ai]") || el.querySelector("[data-pl-ai]"), st = el.querySelector("[data-pl-ai-status]");
+      var text = String(input && input.value || "").trim();
+      if (!text) { if (st) st.textContent = "先用一句话描述流水线要做什么。"; return; }
+      button.disabled = true; button.textContent = "生成中…"; if (st) st.textContent = "正在调用已配置的模型…";
+      var ctx = {
+        applications: state.apps.map(function (a) { return { id: a.id, name: a.name, envs: (a.envs || []).map(function (e) { return e.name; }) }; }),
+        runner_targets: state.targets.map(function (t) { return { id: t.id, name: t.name, env: t.env }; }),
+        registry_credentials: state.creds.filter(function (c) { return c.type === "registry"; }).map(function (c) { return { id: c.id, name: c.name, host: c.host }; }),
+        jenkins: state.jenkins.map(function (j) { return { id: j.id, name: j.name }; })
+      };
+      xs.post("/ai/assist", { scene: "cicd.pipeline.create", instruction: text + "\n\n可选资源：" + JSON.stringify(ctx), schema: {
+        name: "流水线名称，小写字母数字中划线", app_id: "应用 id（数字，取自可选资源 applications）", runner_target_id: "执行集群 id（数字，取自 runner_targets）", on_push: "布尔，代码推送是否自动触发",
+        stages: "阶段数组，每项 {name 小写中划线, type: build|test|script|deploy|jenkins, image（test/script 必填，如 golang:1.23、node:20、maven:3.9-eclipse-temurin-17、python:3.12）, commands 字符串数组（test/script）, registry_credential_id 数字（build 可选，取自 registry_credentials）, deploy_env（deploy 必填，取自应用的 envs）, jenkins_id, jenkins_job}"
+      } }).then(function (r) {
+        var f = r && r.fields || {};
+        if (!Array.isArray(f.stages) || !f.stages.length) throw new Error("模型没有给出阶段，请补充要做哪些步骤");
+        var stages = f.stages.filter(function (x) { return x && TYPE_LABEL[x.type]; }).map(function (x) {
+          var o = { name: String(x.name || x.type).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || x.type, type: x.type };
+          ["image", "deploy_env", "jenkins_job"].forEach(function (k) { if (x[k]) o[k] = String(x[k]); });
+          if (Array.isArray(x.commands)) o.commands = x.commands.map(String);
+          if (x.registry_credential_id && itemById(state.creds, x.registry_credential_id)) o.registry_credential_id = +x.registry_credential_id;
+          if (x.jenkins_id && itemById(state.jenkins, x.jenkins_id)) o.jenkins_id = +x.jenkins_id;
+          return o;
+        });
+        var cur = form.getAttribute("data-id") ? itemById(state.pipelines, form.getAttribute("data-id")) : null;
+        pipelineEditor(Object.assign({}, cur || {}, {
+          name: f.name || (cur && cur.name) || "", stages: stages, on_push: !!f.on_push,
+          app_id: itemById(state.apps, f.app_id) ? f.app_id : form.elements.namedItem("app_id").value,
+          runner_target_id: itemById(state.targets, f.runner_target_id) ? f.runner_target_id : form.elements.namedItem("runner_target_id").value
+        }));
+        var st2 = el.querySelector("[data-pl-ai-status]");
+        if (st2) st2.textContent = "已生成 " + stages.length + " 个阶段，请检查后保存；也可以切到 YAML 微调。";
+      }).catch(function (err) {
+        button.disabled = false; button.textContent = "生成";
+        if (st) st.textContent = /model|模型/i.test(message(err)) ? "尚未配置可用的 AI 模型，请到「设置 → AI 模型」接入。" : "生成失败：" + message(err);
+      });
+    }
     function mapText(data) { return Object.keys(data || {}).map(function (k) { return k + "=" + data[k]; }).join("\n"); }
     function parseMap(text) {
       var result = {};
@@ -578,6 +645,8 @@
         s.name = pick("name"); s.type = pick("type");
         if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(s.name)) throw new Error("阶段名称需为小写字母、数字或连字符");
         ["image", "registry_secret", "deploy_env", "jenkins_job"].forEach(function (key) { var v = pick(key); if (v) s[key] = v; else delete s[key]; });
+        var rc = pick("registry_credential_id");
+        if (rc && s.type === "build") s.registry_credential_id = +rc; else delete s.registry_credential_id;
         s.commands = pick("commands").split(/\r?\n/).map(function (v) { return v.trim(); }).filter(Boolean);
         s.env = parseMap(pick("env")); s.params = parseMap(pick("params"));
         var jid = pick("jenkins_id"), timeout = pick("timeout_sec");
@@ -680,6 +749,8 @@
         else if (root.XS && root.XS.toast) root.XS.toast("执行集群接入模块不可用");
       }
       if (action === "new-jenkins") connectionEditor("jenkins");
+      if (action === "pipeline-tpl") { var tf = el.querySelector('[data-cicd-form="pipeline"]'); if (tf) pipelineTemplate(id, tf); }
+      if (action === "pipeline-ai") { var af = el.querySelector('[data-cicd-form="pipeline"]'); if (af) pipelineAI(af, button); }
       if (action === "delete-target") removeConnection("target", id);
       if (action === "delete-jenkins") removeConnection("jenkins", id);
       if (action === "discover-jenkins") discoverJenkins(button);

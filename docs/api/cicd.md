@@ -36,6 +36,34 @@
 → 201 `{"id":1,"name":"ci-cluster","namespace":"matrix-cicd"}`。kubeconfig 先用 `clientcmd` 解析校验，再加密入库；`namespace` 为 Job 运行命名空间（需预先创建，且执行身份需能 create/get/delete Jobs、Secrets，list/get Pods、pods/log）。
 ### DELETE /cicd/targets/:id — `cicd:manage`（被流水线引用时 409）
 
+## 凭证（credentials）
+
+统一保存 Git 与镜像仓库凭证，密钥用平台密钥加密（`cicd_credentials.secret_enc`），任何接口都不返回明文。
+
+- GET `/cicd/credentials[?type=git|git_token|git_basic|ssh_key|registry]`（`cicd:read`）：返回 `{items,total}`，每项含 `has_secret`、`used_by`（被应用与流水线引用的次数）。
+- POST `/cicd/credentials`（`cicd:manage`）：
+```json
+{"name":"gitlab-ci","type":"git_token","username":"","secret":"glpat-xxx","description":"只读"}
+{"name":"git-bot","type":"git_basic","username":"bot","secret":"***"}
+{"name":"deploy-key","type":"ssh_key","secret":"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
+{"name":"harbor-ci","type":"registry","host":"harbor.example.com","username":"robot$ci","secret":"***"}
+```
+  `name` 为 DNS label；`git_basic`/`registry` 必须有用户名；`registry` 的 `host` 只填 `主机[:端口]`；`ssh_key` 必须是 PEM/OpenSSH 私钥。
+- PUT `/cicd/credentials/:id`：`type` 不可改；`secret` 省略或为空表示保留原值。
+- DELETE `/cicd/credentials/:id`：仍被应用（`credential_id`）或流水线构建阶段（`registry_credential_id`）引用时返回 409 `credential is in use`。
+
+引用方式：
+- 应用 `credential_id`（Git 类凭证）：`git_token`/`git_basic` 需要 http(s) 仓库，运行时把账号密码写入本次运行的临时 Secret 中的克隆地址；`ssh_key` 仓库地址可写 `git@host:org/repo.git` 或 `ssh://`，私钥以 0400 挂载到克隆容器并设置 `GIT_SSH_COMMAND`（`StrictHostKeyChecking=accept-new`）。旧版应用内嵌 `git_token` 仍可用，`credential_id` 优先。
+- 构建阶段 `registry_credential_id`：运行时生成 `.dockerconfigjson` 写入本次运行 Secret（键 `dockerconfig-<阶段序号>`），挂载到 Kaniko 的 `/kaniko/.docker/config.json`；优先于 `registry_secret`。
+- 运行 Secret `cicd-run-<id>` 在运行结束后删除；使用了凭证的阶段不回显克隆输出。
+
+## 代码仓库探测
+
+- POST `/cicd/repos/probe`（`cicd:read`）：`{"repo_url":"…","credential_id":0,"app_id":0}` → `{"branches":["main","develop"],"default_branch":"main","head":"<sha>"}`。
+  - https/http 走 Git smart HTTP（`info/refs?service=git-upload-pack`，10 秒超时，凭证不会被转发到跳转后的其他主机）；`git://` 走 git daemon 协议（9418）。
+  - 401/403 返回 `authentication failed: check the credential`；SSH 仓库不在服务端探测（返回 400，运行时用私钥克隆）。
+  - `app_id` 且仓库地址未变时，可沿用该应用已保存的凭证或旧版 Token。
+
 ## Jenkins 服务器
 
 - `GET /cicd/jenkins` — `cicd:read`，token 掩码。
@@ -205,6 +233,9 @@
 | `cicd_run_pipeline` | `cicd:run`，`RequiresConfirmation: true` | 参数 `{pipeline_id, branch?, commit?}`；生产部署阶段仍会走审批 |
 
 ## 数据表
+
+- `cicd_credentials`（迁移 0007）：`name UNIQUE, type, username, secret_enc, host, description, created_by`；`cicd_applications.credential_id` 引用它（无级联）。
+
 
 `cicd_targets`、`cicd_jenkins`、`cicd_applications`、`cicd_pipelines`、`cicd_runs`、`cicd_run_stages`、`cicd_run_logs`、`cicd_releases`。
 

@@ -23,7 +23,7 @@
 
 - `obs_datasources`：类型 `prometheus|loki|elasticsearch|alertmanager|jaeger|tempo`、url、env、`auth_type none|basic|bearer`、username、`secret_enc`（AES-GCM 加密的密码或 Token）、`options`（JSON，见下）、`webhook_token_hash`（SHA-256，仅 alertmanager）。
 - `obs_alerts`：按 `(datasource_id, fingerprint)` 唯一，`status firing|resolved`，`handle_status open|acked|closed`。
-- `obs_channels`：`type dingtalk|feishu|wecom|email`，`config_enc` 整体加密，`severities`/`envs` 过滤（空=全部）。
+- `obs_channels`：`type dingtalk|feishu|wecom|slack|webhook|email`（迁移 0004 放开 slack/webhook），`config_enc` 整体加密，`severities`/`envs` 过滤（空=全部）。
 
 `options` 字段：
 - elasticsearch：`index`（必填，可被请求覆盖，如 `logs-*`）、`time_field`（默认 `@timestamp`）、`message_field`
@@ -171,16 +171,21 @@ receivers:
 {"name":"运维钉钉群","type":"dingtalk","config":{"webhook":"https://oapi.dingtalk.com/robot/send?access_token=xxx","secret":"SECxxx"},"enabled":true,"severities":["critical","warning"],"envs":["prod"]}
 {"name":"飞书","type":"feishu","config":{"webhook":"https://open.feishu.cn/open-apis/bot/v2/hook/xxx","secret":"可选"}}
 {"name":"企业微信","type":"wecom","config":{"webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"}}
+{"name":"Slack","type":"slack","config":{"webhook":"https://hooks.slack.com/services/xxx"}}
+{"name":"工单系统","type":"webhook","config":{"webhook":"https://itsm.example.com/hooks/matrix","secret":"可选，用于签名"}}
 {"name":"邮件","type":"email","config":{"host":"smtp.example.com","port":465,"username":"alert@example.com","password":"***","from":"alert@example.com","to":["ops@example.com"]}}
 ```
 - PUT `/observability/channels/:id`：`type` 不可改；`config` 省略=保留；`secret/password/webhook` 为空或等于掩码值时保留原值。
 - DELETE `/observability/channels/:id`
+- POST `/observability/channels/test`：用**未保存**的配置发送测试消息（新建/编辑表单的「发送测试」）。请求体同创建；带 `id` 时，空的或等于掩码的 `secret/password/webhook` 沿用已保存的值，`type` 必须与已保存渠道一致。
 - POST `/observability/channels/:id/test`：发送测试消息，返回 `{"ok":true}` 或 `{"ok":false,"error":"robot error 310000: sign not match"}`。
 
 发送实现：
 - 钉钉：markdown 消息；有 secret 时加签 `timestamp`+`sign=Base64(HMAC-SHA256(secret, ts+"\n"+secret))`；校验 `errcode`。
 - 飞书：text 消息；有 secret 时 `sign=Base64(HMAC-SHA256(key=ts+"\n"+secret, ""))`；校验 `code`。
 - 企业微信：markdown 消息；校验 `errcode`。
+- Slack：Incoming Webhook，`{"text":"*标题*\n正文"}`。
+- 通用 Webhook（http/https，地址不得含账号密码）：POST `{"source":"xingshu-matrix","channel","title","text","sent_at"}`；配置了 secret 时带请求头 `X-Matrix-Signature: sha256=<hex(HMAC-SHA256(secret, body))>`，接收方用同一密钥校验。
 - 邮件：`net/smtp`，465 端口隐式 TLS，其他端口在服务器支持时 STARTTLS，有用户名时 PLAIN 认证；UTF-8 base64 正文。
 - 触发：Webhook 收到新 firing 告警后后台 goroutine 发送（2 分钟超时），按渠道 `severities`、`envs` 过滤；失败写 warn 日志。
 
