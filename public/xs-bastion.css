@@ -59,3 +59,18 @@
 .x-btn--danger:hover { background: #b92424; }
 .x-act--danger { color: #d43030; }
 @media (max-width: 1100px) { .xb-split { grid-template-columns: 1fr; } .xb-tree { position: static; } .xb-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* 研发中心看板（xs-devcenter.js） */
+.xd-board { display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+.xd-col { background: #f5f7fa; border: 1px solid var(--x-line, #e5e9f0); border-radius: 10px; padding: 10px; min-height: 320px; transition: background .15s; }
+.xd-col.over { background: #e8f1ff; border-color: #94b8ff; }
+.xd-col header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.xd-col header b { font-weight: 500; color: var(--x-sub, #6b7785); font-size: 12px; }
+.xd-card { background: #fff; border: 1px solid var(--x-line, #e5e9f0); border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: grab; }
+.xd-card:hover { border-color: #94b8ff; }
+.xd-card.drag { opacity: .5; }
+.xd-card-t { font-size: 13px; line-height: 1.5; margin-bottom: 8px; }
+.xd-card-m { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.xd-card-m .x-frac { margin-left: auto; }
+.xb-main .x-tabs { display: flex; gap: 4px; }
+.xb-main .x-tabs button { border: 0; background: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--x-sub, #4e5969); }
+.xb-main .x-tabs button.on { background: #e8f1ff; color: #1664ff; font-weight: 500; }

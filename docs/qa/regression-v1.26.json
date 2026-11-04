@@ -1,0 +1,409 @@
+{
+ "at": "2026-11-04T13:47:04.626Z",
+ "total": 50,
+ "failed": 0,
+ "results": [
+  {
+   "route": "#/approvals",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "变更审批"
+  },
+  {
+   "route": "#/automation",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "自动化编排"
+  },
+  {
+   "route": "#/bastion/accounts",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "账号"
+  },
+  {
+   "route": "#/bastion/audit",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "运维审计"
+  },
+  {
+   "route": "#/bastion/lsec",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "登录安全"
+  },
+  {
+   "route": "#/bastion/mask",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "数据脱敏"
+  },
+  {
+   "route": "#/bugs",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "缺陷总览"
+  },
+  {
+   "route": "#/cicd/artifact",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "制品"
+  },
+  {
+   "route": "#/cicd/build",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "构建"
+  },
+  {
+   "route": "#/cicd/pipeline",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "流水线"
+  },
+  {
+   "route": "#/cluster/backup",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "备份恢复"
+  },
+  {
+   "route": "#/cluster/components",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "组件目录"
+  },
+  {
+   "route": "#/cluster/config",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "配置与密钥"
+  },
+  {
+   "route": "#/cluster/crd",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "CRD"
+  },
+  {
+   "route": "#/cluster/cron",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "定时任务"
+  },
+  {
+   "route": "#/cluster/helm",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "Helm 应用"
+  },
+  {
+   "route": "#/cluster/hosts",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "主机纳管"
+  },
+  {
+   "route": "#/cluster/hpa",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "弹性伸缩"
+  },
+  {
+   "route": "#/cluster/integrations",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "数据源绑定"
+  },
+  {
+   "route": "#/cluster/list",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "集群列表"
+  },
+  {
+   "route": "#/cluster/network",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "Service"
+  },
+  {
+   "route": "#/cluster/nodepools",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "节点分组"
+  },
+  {
+   "route": "#/cluster/nodes",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "节点"
+  },
+  {
+   "route": "#/cluster/projects",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "项目与配额"
+  },
+  {
+   "route": "#/cluster/rbac",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "集群 RBAC"
+  },
+  {
+   "route": "#/cluster/registries",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "镜像仓库（当前集群）"
+  },
+  {
+   "route": "#/cluster/storage",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "存储"
+  },
+  {
+   "route": "#/cluster/workloads",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "工作负载"
+  },
+  {
+   "route": "#/coding",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "代码仓库"
+  },
+  {
+   "route": "#/coding/mr",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "合并请求"
+  },
+  {
+   "route": "#/coding/repos",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "代码仓库"
+  },
+  {
+   "route": "#/delivery/apps",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "应用"
+  },
+  {
+   "route": "#/middleware",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "中间件"
+  },
+  {
+   "route": "#/observe/events",
+   "ok": true,
+   "errors": [],
+   "alerts": [
+    "当前集群还没有接入告警来源。请先在「集群 → 集成」接入 Prometheus / Alertmanager，告警会自动出现在这里。"
+   ],
+   "hits": [],
+   "h1": "告警事件"
+  },
+  {
+   "route": "#/oncall/inc",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "故障管理"
+  },
+  {
+   "route": "#/oncall/review",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "故障复盘"
+  },
+  {
+   "route": "#/oncall/sched",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "值班排班"
+  },
+  {
+   "route": "#/oncall/slo",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "SLO"
+  },
+  {
+   "route": "#/ops/multicluster",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "多集群"
+  },
+  {
+   "route": "#/project/board",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "看板"
+  },
+  {
+   "route": "#/project/sprint",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "迭代"
+  },
+  {
+   "route": "#/release",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "发布单"
+  },
+  {
+   "route": "#/requirements",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "需求管理"
+  },
+  {
+   "route": "#/requirements/accept",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "需求验收"
+  },
+  {
+   "route": "#/settings",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "系统设置"
+  },
+  {
+   "route": "#/sre",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "总览"
+  },
+  {
+   "route": "#/team",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "团队协作"
+  },
+  {
+   "route": "#/testing",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "测试管理"
+  },
+  {
+   "route": "#/trace",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "链路追踪"
+  },
+  {
+   "route": "#/workbench",
+   "ok": true,
+   "errors": [],
+   "alerts": [],
+   "hits": [],
+   "h1": "中午好，系统管理员"
+  }
+ ]
+}

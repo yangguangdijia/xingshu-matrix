@@ -1989,7 +1989,16 @@
         iam: { label: "用户与权限", icon: "users", render: (el) => renderIam(el) },
         settings: { label: "系统设置", icon: "gear", render: renderSettings },
       };
-      const REAL_DATA_ROUTES = new Set(["sre", "ops", "observe", "logs", "ai", "automation", "coding", "project", "bugs", "traffic", "trace", "netpol", "bastion"]);
+      const REAL_DATA_ROUTES = new Set(["sre", "ops", "observe", "logs", "ai", "automation", "coding", "project", "bugs", "traffic", "trace", "netpol", "bastion", "workbench", "requirements", "testing"]);
+      // 研发中心实时模式由 xs-devcenter.js 渲染（需求 AI 开发 #/requirements/ai 仍走原页面）
+      ["workbench", "requirements", "coding", "project", "bugs", "testing"].forEach((k) => {
+        const orig = routes[k].render;
+        routes[k].render = (el) => {
+          const live = window.XS && XS.mode === "live" && window.XSDev;
+          if (!live || (k === "requirements" && location.hash.split("/")[2] === "ai")) return orig(el);
+          return window.XSDev.render(el, k);
+        };
+      });
       function hasRealDataRenderer(key, route) {
         return !!(window.XS && XS.mode === "live" && (REAL_DATA_ROUTES.has(key) || route.__xsLivePatched || route.__xlopsPatched));
       }
@@ -16257,7 +16266,7 @@ spec:
       const CONSOLES = [
         { k: "dev", t: "研发中心", c: "#1677ff", items: [
           { t: "工作台", i: "home", h: "#/workbench" },
-          { t: "需求管理", i: "list", h: "#/requirements", n: () => reqN("open") },
+          { t: "需求管理", i: "list", h: "#/requirements", n: () => (window.XS && XS.mode === "live" ? 0 : reqN("open")) },
           { t: "开发", i: "code", kids: [
             { t: "Coding", i: "code", h: "#/coding" },
             { t: "代码仓库", i: "box", h: "#/coding/repos", s: "托管团队的 Git 仓库，管理分支保护与成员权限。" },
@@ -16269,7 +16278,7 @@ spec:
           ] },
           { t: "团队协作", i: "users", h: "#/team" },
           { t: "缺陷总览", i: "bug", h: "#/bugs" },
-          { t: "测试管理", i: "flask", h: "#/testing", n: () => PLANS.length },
+          { t: "测试管理", i: "flask", h: "#/testing", n: () => (window.XS && XS.mode === "live" ? 0 : PLANS.length) },
         ] },
         { k: "ops", t: "运维中心", c: "#0d9488", items: [
           { t: "总览", i: "pulse", h: "#/sre" },
@@ -16808,6 +16817,7 @@ spec:
     <script src="xs-cicd-forms.js"></script>
     <script src="xs-bastion.js"></script>
     <script src="xs-branding.js"></script>
+    <script src="xs-devcenter.js"></script>
     <script src="xs-cicd-pipeline.js"></script>
     <script src="xs-platform-settings.js"></script>
     <script src="xs-channel-form.js"></script>

@@ -27,9 +27,24 @@
 
 权限：`devcenter:read`、`devcenter:manage`。资源为 `requirements`、`iterations`、`bugs`、`tests`。
 
-- `GET /devcenter/{resource}`：分页列表。
-- `POST /devcenter/{resource}`：创建标题、描述、状态、优先级和迭代关联。
-- `PATCH /devcenter/{resource}/:id`：更新状态、优先级和描述。
+v1.26 起各资源有固定状态集合，写入时校验（`GET /devcenter/meta` 返回）：
+
+| 资源 | 状态（第一个为默认） |
+|---|---|
+| requirements | todo 待评审、ready 待开发、doing 开发中、testing 测试中、accepting 待验收、done 已完成、rejected 已关闭 |
+| iterations | todo 规划中、doing 进行中、done 已结束 |
+| bugs | todo 新建、doing 处理中、fixed 已修复、verified 已验证、closed 已关闭、reopened 重新打开 |
+| tests | todo 未执行、passed 通过、failed 失败、blocked 阻塞 |
+
+优先级 P0–P3。对象字段：`id,title,description,status,priority,iteration_id,assignee,data,created_by,updated_by,created_at,updated_at`；`data` 为 JSON 对象（≤16 KB），页面用它保存验收标准与验收记录（`acceptance`、`accepted_by`、`accepted_at`、`acceptance_result`）、迭代起止与目标（`start`、`end`、`goal`）、缺陷严重程度与环境（`severity`、`env`）、测试步骤（`steps`、`expected`、`requirement`）。
+
+- `GET /devcenter/{resource}?status=a,b&assignee=me|<用户名>&iteration_id=&q=&page_size=&offset=`：列表，返回 `{"items":[...],"total":N}`，按更新时间倒序。
+- `POST /devcenter/{resource}`：创建，`title` 必填。
+- `GET /devcenter/{resource}/:id`
+- `PUT /devcenter/{resource}/:id`：全量更新（`title` 必填）。
+- `PATCH /devcenter/{resource}/:id`：只更新给出的字段，例如看板拖动 `{"status":"testing"}`；`iteration_id: null` 表示移出迭代。
+- `DELETE /devcenter/{resource}/:id`：删除迭代时，关联需求 / 缺陷 / 用例的 `iteration_id` 置空。
+- `GET /devcenter/summary`：各资源按状态计数与指派给当前用户的未完成数量，供工作台使用。
 
 默认状态为 `todo`，默认优先级为 `P2`。所有修改由平台审计中间件记录，资源表保留创建人和更新时间。
 
@@ -39,5 +54,6 @@
 
 - `server/internal/modules/automation/migrations/0001_init.up.sql`
 - `server/internal/modules/devcenter/migrations/0001_init.up.sql`
+- `server/internal/modules/devcenter/migrations/0002_fields.up.sql`（处理人、data、最后修改人）
 
 模块通过 `server/internal/modules/registry.go` 注册，启动时由现有迁移器执行。没有 PostgreSQL 连接时，服务会在健康接口中明确报告数据库不可用；本地前端不会伪造实时数据。
