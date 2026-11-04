@@ -147,6 +147,11 @@ func (m *Module) sshWS(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
+	masker, err := m.loadMasker(c)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	if err := m.recordingReady(); err != nil {
 		httpx.Fail(c, httpx.Conflict("shared durable recording storage is unavailable; SSH connection refused"))
 		return
@@ -341,10 +346,11 @@ func (m *Module) sshWS(c *gin.Context) {
 		for {
 			n, err := r.Read(buf)
 			if n > 0 {
-				chunk := buf[:n]
 				pmu.Lock()
-				proc.Output(chunk)
+				proc.Output(buf[:n])
 				pmu.Unlock()
+				// 脱敏后再录像与下发：录像与浏览器看到的是同一份内容
+				chunk := masker.Apply(append([]byte(nil), buf[:n]...))
 				if err := rec.Output(chunk); err != nil {
 					done <- ioResult{"recording", err}
 					return

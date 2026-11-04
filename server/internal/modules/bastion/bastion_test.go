@@ -291,3 +291,22 @@ func TestEnvScopeDeniesOutOfScopeAsset(t *testing.T) {
 		t.Fatal("an empty scope means all environments")
 	}
 }
+
+func TestMaskerApply(t *testing.T) {
+	in := maskIn{Name: "phone", Pattern: `1[3-9]\d{9}`}
+	if err := in.check(); err != nil {
+		t.Fatal(err)
+	}
+	k := &Masker{rules: []compiledMask{{re: regexp.MustCompile(in.Pattern), repl: in.Replacement}}}
+	got := string(k.Apply([]byte("tel 13812345678 ok")))
+	if got != "tel ****** ok" {
+		t.Fatalf("got %q", got)
+	}
+	if string((*Masker)(nil).Apply([]byte("x"))) != "x" {
+		t.Fatal("nil masker must be identity")
+	}
+	bad := maskIn{Name: "e", Pattern: `a*`}
+	if bad.check() == nil {
+		t.Fatal("empty-matching pattern must be rejected")
+	}
+}

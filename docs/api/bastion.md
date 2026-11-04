@@ -20,8 +20,10 @@
 |---|---|---|
 | `MATRIX_RECORD_DIR` | `./data/recordings` | asciicast v2 录像本地目录（Start 时自动创建） |
 | `MATRIX_GUACD_ADDR` | `127.0.0.1:4822` | guacd 地址，仅用于健康检查 |
+| `MATRIX_BASTION_RECORDING_STORAGE_ID` | （空） | 录像卷标识，必须与录像目录下 `.matrix-bastion-storage-id` 文件内容一致；未配置时拒绝 SSH 连接（不录像就不允许连接） |
+| `MATRIX_BASTION_RECORDING_MODE` | （空） | 设为 `local` 时允许录像目录不在 NFS 上，**仅限单副本部署**；多副本必须使用共享 NFS，否则会话被其它副本接管后录像不完整。目录不能是组 / 全局可写 |
 
-## 数据表（迁移 `0001_init.up.sql`、`0002_asset_options.up.sql`）
+## 数据表（迁移 `0001_init.up.sql` … `0004_mask_rules.up.sql`）
 
 `bastion_assets`（含 `options JSONB`）、`bastion_accounts`（`secret_enc`/`passphrase_enc` 用 `d.Crypto` AES-256-GCM 加密）、`bastion_rules`、`bastion_filters`、`bastion_sessions`、`bastion_commands`。
 
@@ -68,6 +70,18 @@
 来源只影响登记入口与展示，不改变资产表结构：后端始终按手动路径写入 `bastion_assets`。
 
 ### PUT /bastion/assets/:id — `bastion:manage`（请求体同 POST，全量更新）
+
+### POST /bastion/assets/:id/test — `bastion:manage`（v1.26）
+从平台所在网络做真实连通性探测：TCP 建连（6 秒超时）→ 读取 SSH 横幅 → 给出 `account_id` 时用托管凭据做一次登录验证（不打开 Shell，首次连接按 TOFU 记录主机指纹）。
+```json
+// 请求（可选）
+{"account_id": 3}
+// 响应
+{"asset_id":1,"address":"10.0.1.11:22","reachable":true,"latency_ms":2,"banner":"SSH-2.0-OpenSSH_9.6","auth":true}
+// 失败示例
+{"asset_id":2,"address":"10.0.1.12:22","reachable":false,"error":"端口拒绝连接：服务未启动或端口错误"}
+```
+`error` 为中文原因：连接超时、端口拒绝、域名无法解析、登录失败、主机指纹不一致、凭据无法解密。
 ### DELETE /bastion/assets/:id — `bastion:manage`（级联删除其系统账号）
 
 ## 系统账号（凭据）
@@ -115,6 +129,25 @@
 ```
 `action`：`deny` 直接拦截；`confirm` 需用户在终端输入 `yes` 确认后才执行。正则用 Go RE2 语法，保存前校验。
 ### PUT /bastion/filters/:id、DELETE /bastion/filters/:id — `bastion:manage`
+
+## 数据脱敏规则（v1.26）
+
+SSH 会话输出在**发送到浏览器、写入录像之前**按规则做正则替换，运维人员与录像回放都看不到原文。规则在新建立的会话中生效；任一启用的规则表达式非法时拒绝新连接（与命令过滤一致）。
+
+### GET /bastion/mask-rules — `bastion:read`
+### POST /bastion/mask-rules — `bastion:manage`
+```json
+{"name":"手机号脱敏","pattern":"1[3-9]\\d{9}","replacement":"1**********","enabled":true}
+```
+`pattern` 为 Go RE2 正则，不能匹配空字符串，最长 512；`replacement` 默认 `******`，最长 64，按字面替换。
+### PUT /bastion/mask-rules/:id、DELETE /bastion/mask-rules/:id — `bastion:manage`
+### POST /bastion/mask-rules/preview — `bastion:read`
+```json
+// 用给定规则预览；不带 pattern 时用全部已启用规则
+{"sample":"call 13812345678 now","pattern":"1[3-9]\\d{9}","replacement":"1**********"}
+// → {"output":"call 1********** now"}
+```
+限制：匹配在单个输出块（最大 16 KB）内进行，不缓冲输出以免拖慢交互回显；极少数被网络拆分到两个块之间的长串可能漏掉。命令审计记录的是用户输入原文，不做脱敏。
 
 ---
 
@@ -216,10 +249,12 @@ SSH 会话使用 `XS.ws("/bastion/sessions/ssh/ws", {asset, account, cols, rows}
 
 | 方向 | 消息 |
 |---|---|
-| 浏览器 → 服务端 | `{"type":"input","data":"ls"}`、`{"type":"resize","cols":120,"rows":32}` |
+| 浏览器 → 服务端 | `{"type":"input","data":"ls
+"}`、`{"type":"resize","cols":120,"rows":32}` |
 | 服务端 → 浏览器 | `{"type":"output","data":"..."}`、`{"type":"error","data":"..."}`、`{"type":"closed","data":"killed\|session ended"}` |
 
-前端用轻量屏幕模型渲染（剥离 ANSI、处理 `` 覆盖 / `` 退格 / 整屏清除），不引入 xterm 运行时依赖；颜色与光标寻址不还原。
+前端用轻量屏幕模型渲染（剥离 ANSI、处理 `
+` 覆盖 / `` 退格 / 整屏清除），不引入 xterm 运行时依赖；颜色与光标寻址不还原。
 
 ## 本轮验证边界（重要）
 

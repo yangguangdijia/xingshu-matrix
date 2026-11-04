@@ -135,6 +135,39 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	return pair, u, err
 }
 
+// LoginExternal 为已由外部身份源（企业 SSO）验证过的用户建立会话。
+// 不校验密码，但仍检查账号状态与锁定，并遵守安全策略里的会话有效期。
+func (s *Service) LoginExternal(ctx context.Context, userID int64, ip, userAgent string) (*TokenPair, *User, error) {
+	now := s.now()
+	u, err := s.repo.UserByID(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if u.LockedUntil != nil && u.LockedUntil.After(now) {
+		return nil, nil, lockedError(*u.LockedUntil, now)
+	}
+	if u.Status != "active" {
+		return nil, nil, errDisabled
+	}
+	sessTTL := s.opts.RefreshTTL
+	if pol := CurrentPolicy(ctx); pol.SessionHours > 0 {
+		sessTTL = time.Duration(pol.SessionHours) * time.Hour
+	}
+	if err := s.repo.RecordLoginSuccess(ctx, u.ID, ip); err != nil {
+		return nil, nil, err
+	}
+	sess := &Session{ID: NewSessionID(), UserID: u.ID, UserAgent: truncate(userAgent, 512), IP: ip, ExpiresAt: now.Add(sessTTL)}
+	refresh, hash := NewRefreshToken(sess.ID)
+	sess.RefreshHash = hash
+	if err := s.repo.CreateSession(ctx, sess); err != nil {
+		return nil, nil, err
+	}
+	// SSO 用户的密码由身份源管理，不要求在本平台改密
+	u.MustChangePassword = false
+	pair, err := s.pair(u, sess.ID, refresh)
+	return pair, u, err
+}
+
 func (s *Service) pair(u *User, sid, refresh string) (*TokenPair, error) {
 	access, exp, err := s.tokens.IssueAccess(u.ID, u.Username, sid)
 	if err != nil {

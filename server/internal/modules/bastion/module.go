@@ -47,6 +47,9 @@ type Module struct {
 	stop      context.CancelFunc
 	store     lifecycleStore
 	storageID string
+	// localRecording 允许录像目录不在 NFS 上，仅用于单副本部署（MATRIX_BASTION_RECORDING_MODE=local）。
+	// 多副本时会话可能被不同副本接管，必须使用共享 NFS。
+	localRecording bool
 }
 
 type liveSession struct {
@@ -65,7 +68,8 @@ func New() *Module {
 		ga = "127.0.0.1:4822"
 	}
 	return &Module{recordDir: dir, guacdAddr: ga, active: map[int64]*liveSession{},
-		owner: newToken(), storageID: os.Getenv("MATRIX_BASTION_RECORDING_STORAGE_ID")}
+		owner: newToken(), storageID: os.Getenv("MATRIX_BASTION_RECORDING_STORAGE_ID"),
+		localRecording: os.Getenv("MATRIX_BASTION_RECORDING_MODE") == "local"}
 }
 
 func (m *Module) Name() string { return "bastion" }
@@ -107,6 +111,13 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.POST("/filters", rbac.RequirePerm(PermManage), m.createFilter)
 	g.PUT("/filters/:id", rbac.RequirePerm(PermManage), m.updateFilter)
 	g.DELETE("/filters/:id", rbac.RequirePerm(PermManage), m.deleteFilter)
+
+	g.GET("/mask-rules", rbac.RequirePerm(PermRead), m.listMasks)
+	g.POST("/mask-rules", rbac.RequirePerm(PermManage), m.createMask)
+	g.POST("/mask-rules/preview", rbac.RequirePerm(PermRead), m.previewMask)
+	g.PUT("/mask-rules/:id", rbac.RequirePerm(PermManage), m.updateMask)
+	g.DELETE("/mask-rules/:id", rbac.RequirePerm(PermManage), m.deleteMask)
+	g.POST("/assets/:id/test", rbac.RequirePerm(PermManage), m.testAsset)
 
 	g.GET("/my/assets", rbac.RequirePerm(PermConnect), m.myAssets)
 	// Auth: the authenticated group accepts "Authorization: Bearer" or ?access_token=.

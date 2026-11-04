@@ -77,3 +77,4 @@
 @media (max-width: 640px) { .fk-grid { grid-template-columns: 1fr; } .fk-modal { top: 0; max-height: 100vh; border-radius: 0; width: 100vw; } }
 .fk-tabs--none { border-bottom: 0; margin-top: 0; }
 a.x-btn { text-decoration: none; display: inline-flex; align-items: center; }
+.fk-enh { grid-column: 1 / -1; } .fk-enh .fk-ai { margin: 0; } .fk-enh .fk-ai-status { margin: 4px 0 0; } .fk-enh .fk-tabs { padding: 0; margin-top: 6px; } .fk-enh .fk-yaml { margin-top: 10px; } .fk-enh .fk-yaml textarea { min-height: 280px; }

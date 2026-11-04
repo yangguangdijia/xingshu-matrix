@@ -572,5 +572,105 @@
     return Object.keys(map || {}).map(function (k) { return { k: k, v: String(map[k]) }; });
   }
 
-  root.XSFormKit = { open: open, dump: dump, load: load, kvToMap: kvToMap, mapToKv: mapToKv, errText: errText, SECRET_MASK: SECRET_MASK };
+
+  /*
+   * enhance(form, opts)：给旧版对话框表单（formModal 等）补上 AI 一句话填写和 YAML 视图，
+   * 不改变原有提交逻辑。只处理普通字段（text/number/select/textarea/checkbox）；密码字段既不发给 AI
+   * 也不在 YAML 里显示明文；结构化子表单在 YAML 里只读展示。
+   */
+  function enhance(form, o) {
+    if (!form || form.getAttribute("data-fk-enhanced")) return;
+    form.setAttribute("data-fk-enhanced", "1");
+    o = o || {};
+    var fields = (o.fields || []).filter(function (f) { return f && f.k; });
+    var simple = fields.filter(function (f) { return !f.kind || ["text", "number", "select", "textarea", "checkbox", "url", "email"].indexOf(f.kind) >= 0; });
+    if (!simple.length) return;
+    function node(k) { return form.elements ? form.elements[k] : null; }
+    function readAll() {
+      var out = {};
+      fields.forEach(function (f) {
+        var n = node(f.k);
+        if (f.kind === "password") { if (n && n.value) out[f.k] = SECRET_MASK; return; }
+        if (!n || n.length > 1 && !n.tagName) return;
+        if (f.kind === "checkbox") out[f.k] = !!n.checked;
+        else if (f.kind === "number") out[f.k] = n.value === "" ? null : Number(n.value);
+        else if (n.value !== undefined) out[f.k] = n.value;
+      });
+      return out;
+    }
+    function writeAll(vals, fromAI) {
+      var n_ = 0;
+      simple.forEach(function (f) {
+        if (!(f.k in vals)) return;
+        var n = node(f.k), v = vals[f.k];
+        if (!n || v == null || (fromAI && v === "")) return;
+        if (f.kind === "checkbox") { n.checked = !!v; n_++; }
+        else if (f.kind === "select") {
+          var ok = [].some.call(n.options || [], function (op) { return op.value === String(v); });
+          if (ok) { n.value = String(v); n_++; }
+        } else { n.value = Array.isArray(v) ? v.join(f.kind === "textarea" ? "\n" : ",") : String(v); n_++; }
+        try { n.dispatchEvent(new Event("change", { bubbles: true })); } catch (e) {}
+      });
+      return n_;
+    }
+    var wrap = document.createElement("div");
+    wrap.className = "fk-enh";
+    var canAI = o.ai !== false;
+    wrap.innerHTML = (canAI ? '<div class="fk-ai"><span class="fk-ai-tag">AI</span><input class="x-input" data-fk-ai placeholder="用一句话描述要填写的内容，AI 帮你填表"><button type="button" class="x-btn" data-fk-aigo>生成</button></div><p class="fk-ai-status" data-fk-aistatus role="status"></p>' : "") +
+      '<div class="fk-tabs" role="tablist"><button type="button" role="tab" class="on" data-fk-mode="form">可视化表单</button><button type="button" role="tab" data-fk-mode="yaml">YAML</button></div>' +
+      '<div class="fk-yaml" hidden><textarea class="x-input fk-code" spellcheck="false" data-fk-yaml></textarea><p class="fk-help">修改后切回表单会回填普通字段；密码以 ****** 显示且不会被覆盖。</p><p class="fk-err" data-fk-yerr hidden></p></div>';
+    form.insertBefore(wrap, form.firstChild);
+    var yamlBox = wrap.querySelector(".fk-yaml"), ta = wrap.querySelector("[data-fk-yaml]"), yerr = wrap.querySelector("[data-fk-yerr]");
+    var mode = "form";
+    function others() { return [].filter.call(form.children, function (c) { return c !== wrap; }); }
+    function setMode(m) {
+      if (m === mode) return;
+      if (m === "yaml") {
+        var obj = readAll();
+        if (typeof o.extra === "function") { try { Object.assign(obj, o.extra()); } catch (e) {} }
+        ta.value = dump(obj);
+      } else {
+        try {
+          var parsed = load(ta.value);
+          Object.keys(parsed).forEach(function (k) { if (parsed[k] === SECRET_MASK) delete parsed[k]; });
+          writeAll(parsed, false);
+          yerr.hidden = true;
+        } catch (e) { yerr.textContent = "YAML 解析失败：" + errText(e); yerr.hidden = false; return; }
+      }
+      mode = m;
+      yamlBox.hidden = m !== "yaml";
+      others().forEach(function (c) { if (!c.classList.contains("x-err") || m === "form") c.style.display = m === "yaml" ? "none" : ""; });
+      [].forEach.call(wrap.querySelectorAll("[data-fk-mode]"), function (b) { b.classList.toggle("on", b.getAttribute("data-fk-mode") === m); });
+    }
+    [].forEach.call(wrap.querySelectorAll("[data-fk-mode]"), function (b) { b.onclick = function () { setMode(b.getAttribute("data-fk-mode")); }; });
+    form.addEventListener("submit", function () { if (mode === "yaml") setMode("form"); }, true);
+    if (!canAI) return;
+    var aiIn = wrap.querySelector("[data-fk-ai]"), aiBtn = wrap.querySelector("[data-fk-aigo]"), st = wrap.querySelector("[data-fk-aistatus]");
+    function gen() {
+      var text = String(aiIn.value || "").trim();
+      if (!text) { st.textContent = "先用一句话描述要填写的内容。"; return; }
+      if (/(password|passwd|token|secret|密码|口令|私钥)\s*[:=：]\s*\S+/i.test(text) || /-----BEGIN/.test(text)) { st.textContent = "描述里疑似包含密码或密钥，请删掉具体值；密钥类字段请手动填写。"; return; }
+      var x = api();
+      if (!x) { st.textContent = "AI 接口未连接，可以手动填写。"; return; }
+      var schema = {};
+      simple.forEach(function (f) {
+        var d = (f.label || f.k) + (f.placeholder ? "（例如 " + f.placeholder + "）" : "");
+        if (f.kind === "select") d += "：只能取 " + JSON.stringify((f.options || []).map(function (op) { return typeof op === "object" ? op.v : op; }));
+        else if (f.kind === "checkbox") d += "：布尔";
+        else if (f.kind === "number") d += "：数字";
+        schema[f.k] = d;
+      });
+      aiBtn.disabled = true; aiBtn.textContent = "生成中…"; st.textContent = "正在调用已配置的模型…";
+      x.api("/ai/assist", { method: "POST", body: { scene: o.scene || "ops.form", instruction: text, schema: schema } }).then(function (r) {
+        var n = writeAll(r && r.fields || {}, true);
+        st.textContent = n ? "已填入 " + n + " 个字段，请检查后再提交。" : "模型没有给出可用字段，请补充关键信息再试。";
+      }).catch(function (err) {
+        st.textContent = /model|模型/i.test(errText(err)) ? "尚未配置可用的 AI 模型，请到「设置 → AI 模型」接入；也可以手动填写。" : "生成失败：" + errText(err);
+      }).finally(function () { aiBtn.disabled = false; aiBtn.textContent = "生成"; });
+    }
+    aiBtn.onclick = gen;
+    aiIn.onkeydown = function (e) { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); gen(); } };
+  }
+
+  root.XSFormKit = { open: open, enhance: enhance, dump: dump, load: load, kvToMap: kvToMap, mapToKv: mapToKv, errText: errText, SECRET_MASK: SECRET_MASK };
 })(window);

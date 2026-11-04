@@ -101,6 +101,13 @@
 | PUT | `/auth/password` | 登录即可 | 修改自己的密码 |
 | GET | `/auth/sessions` | 登录即可 | 我的会话列表 |
 | DELETE | `/auth/sessions/:sid` | 登录即可 | 撤销自己的某个会话 |
+| GET | `/auth/sso/config` | 公开 | 企业 SSO 是否启用及按钮名称（v1.26） |
+| GET | `/auth/sso/start?redirect=` | 公开 | 跳转到 OIDC 身份源（授权码 + PKCE） |
+| GET | `/auth/sso/callback` | 公开 | 身份源回调；带一次性 `sso_ticket` 跳回页面 |
+| POST | `/auth/sso/token` | 公开 | 用一次性票据换取平台会话 |
+| GET | `/branding` | 公开 | 平台名称（登录前展示用） |
+| GET / PUT | `/settings/sso` | `setting:read` / `setting:manage` | 读取 / 保存 OIDC 配置（密钥不返回） |
+| POST | `/settings/sso/test` | `setting:manage` | 读取身份源发现文档，验证配置 |
 
 ### POST /auth/login
 
@@ -157,6 +164,27 @@
   "request_id": "14f2c0454a44fba0700c5719"
 }
 ```
+
+### 企业 SSO（OIDC，v1.26）
+
+实现：`server/internal/sso`，迁移 `store/migrations/0006_sso.up.sql`（`sso_states`、`sso_tickets`）。
+
+流程：登录页「使用企业 SSO 登录」→ `GET /auth/sso/start` 生成 state、nonce、PKCE verifier（存数据库，10 分钟有效）并跳转身份源 → 用户认证 → `GET /auth/sso/callback?code&state`：校验并删除 state，用授权码（`client_secret_post` + `code_verifier`）换 access token，读取 userinfo → 按用户名字段映射本地用户，不存在且开启「首次登录自动创建」时以默认角色创建（本地密码不可用，只能走 SSO；默认角色不允许为 admin）→ 生成 60 秒一次性票据，跳回 `redirect?sso_ticket=...` → 页面 `POST /auth/sso/token {"ticket":"..."}` 得到与密码登录相同的 `{"token":{...},"user":{...}}`。
+
+- 地址栏里只出现一次性票据，平台 token 不进 URL；state 与票据都只存 SHA-256 摘要，用后即删，多副本可用。
+- `redirect` 只允许平台外部地址开头，其它一律回到首页，防开放重定向。
+- 失败时跳回 `?sso_error=invalid_state | invalid_identity | server_error | provider_<身份源错误>`，登录页显示中文提示。
+- 账号被禁用或锁定时仍拒绝登录；会话有效期遵循安全策略。
+
+`PUT /settings/sso` 请求体（`client_secret` 留空表示保留原值）：
+```json
+{"enabled":true,"display_name":"企业 SSO","issuer":"https://sso.example.com/realms/ops","client_id":"xingshu-matrix",
+ "client_secret":"...","redirect_base":"https://matrix.example.com","scopes":"openid profile email",
+ "username_claim":"preferred_username","name_claim":"name","email_claim":"email","auto_create":true,"default_role":"viewer"}
+```
+需要在身份源登记的回调地址：`{redirect_base}/api/v1/auth/sso/callback`（`GET /settings/sso` 的 `callback_url` 字段）。
+
+已验证：沙箱内用最小 OIDC 身份源（授权码 + PKCE 校验）完成浏览器端到端登录、自动建号、伪造 state 与票据重放被拒。尚未与 Keycloak / Azure AD 等真实身份源联调；当前不校验 ID Token 签名，身份以服务端直连 userinfo 端点的结果为准。
 
 ### POST /auth/refresh
 

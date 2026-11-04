@@ -4,7 +4,7 @@
 
 **面向企业私有化场景的多集群 Kubernetes 运维与应用交付平台**
 
-![version](https://img.shields.io/badge/version-v1.24-2f6bff)
+![version](https://img.shields.io/badge/version-v1.26-2f6bff)
 ![go](https://img.shields.io/badge/Go-1.23-00add8)
 ![kubernetes](https://img.shields.io/badge/client--go-v0.32-326ce5)
 ![deploy](https://img.shields.io/badge/deploy-Kubernetes%20%7C%20Docker%20%7C%20Linux-0b1a33)
@@ -19,7 +19,7 @@
 
 星枢 Matrix 把多集群资源管理、应用交付、可观测、主机与堡垒机、中间件和权限审计放在同一个工作台中，供运维与研发工程师日常使用。
 
-平台以 **集群 → 环境 → 命名空间** 组织资源。常用操作通过表单完成；复杂配置可以直接查看和编辑最终 YAML，校验通过后再提交。生产环境的写操作统一走审批、RBAC 和审计。接入 AI 模型后，平台可以根据自然语言生成配置草稿和诊断建议，由工程师确认后再执行。
+平台以 **集群 → 环境 → 命名空间** 组织资源。所有「新建」都使用统一的可视化表单（复杂对象为分步向导，例如工作负载、从代码仓库创建应用、添加堡垒机资产），可以一句话让 AI 填表，也可以切到 YAML 查看和手动编辑，两边实时同步，校验通过后再提交。生产环境的写操作统一走审批、RBAC 和审计。接入 AI 模型后，平台可以根据自然语言生成配置草稿和诊断建议，由工程师确认后再执行。
 
 **设计原则**
 
@@ -35,12 +35,13 @@
 | **工作负载** | Deployment、StatefulSet、DaemonSet、Job、CronJob、Pod 与自定义资源；`autoscaling/v2` HPA；ConfigMap，以及默认不回显值的 Secret |
 | **网络与存储** | Service、Ingress、NetworkPolicy、APISIX 路由；PV、PVC、StorageClass；在已安装快照 API 和驱动的集群上管理 VolumeSnapshot 并从快照恢复 |
 | **组件中心** | 发现集群中已安装的组件，区分已安装可读、已安装无权限、未安装和发现失败；按目录安装受支持的组件 |
-| **应用交付** | 应用、Git 仓库、流水线（Kaniko 构建）、发布单与回滚；Helm 仓库与 Chart 目录；对接 Jenkins 和 Argo CD |
-| **可观测** | 对接 Prometheus、Loki / Elasticsearch、Jaeger / Tempo 和 Alertmanager；集群总览 24 小时资源曲线；告警定位到资源，支持通知渠道和静默 |
+| **应用交付** | 从代码仓库创建应用（读取分支探测仓库）、凭证管理（Git Token / 账号密码 / SSH 私钥 / 镜像仓库）、流水线可视化与 YAML 双向编排（Kaniko 构建）、发布单与回滚；Helm 仓库与 Chart 目录；对接 Jenkins 和 Argo CD |
+| **可观测** | 对接 Prometheus、Loki / Elasticsearch、Jaeger / Tempo 和 Alertmanager；集群总览 24 小时资源曲线；告警定位到资源；通知渠道支持钉钉 / 飞书 / 企业微信（含加签）、邮件、Slack、通用 Webhook（HMAC 签名），保存前可发送测试 |
+| **值班与故障** | 分层轮值排班与代班，自动计算当前值班；故障声明后按排班自动指派一线值班，认领 / 处理记录 / 解决全程时间线；SLO 手工或 Prometheus 计算错误预算与燃烧率 |
 | **智能运维** | 告警诊断、日志分析、配置草稿生成；修复建议须经权限校验和审批后才能执行 |
-| **主机与堡垒机** | 主机 Agent 执行命令和分发文件；堡垒机支持 SSH、RDP、VNC、MySQL、PostgreSQL 会话，并录制会话 |
+| **主机与堡垒机** | 主机 Agent 执行命令和分发文件；堡垒机按「环境 → 资产组」资产树纳管服务器，三步添加资产（资产 → 托管账号 → 授权），真实连通性与登录测试；SSH Web 终端强制录像、命令过滤与终端输出数据脱敏；RDP / VNC 需部署 guacd |
 | **中间件** | Kafka、RabbitMQ、RocketMQ、MySQL、PostgreSQL、Redis 实例的接入、概览和控制台 |
-| **权限与审计** | 用户、角色、部门与用户组；按环境限定可见范围；生产变更走审批；写操作全部记录审计日志 |
+| **权限与审计** | 用户、角色、部门与用户组；企业 SSO（OIDC 授权码 + PKCE，可自动建号）；按环境限定可见范围；生产变更走审批；写操作全部记录审计日志 |
 
 ## 架构
 
@@ -114,8 +115,8 @@ docker compose ps
 ### Kubernetes
 
 ```bash
-docker build --build-arg VERSION=v1.24 -t <镜像仓库>/matrix-server:v1.24 .
-docker push <镜像仓库>/matrix-server:v1.24
+docker build --build-arg VERSION=v1.26 -t <镜像仓库>/matrix-server:v1.26 .
+docker push <镜像仓库>/matrix-server:v1.26
 ```
 
 先修改 `deploy/k8s/xingshu-matrix-dev.yaml` 中的镜像地址、`matrix-secrets` 里的密钥和 Ingress 域名，然后执行：
@@ -179,12 +180,12 @@ cd server && go build ./... && go vet ./... && go test ./...
 node --test tests/frontend/*.test.mjs
 
 # 平台镜像
-docker build --build-arg VERSION=v1.24 --build-arg COMMIT=$(git rev-parse --short HEAD) \
-  -t xingshu/matrix-server:v1.24 .
+docker build --build-arg VERSION=v1.26 --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  -t xingshu/matrix-server:v1.26 .
 
 # 集群 agent 镜像（接入清单默认引用与平台版本相同 tag 的 agent 镜像）
-docker build -f Dockerfile.cluster-agent --build-arg VERSION=v1.24 \
-  -t xingshu/matrix-cluster-agent:v1.24 .
+docker build -f Dockerfile.cluster-agent --build-arg VERSION=v1.26 \
+  -t xingshu/matrix-cluster-agent:v1.26 .
 ```
 
 版本规则：应用版本采用 `vMAJOR.MINOR`，通过 `--build-arg VERSION` 写入二进制，并由 `GET /api/v1/version` 返回；部署镜像的 tag 可以按发布流程单独编号。
@@ -196,7 +197,9 @@ docker build -f Dockerfile.cluster-agent --build-arg VERSION=v1.24 \
 | [平台技术说明](docs/PLATFORM.md) | 架构、组件边界、数据来源与运维能力 |
 | [后端架构](docs/backend-architecture.md) | 模块划分与核心接口 |
 | [开发指南](docs/dev-guide.md) | 新增模块、迁移、权限与审批的接入方式 |
-| [接口文档](docs/api/) | 按模块划分的 REST API |
+| [接口文档](docs/api/) | 按模块划分的 REST API（含 [值班与故障](docs/api/oncall.md)、[堡垒机](docs/api/bastion.md)、[CI/CD](docs/api/cicd.md)、[核心与 SSO](docs/api/core.md)） |
+| [对标清单](docs/benchmark-kubesphere-rainbond.md) | 各模块对照 KubeSphere / Rainbond / JumpServer 的整改状态 |
+| [v1.26 回归结果](docs/qa/regression-v1.26.json) | 发布前全路由浏览器回归记录 |
 | [可观测数据范围](docs/observability-data-scope.md) | 数据源归属与多集群隔离规则 |
 | [更新日志](CHANGELOG.md) | 各版本变更 |
 
@@ -207,6 +210,9 @@ docker build -f Dockerfile.cluster-agent --build-arg VERSION=v1.24 \
 - [ ] 集群采集器套件：日志、指标、链路由各集群内的采集器推送到中心存储，按 `cluster_id` 隔离
 - [ ] 采集器与中心存储的一键部署和自动生成数据源
 - [ ] Helm 仓库认证、OCI 仓库与任意 Chart 直接安装
+- [ ] 从源码创建时自动识别语言并生成构建配置（Rainbond 式）
+- [ ] 堡垒机数据库代理、命令审批工单、账号改密计划
+- [ ] 平台自助找回密码（系统邮件）
 
 ## 致谢
 

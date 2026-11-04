@@ -32,7 +32,7 @@ func (m *Module) recordingReady() error {
 	if err != nil {
 		return errors.New("cannot verify recording mount")
 	}
-	if !nfsMount(root, string(mounts)) {
+	if !m.localRecording && !nfsMount(root, string(mounts)) {
 		return errors.New("recording directory must be on a shared NFS mount")
 	}
 	f, err := openRegular(root, storageMarker)

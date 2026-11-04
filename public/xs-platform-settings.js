@@ -10,6 +10,7 @@
   var TABS = [
     { k: "basic", t: "基本信息" },
     { k: "security", t: "安全策略" },
+    { k: "sso", t: "企业登录（SSO）" },
     { k: "retention", t: "审计与保留" },
     { k: "env", t: "环境与审批" },
     { k: "integrations", t: "通知与集成" },
@@ -167,6 +168,48 @@
       ];
       body.innerHTML = '<section class="xs-cfg-card"><h3>通知与集成</h3><div class="xs-cfg-links">' + links.map(function (l) {
         return '<a href="' + l[1] + '"><strong>' + esc(l[0]) + '</strong></a>'; }).join("") + '</div></section>';
+    } else if (tab === "sso") {
+      api("/settings/sso").then(function (r) {
+        if (!active()) return;
+        var c = (r && r.config) || {}, has = r && r.has_client_secret;
+        var chk = function (n, v, t) { return '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="' + n + '"' + (v ? " checked" : "") + ' style="width:auto"> ' + esc(t) + "</label>"; };
+        var inp = function (n, v, ph, type) { return '<input class="x-input" name="' + n + '" type="' + (type || "text") + '" value="' + esc(v || "") + '" placeholder="' + esc(ph || "") + '" autocomplete="off" style="width:420px">'; };
+        body.innerHTML = '<form class="xs-cfg-card" data-f><h3>企业登录（OpenID Connect）</h3>' +
+          '<p class="xs-cfg-tip" style="margin:0 0 16px;color:#6b7785;font-size:13px">对接 Keycloak、Authing、Okta、Azure AD、飞书 / 钉钉开放平台等支持 OIDC 的身份源。用户在登录页点「使用企业 SSO 登录」，在身份源认证后回到平台。</p>' +
+          row("启用", chk("enabled", c.enabled, "在登录页显示企业 SSO 入口")) +
+          row("按钮名称", inp("display_name", c.display_name, "企业 SSO")) +
+          row("Issuer 地址", inp("issuer", c.issuer, "https://sso.example.com/realms/ops")) +
+          row("Client ID", inp("client_id", c.client_id, "xingshu-matrix")) +
+          row("Client Secret", inp("client_secret", "", has ? "已保存，留空不修改" : "身份源分配的密钥", "password")) +
+          row("平台外部地址", inp("redirect_base", c.redirect_base || location.origin, "https://matrix.example.com")) +
+          row("回调地址", '<code data-cb>' + esc(r.callback_url || ((c.redirect_base || location.origin) + "/api/v1/auth/sso/callback")) + '</code><div style="color:#8a94a3;font-size:12px;margin-top:4px">在身份源的应用里登记这个地址</div>') +
+          '<h3 style="margin-top:28px">用户映射</h3>' +
+          row("Scopes", inp("scopes", c.scopes, "openid profile email")) +
+          row("用户名字段", inp("username_claim", c.username_claim, "preferred_username")) +
+          row("显示名字段", inp("name_claim", c.name_claim, "name")) +
+          row("邮箱字段", inp("email_claim", c.email_claim, "email")) +
+          row("首次登录", chk("auto_create", c.auto_create, "身份源里存在、平台里没有的用户自动创建")) +
+          row("默认角色", '<select class="x-input" name="default_role" style="width:220px">' + [["viewer", "只读用户"], ["operator", "运维工程师"], ["approver", "审批人"]].map(function (o) {
+            return '<option value="' + o[0] + '"' + ((c.default_role || "viewer") === o[0] ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") + "</select>") +
+          '<div class="xs-cfg-foot"><button class="x-btn x-btn--pri" type="submit">保存</button><button class="x-btn" type="button" data-test>测试连接</button><span data-tres style="font-size:13px;margin-left:8px"></span></div></form>';
+        var f = body.querySelector("[data-f]");
+        var collect = function () {
+          return { enabled: f.elements.enabled.checked, display_name: V(f, "display_name"), issuer: V(f, "issuer"), client_id: V(f, "client_id"),
+            client_secret: f.elements.client_secret.value, redirect_base: V(f, "redirect_base"), scopes: V(f, "scopes"), username_claim: V(f, "username_claim"),
+            name_claim: V(f, "name_claim"), email_claim: V(f, "email_claim"), auto_create: f.elements.auto_create.checked, default_role: f.elements.default_role.value };
+        };
+        f.elements.redirect_base.oninput = function () { f.querySelector("[data-cb]").textContent = V(f, "redirect_base").replace(/\/+$/, "") + "/api/v1/auth/sso/callback"; };
+        f.querySelector("[data-test]").onclick = function () {
+          var out = f.querySelector("[data-tres]"), v = collect();
+          if (!v.issuer) { out.textContent = "先填写 Issuer 地址"; out.style.color = "#d43030"; return; }
+          out.textContent = "正在读取发现文档…"; out.style.color = "#6b7785";
+          api("/settings/sso/test", { method: "POST", body: v }).then(function (t) {
+            if (t && t.ok) { out.textContent = "连接成功：已读取授权、令牌和用户信息端点"; out.style.color = "#1a9b55"; }
+            else { out.textContent = "连接失败：" + ((t && t.error) || "未知错误"); out.style.color = "#d43030"; }
+          }, function (e) { out.textContent = "连接失败：" + errMsg(e); out.style.color = "#d43030"; });
+        };
+        bindSave(f, function () { return api("/settings/sso", { method: "PUT", body: collect() }); });
+      }, fail);
     } else if (tab === "about") {
       api("/version").then(function (v) {
         if (!active()) return;

@@ -163,6 +163,18 @@ func (s *Service) Delete(ctx context.Context, key string) error {
 }
 
 // RegisterRoutes mounts /settings endpoints.
+// RegisterPublic 挂载无需登录的品牌信息：登录页和浏览器标题在登录前就要用到平台名称。
+// 只返回 platform.name，不暴露其它设置。
+func (s *Service) RegisterPublic(r *gin.RouterGroup) {
+	r.GET("/branding", func(c *gin.Context) {
+		var name string
+		if err := s.Get(c.Request.Context(), "platform.name", &name); err != nil || strings.TrimSpace(name) == "" {
+			name = ""
+		}
+		httpx.OK(c, gin.H{"name": strings.TrimSpace(name)})
+	})
+}
+
 func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/settings/public", func(c *gin.Context) {
 		items, err := s.List(c.Request.Context(), "public.")

@@ -70,12 +70,15 @@ func (m *Module) Permissions() []rbac.Permission {
 		rbac.P(mod, "alert", "silence", "创建/删除 Alertmanager 静默"),
 		rbac.P(mod, "trace", "read", "查询链路追踪"),
 		rbac.P(mod, "notify", "manage", "管理告警通知渠道"),
+		rbac.P(mod, "oncall", "read", "查看值班排班、故障与 SLO"),
+		rbac.P(mod, "oncall", "manage", "管理排班、处理故障、维护 SLO"),
 	}
 }
 
 func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	m.d = d
 	d.ClusterRenameHooks = append(d.ClusterRenameHooks, renameClusterReferences)
+	m.registerOncall(r)
 	g := r.Group("/observability")
 
 	ds := g.Group("/datasources")

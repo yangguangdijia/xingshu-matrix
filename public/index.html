@@ -1754,6 +1754,7 @@
     <link rel="stylesheet" href="xs-cluster-context.css" />
     <link rel="stylesheet" href="xs-structured-forms.css" />
     <link rel="stylesheet" href="xs-formkit.css" />
+    <link rel="stylesheet" href="xs-bastion.css" />
     <link rel="stylesheet" href="xs-network-config-forms.css" />
     <link rel="stylesheet" href="xs-certificates.css" />
     <link rel="stylesheet" href="xs-helm-apps.css" />
@@ -6336,18 +6337,23 @@
         .map(([t, i, ks]) => ({ t, i, ks: ks.split(" ") }));
       // A 堡垒机 menu item that covers several pages shows them as tabs above the page
       function renderSec(el) {
-        const s = secCur(), g = current() === "bastion" && BAS_G.find((x) => x.ks.length > 1 && x.ks.includes(s.k));
-        if (!g) return secBody(el, s);
+        const s0 = secCur(), s = basIsLive() && BAS_UNWIRED.includes(s0.k) ? SEC.find((x) => x.k === "req") : s0;
+        const g0 = current() === "bastion" && BAS_G.find((x) => x.ks.includes(s.k));
+        const g = g0 && (basIsLive() ? { t: g0.t, ks: g0.ks.filter((k) => !BAS_UNWIRED.includes(k)) } : g0);
+        if (!g || g.ks.length < 2) return secBody(el, s);
         el.innerHTML = `<div class="x-bar"><nav class="x-tabs" aria-label="${g.t}">${g.ks.map((k) => { const p = SEC.find((x) => x.k === k), n = (basIsLive() && k === "req") || BAS_UNWIRED.includes(k) ? 0 : p.n ? p.n() : 0;
           return `<button type="button" data-sh="${secHash(p)}"${p === s ? ' class="on" aria-current="page"' : ""}>${p.t}${n ? `<b>${n}</b>` : ""}</button>`; }).join("")}</nav></div><div></div>`;
         el.querySelectorAll("[data-sh]").forEach((b) => (b.onclick = () => navGo(b.dataset.sh)));
         secBody(el.lastElementChild, s);
       }
       // 未接入后端的堡垒机子页：live 模式明确标注为静态示例，避免把演示数据当成生产状态
-      const BAS_UNWIRED = ["mask", "db", "cmdap", "pwd", "lsec"];
+      // 实时模式下：数据脱敏、登录安全已接入后端（xs-bastion.js）；数据库审查、命令审批、改密计划尚未实现，直接隐藏而不是展示空壳
+      const BAS_UNWIRED = ["db", "cmdap", "pwd"];
       const basStaticNote = (s) => (!basIsLive() || current() !== "bastion" || !BAS_UNWIRED.includes(s.k) ? ""
         : `<p class="x-frac" style="margin:0 0 10px;padding:8px 12px;border:1px solid #ffe0a3;border-radius:8px;background:#fffaf0">${esc(s.t)} 尚未接入后端接口。</p>`);
       function secBody(el, s) {
+        if (basIsLive() && window.XSBastion && s.k === "mask") { window.XSBastion.renderMask(el); return; }
+        if (basIsLive() && window.XSBastion && s.k === "lsec") { window.XSBastion.renderLsec(el); return; }
         if (basIsLive() && BAS_UNWIRED.includes(s.k)) {
           el.innerHTML = phead(s.t, s.sub) + '<section class="x-panel"><p class="x-empty">该页面尚未接入真实数据接口，当前无可展示的数据。</p></section>';
           return;
@@ -7207,7 +7213,7 @@
         if (proto !== "SSH") return basNoConnector(r[0], proto);
         const grants = (BAS_LIVE.grants || []).filter((g) => g.asset_name === r[0]);
         if (!grants.length) {
-          dlg(`未授权 ${esc(r[0])}`, `<div class="x-form"><p class="x-aerr" role="alert">当前账号在「授权规则」里没有 ${esc(r[0])} 的生效授权，本次不会建立会话。</p><dl class="x-sum"><dt>资产</dt><dd>${esc(r[0])}   ${esc(r[1])}</dd><dt>所需条件</dt><dd>bastion:connect 权限 + 生效的授权规则 + 环境范围允许</dd><dt>授权来源</dt><dd class="x-mono">GET /api/v1/bastion/my/assets</dd></dl></div>`, '<button class="x-btn" data-close>知道了</button>');
+          dlg(`未授权 ${esc(r[0])}`, `<div class="x-form"><p class="x-aerr" role="alert">当前账号在「授权规则」里没有 ${esc(r[0])} 的生效授权，本次不会建立会话。</p><dl class="x-sum"><dt>资产</dt><dd>${esc(r[0])}   ${esc(r[1])}</dd><dt>所需条件</dt><dd>bastion:connect 权限 + 生效的授权规则 + 环境范围允许</dd><dt>处理方式</dt><dd>联系管理员在「访问策略」授权，或在「审批工单 → 访问申请」提交申请</dd></dl></div>`, '<button class="x-btn" data-close>知道了</button>');
           return;
         }
         const go = (g) => { closeAll(); basLiveSSH(g); };
@@ -7394,12 +7400,12 @@
             <p class="x-frac" style="margin:12px 0 0">探测时间：${esc(C.at || "尚未探测")}${live ? `   授权条目：${(BAS_LIVE.grants || []).length}` : "   当前为静态预览，未连接后端"}</p>
           </section>
           <section class="x-panel">
-            <div class="x-btool"><b>可访问资产</b><span class="x-frac">${live ? "来自 GET /bastion/my/assets 的生效授权" : "静态预览数据，未连接后端"}</span></div>
+            <div class="x-btool"><b>可访问资产</b><span class="x-frac">${live ? "已授权给你的资产，点击即可连接" : "静态预览数据，未连接后端"}</span></div>
             ${assets.length
               ? `<div class="x-bwtable">${tbl(["资产", "地址", "协议", "环境", "状态", "授权账号", "操作"], assets.map((r) => [esc(r[0]), `<span class="x-mono">${esc(r[1])}</span>`, esc(r[2]), esc(r[3]), live ? pillTag("已登记", "x-blue") : pillTag(r[4], r[4] === "在线" ? "x-green" : "x-grey"), `<span class="x-mono">${esc(acctOf(r[0]))}</span>`, `<span class="x-bops"><button class="x-btn x-btn--pri" data-bwconn="${esc(r[0])}" data-proto="${esc(r[2])}">连接</button><button class="x-btn" data-bwdet="${esc(r[0])}">详情</button></span>`]))}</div>`
               : '<p class="x-frac" style="margin:8px 0 0">后端还没有登记资产。先到「资产」页登记，或由管理员导入。</p>'}
           </section>
-          <section class="x-panel"><div class="x-btool"><b>最近会话</b><span class="x-frac">${live ? "来自 GET /bastion/sessions，需要 bastion:audit" : "静态预览数据"}</span></div><div id="bwSess"><p class="x-frac" style="margin:8px 0 0">加载中…</p></div></section>`;
+          <section class="x-panel"><div class="x-btool"><b>最近会话</b><span class="x-frac">${live ? "最近的 SSH 会话，可在「会话管理」回放录像" : "静态预览数据"}</span></div><div id="bwSess"><p class="x-frac" style="margin:8px 0 0">加载中…</p></div></section>`;
         el.querySelectorAll("[data-bwconn]").forEach((b) => (b.onclick = () => {
           const r = assets.find((x) => x[0] === b.dataset.bwconn);
           if (r) basConnect(r, b.dataset.proto);
@@ -7961,6 +7967,9 @@
       }
       // live 资产页：数据来自 bastion_assets，状态列不伪造「在线」，只显示「已登记」
       function basRenderLiveAssets(el) {
+        if (window.XSBastion) {
+          return window.XSBastion.renderAssets(el, { connect: (a) => basConnect([a.name, a.host, "", "SSH", "已登记"], "SSH") });
+        }
         const items = BAS_LIVE.assets || [];
         const list = nav.env === "全部" ? items : items.filter((a) => basEnvName(a.env) === nav.env);
         const rows = list.map((a) => {
@@ -16797,6 +16806,8 @@ spec:
     <script src="xs-topo-cards.js"></script>
     <script src="xs-live-ops.js"></script>
     <script src="xs-cicd-forms.js"></script>
+    <script src="xs-bastion.js"></script>
+    <script src="xs-branding.js"></script>
     <script src="xs-cicd-pipeline.js"></script>
     <script src="xs-platform-settings.js"></script>
     <script src="xs-channel-form.js"></script>

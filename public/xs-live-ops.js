@@ -56,8 +56,18 @@
     if (err.name === "AbortError") return "请求超时";
     if (err.status === 401 || err.code === 40100 || err.code === 40101) return "会话已失效，请重新登录";
     if (err.status === 403) return "权限不足：" + (err.message || "无访问权限");
-    return err.message || ("请求失败（HTTP " + (err.status || 0) + "）");
+    var m = err.message || "";
+    for (var i = 0; i < ERR_ZH.length; i++) if (ERR_ZH[i][0].test(m)) return ERR_ZH[i][1];
+    return m || ("请求失败（HTTP " + (err.status || 0) + "）");
   }
+  // 后端常见英文错误的中文说明（未列出的原样显示）
+  var ERR_ZH = [
+    [/no alert source belongs to this cluster/i, "当前集群还没有接入告警来源。请先在「集群 → 集成」接入 Prometheus / Alertmanager，告警会自动出现在这里。"],
+    [/^resource not found$|^not found$/i, "资源不存在或已被删除"],
+    [/already exists/i, "名称已存在，请换一个"],
+    [/environment .* not in your scope|not in your scope/i, "无权操作该环境的资源"],
+    [/route not found/i, "该功能的后端接口不可用，请确认服务端版本"]
+  ];
   function detailOf(err) {
     var d = err && err.details;
     if (d && typeof d === "object" && d !== null && "details" in d) return d.details;
@@ -536,9 +546,13 @@
     failed: "x-red", error: "x-red", firing: "x-red", rejected: "x-red", danger: "x-red", critical: "x-red",
     running: "x-blue", queued: "x-grey", pending: "x-grey", cancelling: "x-orange", cancelled: "x-grey",
     skipped: "x-grey", open: "x-orange", acked: "x-blue", awaiting_approval: "x-orange", approved: "x-blue",
-    active: "x-green", disabled: "x-grey", paused: "x-grey", write: "x-orange"
+    active: "x-green", disabled: "x-grey", paused: "x-grey", write: "x-orange", declared: "x-orange", acknowledged: "x-blue", assigned: "x-blue"
   };
-  function stTag(s) { return s == null || s === "" ? "—" : tag(s, ST_TAG[String(s)] || "x-grey"); }
+  // 状态值统一显示中文，未知值原样显示
+  var ST_NAME = { declared: "已声明", acknowledged: "处理中", resolved: "已解决", assigned: "已指派", note: "处理记录", firing: "告警中", pending: "等待中",
+    running: "运行中", succeeded: "成功", success: "成功", failed: "失败", cancelled: "已取消", canceled: "已取消", queued: "排队中", active: "进行中", closed: "已结束",
+    approved: "已批准", rejected: "已驳回", silenced: "已静默", expired: "已过期", enabled: "启用", disabled: "停用" };
+  function stTag(s) { return s == null || s === "" ? "—" : tag(ST_NAME[String(s)] || s, ST_TAG[String(s)] || "x-grey"); }
   var SEV_TAG = { p0: "x-red", p1: "x-orange", p2: "x-blue", p3: "x-grey", critical: "x-red", warning: "x-orange", info: "x-blue", none: "x-grey" };
   function sevTag(s) { return s == null || s === "" ? "—" : tag(s, SEV_TAG[String(s).toLowerCase()] || "x-grey"); }
   function mono(v) { return '<span class="x-mono">' + E(v == null ? "—" : v) + "</span>"; }
@@ -868,7 +882,24 @@
     }
     bindAppEnvs(f);
     bindAutomationSteps(f);
-    if (f.elements && f.elements.length) { try { f.elements[0].focus(); } catch (e) {} }
+    // 只给「新建 / 接入」类表单加 AI 与 YAML；认领、关闭、处理记录这类动作对话框保持简洁
+    if (/^(新建|新增|创建|接入|发起|添加)/.test(String(title)) && window.XSFormKit && typeof window.XSFormKit.enhance === "function") {
+      try {
+        window.XSFormKit.enhance(f, { scene: "ops.form." + title, fields: valueFields, extra: function () {
+          var out = {};
+          valueFields.forEach(function (fd) {
+            if (fd.kind === "structured") {
+              var section = f.querySelector('[data-xsf-name="' + fd.k + '"]');
+              if (section && window.XSStructuredForms) try { out[fd.k] = window.XSStructuredForms.read(section); } catch (e) {}
+            } else if (fd.kind === "appEnvs") { try { out[fd.k] = readAppEnvs(f); } catch (e) {} }
+            else if (fd.kind === "automationSteps") { try { out[fd.k] = readAutomationSteps(f); } catch (e) {} }
+          });
+          return out;
+        } });
+      } catch (e) {}
+    }
+    var firstInput = f.querySelector(".fk-ai input") || (f.elements && f.elements[0]);
+    if (firstInput) { try { firstInput.focus(); } catch (e) {} }
     return f;
   }
 
@@ -4470,8 +4501,8 @@
         var recentRows = recent.slice(0, 5).map(function (x) {
           return [mono("#" + x.id), '<a class="x-tlink" href="#/oncall/inc/' + E(x.id) + '">' + E(x.title) + "</a>", sevTag(x.severity), stTag(x.status), E(x.service || "—"), fmtMin(x.declared_at)];
         });
-        var html = (ovErr ? banner("值班概览（GET /oncall/overview）加载失败：" + errMsg(ovErr) + "；排班列表仍可用。") : "") + kpis +
-          panelHTML("当前值班（GET /oncall/current 聚合）", curRows.length ? tbl(["排班", "层级", "值班人", "环境", "开始", "结束", "类型", "下一班"], curRows) : emptyHTML("当前没有生效中的轮值，请先在排班中配置轮值层。")) +
+        var html = (ovErr ? banner("值班概览加载失败：" + errMsg(ovErr) + "；排班列表仍可用。") : "") + kpis +
+          panelHTML("当前值班", curRows.length ? tbl(["排班", "层级", "值班人", "环境", "开始", "结束", "类型", "下一班"], curRows) : emptyHTML("当前没有生效中的轮值，请先在排班中配置轮值层。")) +
           panelHTML("排班", schRows.length ? tbl(["ID", "名称", "环境", "时区", "状态", "说明", "更新时间", "操作"], schRows) : emptyHTML("暂无排班。点击右上角「+ 新建排班」，再在详情中配置轮值层。")) +
           panelHTML("最近故障", recentRows.length ? tbl(["ID", "标题", "级别", "状态", "服务", "声明时间"], recentRows) : emptyHTML("暂无故障记录"));
         if (!p.paint(t, html)) return;
@@ -4706,7 +4737,7 @@
           return [mono("#" + x.id), '<a class="x-tlink" href="#/oncall/inc/' + E(x.id) + '">' + E(x.title) + "</a>", sevTag(x.severity), E(x.service || "—"),
             E(x.env || "*"), fmtMin(x.declared_at), fmtMin(x.resolved_at), mins != null ? E(mins + " 分钟") : "—", E(x.resolve_note || "—")];
         });
-        var html = banner("后端暂无独立复盘实体，此页展示已解决故障及处理时间线（在故障详情中可追加处理记录）。") +
+        var html = '<p class="x-frac" style="margin:0 0 12px">复盘基于已解决故障的完整时间线：声明、指派、认领、处理记录与解决说明，点标题查看详情。</p>' +
           panelHTML("已解决故障", rows.length ? tbl(["ID", "标题", "级别", "服务", "环境", "声明", "解决", "历时", "解决说明"], rows) : emptyHTML("暂无已解决故障"));
         p.paint(t, html);
       }).catch(function (err) { p.error(t, err); });
@@ -4797,7 +4828,7 @@
         var pts = Array.isArray(data.points) ? data.points : [];
         var trend = pts.length > 1 ? '<p class="ops-sub">预算趋势（剩余 %）</p>' + spark(pts.map(function (pt) { return [pt.ts, pt.remaining_pct]; })) : "";
         infoModal("错误预算   " + (data.slo && data.slo.name ? data.slo.name : id), warn + cards +
-          '<p class="ops-sub">' + health + "   来源 " + E(data.source || "") + "   区间 " + fmtMin(data.from) + " → " + fmtMin(data.to) + "</p>" + trend + preBlock(b));
+          '<p class="ops-sub">' + health + "   来源 " + E(data.source || "") + "   区间 " + fmtMin(data.from) + " → " + fmtMin(data.to) + "</p>" + trend);
       }).catch(function (err) { toast(errMsg(err)); });
     }
     function entriesModal(s) {
