@@ -171,11 +171,13 @@ func (s *Service) RegisterPublic(r *gin.RouterGroup) {
 		if err := s.Get(c.Request.Context(), "platform.name", &name); err != nil || strings.TrimSpace(name) == "" {
 			name = ""
 		}
-		httpx.OK(c, gin.H{"name": strings.TrimSpace(name)})
+		a := s.appearance(c)
+		httpx.OK(c, gin.H{"name": strings.TrimSpace(name), "logo": a.Logo, "primary_color": a.PrimaryColor, "login_title": a.LoginTitle, "copyright": a.Copyright})
 	})
 }
 
 func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
+	s.registerAppearance(r)
 	r.GET("/settings/public", func(c *gin.Context) {
 		items, err := s.List(c.Request.Context(), "public.")
 		if err != nil {

@@ -57,3 +57,22 @@ func TestFirstSample(t *testing.T) {
 		t.Fatal("empty vector must have no data")
 	}
 }
+
+func TestEscalationRuleMatches(t *testing.T) {
+	a := Alert{Severity: "critical", Env: "prod", Labels: map[string]string{"namespace": "shop", "alertname": "PodCrashLooping"}}
+	if !(EscalationRule{Severities: []string{"critical"}, Env: "prod", MatchLabels: map[string]string{"namespace": "shop"}}).Matches(a) {
+		t.Fatal("should match")
+	}
+	if (EscalationRule{Severities: []string{"warning"}}).Matches(a) {
+		t.Fatal("severity mismatch must not match")
+	}
+	if (EscalationRule{Env: "test"}).Matches(a) {
+		t.Fatal("env mismatch must not match")
+	}
+	if (EscalationRule{MatchLabels: map[string]string{"namespace": "pay"}}).Matches(a) {
+		t.Fatal("label mismatch must not match")
+	}
+	if !(EscalationRule{}).Matches(a) {
+		t.Fatal("empty rule matches everything")
+	}
+}

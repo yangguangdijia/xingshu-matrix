@@ -261,6 +261,30 @@ func (s *Service) ChangePassword(ctx context.Context, p *rbac.Principal, oldPw, 
 	return nil
 }
 
+// ResetPassword 设置新密码（找回密码流程，调用方已验证一次性令牌）：校验密码策略、解除锁定、
+// 不要求再次改密，并撤销该用户全部会话。
+func (s *Service) ResetPassword(ctx context.Context, userID int64, newPw string) error {
+	u, err := s.repo.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := ValidatePassword(newPw, u.Username); err != nil {
+		return err
+	}
+	hash, err := HashPassword(newPw)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.UpdatePassword(ctx, u.ID, hash, false); err != nil {
+		return err
+	}
+	if err := s.repo.RevokeUserSessions(ctx, u.ID, ""); err != nil {
+		return err
+	}
+	s.InvalidateUser(u.ID)
+	return nil
+}
+
 // Sessions lists the active sessions of the principal.
 func (s *Service) Sessions(ctx context.Context, p *rbac.Principal) ([]Session, error) {
 	ss, err := s.repo.ListUserSessions(ctx, p.UserID)

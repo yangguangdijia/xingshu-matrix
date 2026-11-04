@@ -47,6 +47,8 @@ func (m *Module) registerOncall(r *gin.RouterGroup) {
 	g.POST("/incidents/:id/resolve", mg, m.ocIncidentAction("resolve"))
 	g.POST("/incidents/:id/notes", mg, m.ocIncidentAction("note"))
 
+	m.registerEscalation(g)
+
 	g.GET("/slos", rd, m.ocListSLOs)
 	g.POST("/slos", mg, m.ocSaveSLO)
 	g.GET("/slos/:id", rd, m.ocGetSLO)

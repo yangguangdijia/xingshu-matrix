@@ -11,6 +11,8 @@
     { k: "basic", t: "基本信息" },
     { k: "security", t: "安全策略" },
     { k: "sso", t: "企业登录（SSO）" },
+    { k: "appearance", t: "外观" },
+    { k: "smtp", t: "系统邮件" },
     { k: "retention", t: "审计与保留" },
     { k: "env", t: "环境与审批" },
     { k: "integrations", t: "通知与集成" },
@@ -209,6 +211,71 @@
           }, function (e) { out.textContent = "连接失败：" + errMsg(e); out.style.color = "#d43030"; });
         };
         bindSave(f, function () { return api("/settings/sso", { method: "PUT", body: collect() }); });
+      }, fail);
+    } else if (tab === "appearance") {
+      api("/settings/appearance").then(function (a) {
+        if (!active()) return;
+        a = a || {};
+        var logo = a.logo || "";
+        var presets = ["#1677ff", "#0f7b6c", "#7c3aed", "#d4380d", "#1d39c4", "#08979c"];
+        body.innerHTML = '<form class="xs-cfg-card" data-f><h3>外观</h3>' +
+          row("Logo", '<div style="display:flex;align-items:center;gap:12px"><span data-prev style="width:40px;height:40px;border:1px solid #e5e9f0;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:#fafbfc;overflow:hidden">' + (logo ? '<img src="' + esc(logo) + '" alt="" style="max-width:36px;max-height:36px">' : '<span style="font-size:12px;color:#8a94a3">默认</span>') + '</span>' +
+            '<label class="x-btn" style="cursor:pointer">上传图片<input type="file" accept="image/png,image/jpeg,image/svg+xml" data-file hidden></label><button type="button" class="x-btn" data-clear>恢复默认</button></div><div style="color:#8a94a3;font-size:12px;margin-top:4px">PNG / JPG / SVG，不超过 256 KB，建议正方形</div>') +
+          row("主题色", '<div style="display:flex;align-items:center;gap:8px"><input type="color" name="primary_color" value="' + esc(a.primary_color || "#1677ff") + '" style="width:44px;height:32px;padding:0;border:1px solid #e5e9f0;border-radius:6px">' +
+            presets.map(function (c) { return '<button type="button" data-preset="' + c + '" title="' + c + '" style="width:22px;height:22px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px #d0d5dd;background:' + c + ';cursor:pointer"></button>'; }).join("") + '</div>') +
+          row("登录页标题", '<input class="x-input" name="login_title" maxlength="40" value="' + esc(a.login_title || "") + '" placeholder="研发与运维，一个平台" style="width:420px">') +
+          row("版权信息", '<input class="x-input" name="copyright" maxlength="120" value="' + esc(a.copyright || "") + '" placeholder="© 2026 某某科技" style="width:420px">') +
+          '<p style="color:#8a94a3;font-size:13px;margin:12px 0 0">平台名称在「基本信息」里修改。保存后页面会刷新以应用新外观。</p>' + foot() + '</form>';
+        var f = body.querySelector("[data-f]");
+        var prev = f.querySelector("[data-prev]");
+        f.querySelector("[data-file]").onchange = function () {
+          var file = this.files && this.files[0];
+          if (!file) return;
+          if (file.size > 256 * 1024) { toast("图片超过 256 KB，请压缩后再上传"); return; }
+          var rd = new FileReader();
+          rd.onload = function () { logo = String(rd.result || ""); prev.innerHTML = '<img src="' + esc(logo) + '" alt="" style="max-width:36px;max-height:36px">'; };
+          rd.readAsDataURL(file);
+        };
+        f.querySelector("[data-clear]").onclick = function () { logo = ""; f.elements.primary_color.value = "#1677ff"; prev.innerHTML = '<span style="font-size:12px;color:#8a94a3">默认</span>'; };
+        [].forEach.call(f.querySelectorAll("[data-preset]"), function (b) { b.onclick = function () { f.elements.primary_color.value = b.getAttribute("data-preset"); }; });
+        bindSave(f, function () {
+          var col = f.elements.primary_color.value;
+          return api("/settings/appearance", { method: "PUT", body: { logo: logo, primary_color: col.toLowerCase() === "#1677ff" ? "" : col, login_title: V(f, "login_title"), copyright: V(f, "copyright") } })
+            .then(function () { setTimeout(function () { location.reload(); }, 600); });
+        });
+      }, fail);
+    } else if (tab === "smtp") {
+      api("/settings/smtp").then(function (r) {
+        if (!active()) return;
+        var c = (r && r.config) || {}, has = r && r.has_password;
+        var inp = function (n, v, ph, type, w) { return '<input class="x-input" name="' + n + '" type="' + (type || "text") + '" value="' + esc(v == null ? "" : v) + '" placeholder="' + esc(ph || "") + '" autocomplete="off" style="width:' + (w || 420) + 'px">'; };
+        var chk = function (n, v, t) { return '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="' + n + '"' + (v ? " checked" : "") + ' style="width:auto"> ' + esc(t) + "</label>"; };
+        body.innerHTML = '<form class="xs-cfg-card" data-f><h3>系统邮件（SMTP）</h3>' +
+          '<p style="margin:0 0 16px;color:#6b7785;font-size:13px">用于「忘记密码」等系统邮件。告警邮件在「可观测 → 通知渠道」里单独配置。</p>' +
+          row("启用", chk("enabled", c.enabled, "启用系统邮件，登录页开放「忘记密码」")) +
+          row("SMTP 服务器", inp("host", c.host, "smtp.example.com")) +
+          row("端口", inp("port", c.port || 465, "465", "number", 120) + '<div style="color:#8a94a3;font-size:12px;margin-top:4px">465 为 SSL；587 / 25 在服务器支持时使用 STARTTLS</div>') +
+          row("用户名", inp("username", c.username, "noreply@example.com")) +
+          row("密码 / 授权码", inp("password", "", has ? "已保存，留空不修改" : "邮箱的 SMTP 授权码", "password")) +
+          row("发件人", inp("from", c.from, "星枢 Matrix <noreply@example.com>")) +
+          row("平台访问地址", inp("site_url", c.site_url || location.origin, "https://matrix.example.com") + '<div style="color:#8a94a3;font-size:12px;margin-top:4px">邮件里的重置链接指向这个地址</div>') +
+          row("不加密连接", chk("insecure", c.insecure, "允许在不支持 TLS 的内网中继上发信（不推荐）")) +
+          '<div class="xs-cfg-foot"><button class="x-btn x-btn--pri" type="submit">保存</button><input class="x-input" data-to placeholder="测试收件邮箱" style="width:220px"><button class="x-btn" type="button" data-test>发送测试邮件</button><span data-tres style="font-size:13px;margin-left:8px"></span></div></form>';
+        var f = body.querySelector("[data-f]");
+        var collect = function () {
+          return { enabled: f.elements.enabled.checked, host: V(f, "host"), port: N(f, "port"), username: V(f, "username"), password: f.elements.password.value,
+            from: V(f, "from"), site_url: V(f, "site_url"), insecure: f.elements.insecure.checked };
+        };
+        f.querySelector("[data-test]").onclick = function () {
+          var out = f.querySelector("[data-tres]"), to = f.querySelector("[data-to]").value.trim();
+          if (!to) { out.textContent = "先填写测试收件邮箱"; out.style.color = "#d43030"; return; }
+          out.textContent = "正在发送…"; out.style.color = "#6b7785";
+          api("/settings/smtp/test", { method: "POST", body: Object.assign(collect(), { to: to }) }).then(function (t) {
+            if (t && t.ok) { out.textContent = "已发送，请到收件箱查收"; out.style.color = "#1a9b55"; }
+            else { out.textContent = "发送失败：" + ((t && t.error) || "未知错误"); out.style.color = "#d43030"; }
+          }, function (e) { out.textContent = "发送失败：" + errMsg(e); out.style.color = "#d43030"; });
+        };
+        bindSave(f, function () { return api("/settings/smtp", { method: "PUT", body: collect() }); });
       }, fail);
     } else if (tab === "about") {
       api("/version").then(function (v) {

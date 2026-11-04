@@ -380,6 +380,7 @@ func contains(list []string, v string) bool {
 func (m *Module) notifyAlerts(ctx context.Context, alerts []Alert) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	m.escalate(ctx, alerts)
 	policy := m.aiopsPolicy(ctx)
 	supplements := map[int64]string{}
 	for i := range alerts {

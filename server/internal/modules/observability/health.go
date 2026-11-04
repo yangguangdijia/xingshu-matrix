@@ -335,8 +335,24 @@ func (m *Module) scanClusterHealth(parent context.Context, cl healthCluster, pol
 		}
 	}
 	if complete {
-		_, _ = m.d.DB.Exec(ctx, `UPDATE obs_alerts SET status='resolved',ends_at=now(),last_received_at=now()
-			WHERE datasource_id=$1 AND status='firing' AND NOT(fingerprint=ANY($2::text[]))`, source, active)
+		if rows, err := m.d.DB.Query(ctx, `UPDATE obs_alerts SET status='resolved',ends_at=now(),last_received_at=now()
+			WHERE datasource_id=$1 AND status='firing' AND NOT(fingerprint=ANY($2::text[])) RETURNING id, alertname`, source, active); err == nil {
+			type res struct {
+				id   int64
+				name string
+			}
+			var done []res
+			for rows.Next() {
+				var r res
+				if rows.Scan(&r.id, &r.name) == nil {
+					done = append(done, r)
+				}
+			}
+			rows.Close()
+			for _, r := range done {
+				m.noteResolved(ctx, r.id, r.name)
+			}
+		}
 	}
 	if len(alerts) > 0 {
 		m.notifyAlerts(ctx, alerts)

@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/recovery"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/sso"
 	"net/http"
 	"time"
@@ -90,6 +91,7 @@ func New(d *app.Deps, c Core, mods []app.Module) *gin.Engine {
 	c.Settings.RegisterRoutes(authed)
 	platform.Register(authed, c.Settings)
 	(&sso.Service{DB: d.DB, Settings: c.Settings, Auth: c.Auth}).Register(public, authed)
+	(&recovery.Service{DB: d.DB, Settings: c.Settings, Auth: c.Auth, Limiter: c.Limiter}).Register(public, authed)
 	c.AuditDB.RegisterRoutes(authed)
 	c.Approval.RegisterRoutes(authed)
 	c.AI.RegisterRoutes(authed)

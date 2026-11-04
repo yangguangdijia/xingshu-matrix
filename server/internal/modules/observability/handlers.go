@@ -330,6 +330,9 @@ func (m *Module) alertWebhook(c *gin.Context) {
 			httpx.Fail(c, err)
 			return
 		}
+		if a.Status == "resolved" && prev == "firing" {
+			m.noteResolved(c, id, a.Labels["alertname"])
+		}
 		if notify {
 			newlyFiring = append(newlyFiring, Alert{ID: id, DatasourceID: dsID, Datasource: dsName, Env: env, Fingerprint: a.Fingerprint,
 				Alertname: a.Labels["alertname"], Severity: a.Labels["severity"], Status: "firing", Labels: a.Labels,

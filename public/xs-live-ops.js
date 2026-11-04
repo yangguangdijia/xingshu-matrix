@@ -1910,7 +1910,8 @@
           E(a.acked_by || a.closed_by || "—"),
           '<span class="ops-nowrap"><button class="x-btn" type="button" data-claim="' + i + '"' + (closed ? " disabled" : "") + ">认领</button>" +
           '<button class="x-btn" type="button" data-closea="' + i + '"' + (closed ? " disabled" : "") + ">关闭</button>" +
-          '<button class="x-btn" type="button" data-tl="' + i + '">时间线</button></span>'];
+          '<button class="x-btn" type="button" data-tl="' + i + '">时间线</button>' +
+          '<button class="x-btn" type="button" data-toinc="' + i + '">转故障</button></span>'];
       });
       var alertPanel = panelHTML("告警列表", filters + (items.length ? tbl(["状态", "级别", "告警", "环境", "摘要", "开始", "处理", "处理人", "操作"], rows) : emptyHTML("当前没有告警记录。Alertmanager Webhook 触发后会自动写入。")));
       return alertPanel + silencePanel();
@@ -1934,6 +1935,9 @@
       if (run) run.onclick = function () { F.q = fq.value.trim(); load(); };
       if (fq) fq.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); F.q = fq.value.trim(); load(); } };
       function pick(i) { return items[+i] || {}; }
+      [].slice.call(p.box.querySelectorAll("[data-toinc]")).forEach(function (b) {
+        b.onclick = function () { alertToIncident(pick(b.getAttribute("data-toinc"))); };
+      });
       [].slice.call(p.box.querySelectorAll("[data-claim]")).forEach(function (b) {
         b.onclick = function () { claimModal(pick(b.getAttribute("data-claim"))); };
       });
@@ -4616,9 +4620,85 @@
     }, "代班区间左闭右开；重叠时最晚开始（同开始取最大 id）者生效。");
   }
 
+  function scheduleOpts() {
+    return GET("/oncall/schedules", { page: 1, page_size: 100 }).then(function (data) {
+      return [{ v: 0, t: "不关联排班（不自动指派）" }].concat(asArray(data, ["items", "schedules"]).map(function (s) { return { v: s.id, t: s.name + (s.env ? "   " + s.env : "") }; }));
+    });
+  }
+  // 告警 → 故障（手动）：POST /oncall/incidents/from-alert/:alert_id
+  function alertToIncident(a) {
+    if (!a || !a.id) { toast("这条告警没有平台记录，无法转为故障"); return; }
+    scheduleOpts().then(function (opts) {
+      formModal("告警转为故障", [
+        { k: "severity", label: "故障级别", kind: "select", options: ["P1", "P2", "P3", "P4"], value: /critical|P0|P1/i.test(a.severity || "") ? "P1" : "P2" },
+        { k: "schedule_id", label: "关联排班（自动指派一线值班）", kind: "select", options: opts }
+      ], "转为故障", function (v) {
+        var body = { severity: v.severity };
+        if (+v.schedule_id) body.schedule_id = +v.schedule_id;
+        write(POST("/oncall/incidents/from-alert/" + encodeURIComponent(a.id), body), "").then(function (r) {
+          if (!r) return;
+          closeAll();
+          toast(r.created ? "已转为故障 INC-" + r.incident_id : "该告警已关联未解决的故障 INC-" + r.incident_id);
+          location.hash = "#/oncall/inc/" + r.incident_id;
+        });
+      }, "故障标题取告警摘要，时间线记录来源告警；告警恢复时会在故障时间线中提示。");
+    }).catch(function (err) { toast(errMsg(err)); });
+  }
+  // 告警升级规则：新触发的告警命中规则时自动声明故障
+  function escalationRules() {
+    Promise.all([GET("/oncall/escalation-rules"), scheduleOpts()]).then(function (rs) {
+      var items = asArray(rs[0], ["items"]), opts = rs[1];
+      var schName = function (id) { var o = opts.filter(function (x) { return String(x.v) === String(id || 0); })[0]; return id && o ? o.t : "—"; };
+      var rows = items.map(function (r, i) {
+        var lb = r.match_labels || {};
+        return "<tr><td>" + E(r.name) + "</td><td>" + (r.enabled ? "启用" : "停用") + "</td><td>" + E((r.severities || []).join("、") || "任意") + "</td><td>" + E(r.env || "任意") +
+          "</td><td>" + E(Object.keys(lb).map(function (k) { return k + "=" + lb[k]; }).join("，") || "—") + "</td><td>" + E(r.incident_severity) + "</td><td>" + E(schName(r.schedule_id)) +
+          '</td><td class="ops-nowrap"><button class="x-btn" type="button" data-er-edit="' + i + '">编辑</button><button class="x-btn" type="button" data-er-del="' + i + '">删除</button></td></tr>';
+      }).join("");
+      dlg("告警升级规则", '<div class="x-form"><p class="x-desc" style="margin:0">新触发的告警按顺序匹配规则，命中第一条后自动声明故障并按排班指派一线值班；同一告警在故障解决前不会重复声明。</p>' +
+        (items.length ? '<table class="x-table"><thead><tr><th>名称</th><th>状态</th><th>告警级别</th><th>环境</th><th>标签</th><th>故障级别</th><th>排班</th><th>操作</th></tr></thead><tbody>' + rows + "</tbody></table>" : '<p class="x-desc">还没有规则。</p>') +
+        "</div>", '<button class="x-btn" type="button" data-close>关闭</button><button class="x-btn x-btn--pri" type="button" data-er-new>+ 新建规则</button>');
+      var box = document.querySelector(".x-modal:not([hidden])") || document;
+      var nb = box.querySelector("[data-er-new]"); if (nb) nb.onclick = function () { ruleModal(null, opts); };
+      [].forEach.call(box.querySelectorAll("[data-er-edit]"), function (b) { b.onclick = function () { ruleModal(items[+b.getAttribute("data-er-edit")], opts); }; });
+      [].forEach.call(box.querySelectorAll("[data-er-del]"), function (b) {
+        b.onclick = function () {
+          var r = items[+b.getAttribute("data-er-del")];
+          confirmDo("删除规则「" + r.name + "」", "删除后新告警不再按这条规则升级，已声明的故障不受影响。", "删除", function () {
+            write(DEL("/oncall/escalation-rules/" + r.id), "规则已删除").then(function (x) { if (x) escalationRules(); });
+          });
+        };
+      });
+    }).catch(function (err) { toast(errMsg(err)); });
+  }
+  function ruleModal(r, opts) {
+    r = r || {};
+    var lb = r.match_labels || {};
+    formModal(r.id ? "编辑升级规则" : "新建升级规则", [
+      { k: "name", label: "名称", required: true, value: r.name || "", placeholder: "生产严重告警升级" },
+      { k: "enabled", label: "启用", kind: "checkbox", value: r.id ? !!r.enabled : true, hint: "启用" },
+      { k: "severities", label: "告警级别（逗号分隔，留空为任意）", value: (r.severities || ["critical"]).join(","), placeholder: "critical,P0,P1" },
+      { k: "env", label: "环境（留空为任意）", value: r.env || "", placeholder: "prod" },
+      { k: "labels", label: "匹配标签（每行 key=value，全部相等才命中）", kind: "textarea", rows: 3, value: Object.keys(lb).map(function (k) { return k + "=" + lb[k]; }).join("\n"), placeholder: "namespace=shop" },
+      { k: "incident_severity", label: "故障级别", kind: "select", options: ["P1", "P2", "P3", "P4"], value: r.incident_severity || "P2" },
+      { k: "schedule_id", label: "关联排班（自动指派一线值班）", kind: "select", options: opts, value: r.schedule_id || 0 }
+    ], "保存", function (v) {
+      var labels = {}, bad = "";
+      String(v.labels || "").split(/\n/).forEach(function (line) {
+        line = line.trim(); if (!line) return;
+        var i = line.indexOf("="); if (i <= 0) { bad = line; return; }
+        labels[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+      });
+      if (bad) { toast("标签格式应为 key=value：" + bad); return; }
+      var body = { name: v.name, enabled: !!v.enabled, severities: String(v.severities || "").split(/[,，\s]+/).filter(Boolean), env: v.env, match_labels: labels, incident_severity: v.incident_severity };
+      if (+v.schedule_id) body.schedule_id = +v.schedule_id;
+      write(r.id ? PUT("/oncall/escalation-rules/" + r.id, body) : POST("/oncall/escalation-rules", body), "规则已保存").then(function (x) { if (x) { closeAll(); escalationRules(); } });
+    });
+  }
   function ocIncidents(el) {
-    var p = livePage(el, "故障管理", "故障声明、认领、解决与时间线", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn x-btn--pri" type="button" data-newinc>+ 发起故障</button>');
+    var p = livePage(el, "故障管理", "故障声明、认领、解决与时间线", '<button class="x-btn" type="button" data-refresh>刷新</button><button class="x-btn" type="button" data-escrules>告警升级规则</button><button class="x-btn x-btn--pri" type="button" data-newinc>+ 发起故障</button>');
     el.querySelector("[data-refresh]").onclick = function () { ocIncidents(el); };
+    el.querySelector("[data-escrules]").onclick = function () { escalationRules(); };
     el.querySelector("[data-newinc]").onclick = function () { incidentModal(function () { ocIncidents(el); }); };
     function load() {
       var t = p.newToken();
