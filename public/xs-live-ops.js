@@ -2059,7 +2059,7 @@
             '<button class="x-btn" type="button" data-chtoggle="' + E(c.id) + '">' + (c.enabled ? "停用" : "启用") + "</button>" +
             '<button class="x-btn" type="button" data-chdel="' + E(c.id) + '">删除</button></span>'];
         });
-        var html = panelHTML("通知渠道", list.length ? tbl(["名称", "类型", "状态", "级别过滤", "环境过滤", "更新时间", "操作"], rows) : emptyHTML("尚未配置通知渠道。支持飞书 / 钉钉 / 企业微信 / 邮件。"));
+        var html = panelHTML("通知渠道", list.length ? tbl(["名称", "类型", "状态", "级别过滤", "环境过滤", "更新时间", "操作"], rows) : emptyHTML("尚未配置通知渠道。支持飞书 / 钉钉 / 企业微信 / 邮件 / Slack / 通用 Webhook。"));
         if (!p.paint(t, html)) return;
         bindChannels(list);
       }).catch(function (err) { p.error(t, err); });
@@ -2079,7 +2079,7 @@
           b.disabled = true;
           POST("/observability/channels/" + encodeURIComponent(b.getAttribute("data-chtest")) + "/test").then(function (r) {
             b.disabled = false;
-            toast("测试消息已发送" + (r && r.ok === false ? "失败：" + (r.error || r.message) : ""));
+            toast(r && r.ok === false ? "测试失败：" + (r.error || r.message || "对方未接受消息") : "测试消息已发送，请到对应渠道确认");
           }).catch(function (err) { b.disabled = false; toast(errMsg(err)); });
         };
       });

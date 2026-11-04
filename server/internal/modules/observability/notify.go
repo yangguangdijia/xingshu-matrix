@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,6 +89,16 @@ func validateChannel(typ string, cfg *ChannelConfig) error {
 		if err != nil || u.Scheme != "https" || u.Host == "" {
 			return httpx.Validation("webhook must be an https URL")
 		}
+	case "slack":
+		u, err := url.Parse(cfg.Webhook)
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			return httpx.Validation("webhook must be an https URL")
+		}
+	case "webhook":
+		u, err := url.Parse(cfg.Webhook)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
+			return httpx.Validation("webhook must be an http(s) URL without credentials")
+		}
 	case "email":
 		if cfg.Host == "" || cfg.From == "" || len(cfg.To) == 0 {
 			return httpx.Validation("email requires host, from and to")
@@ -101,7 +112,7 @@ func validateChannel(typ string, cfg *ChannelConfig) error {
 			}
 		}
 	default:
-		return httpx.Validation("type must be dingtalk|feishu|wecom|email")
+		return httpx.Validation("type must be dingtalk|feishu|wecom|slack|webhook|email")
 	}
 	return nil
 }
@@ -282,6 +293,59 @@ func (m *Module) deleteChannel(c *gin.Context) {
 	respond(c, gin.H{"deleted": ch.ID}, err)
 }
 
+// testChannelDraft sends a test message with an unsaved configuration (used
+// by the create / edit form). When id is given, empty secret fields fall back
+// to the stored channel's values, so editing never requires re-entering them.
+func (m *Module) testChannelDraft(c *gin.Context) {
+	var in struct {
+		channelInput
+		ID int64 `json:"id"`
+	}
+	if !httpx.Bind(c, &in) {
+		return
+	}
+	if in.Config == nil {
+		httpx.Fail(c, httpx.Validation("config required"))
+		return
+	}
+	cfg := *in.Config
+	if in.ID != 0 {
+		cur, err := m.scanChannel(m.d.DB.QueryRow(c, `SELECT `+chCols+` FROM obs_channels WHERE id=$1`, in.ID))
+		if err != nil {
+			httpx.Fail(c, err)
+			return
+		}
+		if cur.Type != in.Type {
+			httpx.Fail(c, httpx.Validation("type cannot be changed"))
+			return
+		}
+		mk := cur.masked().Config
+		if cfg.Secret == "" || cfg.Secret == mk.Secret {
+			cfg.Secret = cur.Config.Secret
+		}
+		if cfg.Password == "" || cfg.Password == mk.Password {
+			cfg.Password = cur.Config.Password
+		}
+		if cfg.Webhook == "" || cfg.Webhook == mk.Webhook {
+			cfg.Webhook = cur.Config.Webhook
+		}
+	}
+	if err := validateChannel(in.Type, &cfg); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	ch := &Channel{Name: in.Name, Type: in.Type, Config: cfg}
+	title := "【星枢 Matrix】通知渠道测试"
+	body := fmt.Sprintf("这是一条来自星枢 Matrix 的测试消息。\n渠道：%s (%s)\n操作人：%s\n时间：%s",
+		ch.Name, ch.Type, rbac.PrincipalFrom(c).Username, time.Now().Format("2006-01-02 15:04:05 MST"))
+	err := sendChannel(c, ch, title, body)
+	res := gin.H{"ok": err == nil}
+	if err != nil {
+		res["error"] = err.Error()
+	}
+	httpx.OK(c, res)
+}
+
 func (m *Module) testChannel(c *gin.Context) {
 	ch, ok := m.loadChannel(c)
 	if !ok {
@@ -423,7 +487,7 @@ func sendChannel(ctx context.Context, ch *Channel, title, body string) error {
 			u += sep(u) + "timestamp=" + ts + "&sign=" + url.QueryEscape(sign)
 		}
 		return postRobot(ctx, u, map[string]any{"msgtype": "markdown",
-			"markdown": map[string]any{"title": title, "text": "### " + title + "\n\n" + mdLines(body)}})
+			"markdown": map[string]any{"title": title, "text": "### " + title + "\n\n" + mdLines(body)}}, nil)
 	case "feishu":
 		msg := map[string]any{"msg_type": "text", "content": map[string]any{"text": title + "\n" + body}}
 		if cfg.Secret != "" {
@@ -432,10 +496,24 @@ func sendChannel(ctx context.Context, ch *Channel, title, body string) error {
 			msg["timestamp"] = ts
 			msg["sign"] = hmacB64(ts+"\n"+cfg.Secret, "")
 		}
-		return postRobot(ctx, cfg.Webhook, msg)
+		return postRobot(ctx, cfg.Webhook, msg, nil)
 	case "wecom":
 		return postRobot(ctx, cfg.Webhook, map[string]any{"msgtype": "markdown",
-			"markdown": map[string]any{"content": "**" + title + "**\n" + body}})
+			"markdown": map[string]any{"content": "**" + title + "**\n" + body}}, nil)
+	case "slack":
+		return postRobot(ctx, cfg.Webhook, map[string]any{"text": "*" + title + "*\n" + body}, nil)
+	case "webhook":
+		payload := map[string]any{"source": "xingshu-matrix", "channel": ch.Name, "title": title, "text": body,
+			"sent_at": time.Now().UTC().Format(time.RFC3339)}
+		var hdr map[string]string
+		if cfg.Secret != "" {
+			b, _ := json.Marshal(payload)
+			h := hmac.New(sha256.New, []byte(cfg.Secret))
+			h.Write(b)
+			hdr = map[string]string{"X-Matrix-Signature": "sha256=" + hex.EncodeToString(h.Sum(nil))}
+			return postRaw(ctx, cfg.Webhook, b, hdr)
+		}
+		return postRobot(ctx, cfg.Webhook, payload, nil)
 	case "email":
 		return sendMail(ctx, cfg, title, body)
 	}
@@ -452,13 +530,20 @@ func sep(u string) string {
 func mdLines(s string) string { return strings.ReplaceAll(s, "\n", "  \n") }
 
 // postRobot posts JSON to a chat robot and checks its errcode/code field.
-func postRobot(ctx context.Context, u string, payload any) error {
+func postRobot(ctx context.Context, u string, payload any, hdr map[string]string) error {
 	b, _ := json.Marshal(payload)
+	return postRaw(ctx, u, b, hdr)
+}
+
+func postRaw(ctx context.Context, u string, b []byte, hdr map[string]string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
 	resp, err := notifyHTTP.Do(req)
 	if err != nil {
 		return err

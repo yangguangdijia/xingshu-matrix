@@ -118,6 +118,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	ch := g.Group("/channels")
 	ch.GET("", rbac.RequirePerm(PermNotify), m.listChannels)
 	ch.POST("", rbac.RequirePerm(PermNotify), m.createChannel)
+	ch.POST("/test", rbac.RequirePerm(PermNotify), m.testChannelDraft)
 	ch.GET("/:id", rbac.RequirePerm(PermNotify), m.getChannel)
 	ch.PUT("/:id", rbac.RequirePerm(PermNotify), m.updateChannel)
 	ch.DELETE("/:id", rbac.RequirePerm(PermNotify), m.deleteChannel)

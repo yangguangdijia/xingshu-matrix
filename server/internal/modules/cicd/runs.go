@@ -536,11 +536,26 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 		}
 		cs, ns := conn.cs, conn.namespace
 		rt = &runnerCtx{cs: cs, ns: ns, secret: fmt.Sprintf("cicd-run-%d", runID)}
-		gitURL, err := m.cloneURL(a)
+		gitURL, sshKey, err := m.cloneSource(ctx, a)
 		if err != nil {
 			return err
 		}
-		if err := rt.createSecret(ctx, map[string]string{"git_url": gitURL}, runID); err != nil {
+		data := map[string]string{"git_url": gitURL}
+		if sshKey != "" {
+			data["ssh_key"] = strings.TrimRight(sshKey, "\n") + "\n"
+			a.sshClone = true
+		}
+		for i, s := range pl.Stages {
+			if s.Type != "build" || s.RegistryCredentialID == 0 {
+				continue
+			}
+			cfg, err := m.registryConfig(ctx, s.RegistryCredentialID)
+			if err != nil {
+				return fmt.Errorf("stage %s registry credential: %w", s.Name, err)
+			}
+			data[fmt.Sprintf("dockerconfig-%d", i)] = string(cfg)
+		}
+		if err := rt.createSecret(ctx, data, runID); err != nil {
 			return fmt.Errorf("create run secret in %s: %w", ns, err)
 		}
 		defer func() {
@@ -553,7 +568,7 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 		}
 		logf := lw.stage(i)
 		withholdOutput := stageUsesSecretReference(s) ||
-			(a.gitTokenEnc != "" && (s.Type == "build" || s.Type == "test" || s.Type == "script"))
+			((a.gitTokenEnc != "" || a.CredentialID != 0) && (s.Type == "build" || s.Type == "test" || s.Type == "script"))
 		if withholdOutput {
 			logf = func(string, ...any) {}
 		}
@@ -568,6 +583,10 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 				job = strings.TrimRight(job[:63], "-")
 			}
 			m.setStage(runID, i, "running", job, "")
+			if s.RegistryCredentialID != 0 {
+				s.RegistrySecret = ""
+				s.registryKey = fmt.Sprintf("dockerconfig-%d", i)
+			}
 			spec := stagePod(a, run, s, rt.secret)
 			serr = runJob(ctx, rt.cs, rt.ns, job, runID, spec, s.TimeoutSec, logf)
 		case "deploy":
@@ -602,6 +621,54 @@ func stageUsesSecretReference(stage Stage) bool {
 		}
 	}
 	return false
+}
+
+// cloneSource resolves how the run clones the repository: an https URL with
+// embedded credentials, or the plain URL plus an SSH private key.
+func (m *Module) cloneSource(ctx context.Context, a *Application) (string, string, error) {
+	if a.CredentialID == 0 {
+		u, err := m.cloneURL(a)
+		return u, "", err
+	}
+	cr, err := m.loadCredential(ctx, a.CredentialID)
+	if err != nil {
+		return "", "", fmt.Errorf("load git credential: %w", err)
+	}
+	secret, err := m.credentialSecret(cr)
+	if err != nil {
+		return "", "", err
+	}
+	switch cr.Type {
+	case "ssh_key":
+		return a.RepoURL, secret, nil
+	case "git_token", "git_basic":
+		if !strings.HasPrefix(a.RepoURL, "https://") && !strings.HasPrefix(a.RepoURL, "http://") {
+			return "", "", errors.New("token / password credentials need an http(s) repository URL")
+		}
+		user := cr.Username
+		if user == "" {
+			user = "oauth2"
+		}
+		scheme, rest, _ := strings.Cut(a.RepoURL, "://")
+		return scheme + "://" + urlUserinfo(user, secret) + "@" + rest, "", nil
+	}
+	return "", "", errors.New("credential is not a Git credential")
+}
+
+// registryConfig renders the dockerconfigjson for a registry credential.
+func (m *Module) registryConfig(ctx context.Context, id int64) ([]byte, error) {
+	cr, err := m.loadCredential(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if cr.Type != "registry" {
+		return nil, errors.New("credential is not a registry credential")
+	}
+	secret, err := m.credentialSecret(cr)
+	if err != nil {
+		return nil, err
+	}
+	return dockerConfigJSON(cr.Host, cr.Username, secret)
 }
 
 // cloneURL embeds the app's Git credentials (decrypted) into an https URL.

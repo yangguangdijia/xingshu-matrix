@@ -82,7 +82,11 @@ func stagePod(a *Application, r *Run, s Stage, secret string) corev1.PodSpec {
 			"--dockerfile=" + path.Join(srcDir, a.Dockerfile),
 			"--destination=" + img,
 		}, s.ExtraArgs...)
-		if s.RegistrySecret != "" {
+		if s.registryKey != "" {
+			vols = append(vols, corev1.Volume{Name: "docker-config", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: secret, Items: []corev1.KeyToPath{{Key: s.registryKey, Path: "config.json"}}}}})
+			step.VolumeMounts = append(step.VolumeMounts, corev1.VolumeMount{Name: "docker-config", MountPath: "/kaniko/.docker", ReadOnly: true})
+		} else if s.RegistrySecret != "" {
 			vols = append(vols, corev1.Volume{Name: "docker-config", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
 				SecretName: s.RegistrySecret, Items: []corev1.KeyToPath{{Key: ".dockerconfigjson", Path: "config.json"}}}}})
 			step.VolumeMounts = append(step.VolumeMounts, corev1.VolumeMount{Name: "docker-config", MountPath: "/kaniko/.docker", ReadOnly: true})
@@ -98,6 +102,14 @@ func stagePod(a *Application, r *Run, s Stage, secret string) corev1.PodSpec {
 				LocalObjectReference: corev1.LocalObjectReference{Name: secret}, Key: "git_url"}}},
 			{Name: "BRANCH", Value: r.Branch}, {Name: "COMMIT", Value: r.Commit},
 		},
+	}
+	if a.sshClone {
+		mode := int32(0o400)
+		vols = append(vols, corev1.Volume{Name: "git-ssh", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName: secret, DefaultMode: &mode, Items: []corev1.KeyToPath{{Key: "ssh_key", Path: "id"}}}}})
+		clone.VolumeMounts = append(clone.VolumeMounts, corev1.VolumeMount{Name: "git-ssh", MountPath: "/root/.ssh-key", ReadOnly: true})
+		clone.Env = append(clone.Env, corev1.EnvVar{Name: "GIT_SSH_COMMAND",
+			Value: "ssh -i /root/.ssh-key/id -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/known_hosts"})
 	}
 	return corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, InitContainers: []corev1.Container{clone},
 		Containers: []corev1.Container{step}, Volumes: vols}

@@ -294,9 +294,9 @@ func (m *Module) applyCICDConfigMutation(ctx context.Context, change cicdConfigM
 			return 0, err
 		}
 		var id int64
-		err = m.db.QueryRow(ctx, `INSERT INTO cicd_applications(name,repo_url,branch,dockerfile,context_dir,image_repo,git_username,git_token_enc,webhook_secret_enc,envs)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-			in.Name, in.RepoURL, in.Branch, in.Dockerfile, in.ContextDir, in.ImageRepo, in.GitUsername, gitEnc, webhookEnc, envs).Scan(&id)
+		err = m.db.QueryRow(ctx, `INSERT INTO cicd_applications(name,repo_url,branch,dockerfile,context_dir,image_repo,git_username,git_token_enc,webhook_secret_enc,envs,credential_id)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11::bigint,0)) RETURNING id`,
+			in.Name, in.RepoURL, in.Branch, in.Dockerfile, in.ContextDir, in.ImageRepo, in.GitUsername, gitEnc, webhookEnc, envs, in.CredentialID).Scan(&id)
 		return id, err
 	case "application.update":
 		if change.Application == nil || m.d.Crypto == nil || change.ExpectedUpdatedAt == nil {
@@ -317,8 +317,8 @@ func (m *Module) applyCICDConfigMutation(ctx context.Context, change cicdConfigM
 			return 0, err
 		}
 		tag, err := m.db.Exec(ctx, `UPDATE cicd_applications SET name=$2,repo_url=$3,branch=$4,dockerfile=$5,context_dir=$6,image_repo=$7,
-			git_username=$8,git_token_enc=$9,envs=$10,updated_at=now() WHERE id=$1 AND updated_at=$11`,
-			change.ID, in.Name, in.RepoURL, in.Branch, in.Dockerfile, in.ContextDir, in.ImageRepo, in.GitUsername, gitEnc, envs, *change.ExpectedUpdatedAt)
+			git_username=$8,git_token_enc=$9,envs=$10,credential_id=NULLIF($12::bigint,0),updated_at=now() WHERE id=$1 AND updated_at=$11`,
+			change.ID, in.Name, in.RepoURL, in.Branch, in.Dockerfile, in.ContextDir, in.ImageRepo, in.GitUsername, gitEnc, envs, *change.ExpectedUpdatedAt, in.CredentialID)
 		if err != nil || tag.RowsAffected() == 0 {
 			return 0, httpx.Conflict("application changed while approval was pending")
 		}
@@ -530,6 +530,9 @@ func (m *Module) validateConfigChange(ctx context.Context, change cicdConfigMuta
 		if err := m.validateApplicationTargets(ctx, change.Application.Envs); err != nil {
 			return err
 		}
+		if _, err := m.validateCredentialRef(ctx, change.Application.CredentialID, true); err != nil {
+			return err
+		}
 	case "pipeline.save":
 		if change.Pipeline == nil {
 			return httpx.Validation("invalid pipeline configuration")
@@ -539,6 +542,9 @@ func (m *Module) validateConfigChange(ctx context.Context, change cicdConfigMuta
 			return httpx.Conflict("application changed while approval was pending")
 		}
 		if err := validateStages(change.Pipeline.Stages, app); err != nil {
+			return err
+		}
+		if err := m.validatePipelineCredentials(ctx, change.Pipeline.Stages); err != nil {
 			return err
 		}
 	case "argocd.create", "argocd.update":

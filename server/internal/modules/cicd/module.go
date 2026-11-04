@@ -134,6 +134,12 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.POST("/jenkins", manage, m.createJenkins)
 	g.DELETE("/jenkins/:id", manage, m.deleteRow("cicd_jenkins", "jenkins"))
 
+	g.GET("/credentials", read, m.listCredentials)
+	g.POST("/credentials", manage, m.createCredential)
+	g.PUT("/credentials/:id", manage, m.updateCredential)
+	g.DELETE("/credentials/:id", manage, m.deleteCredential)
+	g.POST("/repos/probe", read, m.probeRepo)
+
 	g.GET("/applications", read, m.listApps)
 	g.POST("/applications", manage, m.createApp)
 	g.GET("/applications/:id", read, m.getApp)
@@ -225,12 +231,14 @@ type Application struct {
 	ImageRepo     string      `json:"image_repo"`
 	GitUsername   string      `json:"git_username"`
 	GitToken      string      `json:"git_token,omitempty"` // input; output masked
+	CredentialID  int64       `json:"credential_id"`       // cicd_credentials (git_*/ssh_key); 0 = none
 	WebhookSecret string      `json:"webhook_secret,omitempty"`
 	Envs          []EnvTarget `json:"envs"`
 	CreatedAt     time.Time   `json:"created_at"`
 	UpdatedAt     time.Time   `json:"updated_at"`
 
 	gitTokenEnc, webhookEnc string
+	sshClone                bool // runtime: clone with the SSH key in the run Secret
 }
 
 func (a *Application) env(name string) (*EnvTarget, error) {
@@ -244,18 +252,21 @@ func (a *Application) env(name string) (*EnvTarget, error) {
 
 // Stage is one step of a pipeline.
 type Stage struct {
-	Name           string            `json:"name"`
-	Type           string            `json:"type"` // build | test | script | deploy | jenkins
-	Image          string            `json:"image,omitempty"`
-	Commands       []string          `json:"commands,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
-	RegistrySecret string            `json:"registry_secret,omitempty"` // dockerconfigjson Secret in runner namespace (build)
-	ExtraArgs      []string          `json:"extra_args,omitempty"`      // extra Kaniko args (build)
-	DeployEnv      string            `json:"deploy_env,omitempty"`      // deploy
-	JenkinsID      int64             `json:"jenkins_id,omitempty"`      // jenkins
-	JenkinsJob     string            `json:"jenkins_job,omitempty"`
-	Params         map[string]string `json:"params,omitempty"`
-	TimeoutSec     int               `json:"timeout_sec,omitempty"`
+	Name                 string            `json:"name"`
+	Type                 string            `json:"type"` // build | test | script | deploy | jenkins
+	Image                string            `json:"image,omitempty"`
+	Commands             []string          `json:"commands,omitempty"`
+	Env                  map[string]string `json:"env,omitempty"`
+	RegistrySecret       string            `json:"registry_secret,omitempty"`        // dockerconfigjson Secret in runner namespace (build)
+	RegistryCredentialID int64             `json:"registry_credential_id,omitempty"` // cicd_credentials registry (build); wins over registry_secret
+	ExtraArgs            []string          `json:"extra_args,omitempty"`             // extra Kaniko args (build)
+	DeployEnv            string            `json:"deploy_env,omitempty"`             // deploy
+	JenkinsID            int64             `json:"jenkins_id,omitempty"`             // jenkins
+	JenkinsJob           string            `json:"jenkins_job,omitempty"`
+	Params               map[string]string `json:"params,omitempty"`
+	TimeoutSec           int               `json:"timeout_sec,omitempty"`
+
+	registryKey string // runtime: key of the dockerconfigjson in the run Secret
 }
 
 var sensitiveStageKey = regexp.MustCompile(`(?i)(password|passwd|token|secret|credential|api[_-]?key|private[_-]?key|authorization|access[_-]?key|client[_-]?secret)`)
@@ -433,7 +444,12 @@ func (m *Module) validateApplicationTargets(ctx context.Context, envs []EnvTarge
 	return validateHelmSet(envs)
 }
 
+var scpRepo = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._~/-]+$`)
+
 func validateApplicationRepoURL(value string) error {
+	if scpRepo.MatchString(strings.TrimSpace(value)) { // git@host:org/repo.git (SSH key credential)
+		return nil
+	}
 	parsed, err := url.Parse(strings.TrimSpace(value))
 	if err != nil || parsed.User != nil || inlineSecretText(parsed.RawQuery) || inlineSecretText(parsed.Fragment) {
 		return httpx.Validation("repository URL must not contain credentials")
@@ -622,13 +638,13 @@ func (m *Module) jenkinsClient(ctx context.Context, id int64) (*jenkins, error) 
 
 // ---------------------------------------------------------------- applications
 
-const appCols = `id,name,repo_url,branch,dockerfile,context_dir,image_repo,git_username,git_token_enc,webhook_secret_enc,envs,created_at,updated_at`
+const appCols = `id,name,repo_url,branch,dockerfile,context_dir,image_repo,git_username,git_token_enc,webhook_secret_enc,envs,COALESCE(credential_id,0),created_at,updated_at`
 
 func scanApp(row pgx.Row) (*Application, error) {
 	var a Application
 	var envs []byte
 	if err := row.Scan(&a.ID, &a.Name, &a.RepoURL, &a.Branch, &a.Dockerfile, &a.ContextDir, &a.ImageRepo, &a.GitUsername,
-		&a.gitTokenEnc, &a.webhookEnc, &envs, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		&a.gitTokenEnc, &a.webhookEnc, &envs, &a.CredentialID, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		return nil, notFound(err)
 	}
 	if err := json.Unmarshal(envs, &a.Envs); err != nil {
@@ -767,6 +783,10 @@ func (m *Module) createApp(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
+	if _, err := m.validateCredentialRef(c, in.CredentialID, true); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	secret := randSecret()
 	change := cicdConfigMutation{Kind: "application.create", Application: &in, WebhookSecret: secret}
 	for _, env := range in.Envs {
@@ -831,6 +851,10 @@ func (m *Module) updateApp(c *gin.Context) {
 		}
 	}
 	if err := m.validateApplicationTargets(c, in.Envs); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if _, err := m.validateCredentialRef(c, in.CredentialID, true); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
@@ -976,6 +1000,10 @@ func (m *Module) savePipeline(c *gin.Context, id int64) {
 		return
 	}
 	if err := validateStages(in.Stages, a); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if err := m.validatePipelineCredentials(c, in.Stages); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
