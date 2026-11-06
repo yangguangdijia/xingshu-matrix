@@ -178,7 +178,7 @@ func (s *Service) issue(ctx context.Context, cfg mail.Config, acct, ip string) {
 	var username, email, hash, status string
 	err := s.DB.QueryRow(ctx, `SELECT id, username, email, password_hash, status FROM users
 		WHERE lower(username)=lower($1) OR (email<>'' AND lower(email)=lower($1)) ORDER BY id LIMIT 1`, acct).Scan(&id, &username, &email, &hash, &status)
-	if err != nil || email == "" || status != "active" || strings.HasPrefix(hash, "!sso:") {
+	if err != nil || email == "" || status != "active" || strings.HasPrefix(hash, "!sso:") || strings.HasPrefix(hash, "!ldap:") {
 		return
 	}
 	// 同一账号 2 分钟内只发一封，防止邮件轰炸

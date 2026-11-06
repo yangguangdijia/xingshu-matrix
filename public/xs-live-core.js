@@ -1002,6 +1002,18 @@
     if (ok) ok.onclick = function () { closeModal(); onOk(); };
   }
 
+  // 高危删除：必须输入资源名称后才能确认
+  function typedConfirmDialog(title, msgHtml, expect, okLabel, onOk) {
+    var m = openModal(title || "确认删除",
+      '<div class="x-form"><p style="margin:0 0 10px">' + msgHtml + '</p><label><span>请输入 <b class="x-mono">' + gEsc(expect) + '</b> 以确认</span>' +
+      '<input class="x-input x-mono" id="liveTypedIn" autocomplete="off" /></label></div>',
+      '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--danger" id="liveDlgOk" disabled>' + gEsc(okLabel || "确认删除") + "</button>");
+    if (!m) { if (typeof window !== "undefined" && window.prompt && window.prompt("请输入 " + expect + " 以确认") === expect) onOk(); return; }
+    var ok = $id("liveDlgOk"), inp = $id("liveTypedIn");
+    if (inp) { inp.oninput = function () { ok.disabled = inp.value.trim() !== expect; }; try { inp.focus(); } catch (e) {} }
+    if (ok) ok.onclick = function () { if (inp && inp.value.trim() !== expect) return; closeModal(); onOk(); };
+  }
+
   function formDialog(title, bodyHtml, okLabel, onSubmit, aiDraft) {
     var m = openModal(title,
       '<form class="x-form" id="liveForm" novalidate>' + bodyHtml +
@@ -1445,7 +1457,28 @@
             var col = c.s === "ok" ? "#16a34a" : c.s === "bad" ? "#dc2626" : "#9ca3af";
             return '<div><i class="ks-dot" style="background:' + col + '"></i><span>' + gEsc(c.n) + '</span><em>' + gEsc(c.t) + '</em></div>';
           }).join("") + '</div></section>';
-        html += '<div class="ks-grid2">' + nodePanel + compPanel + '</div>';
+        // 资源使用排行
+        var sortBy = el.__ksSort || "cpu";
+        var rank = nodes.slice().sort(function (a, b) {
+          var k = sortBy === "cpu" ? "cpu_percent" : "memory_percent";
+          return ((b.usage || {})[k] || -1) - ((a.usage || {})[k] || -1);
+        });
+        var podsByNode = podCountsByNode(pods);
+        function bar(p) { return p == null ? '<span class="ks-muted">—</span>' : '<div style="display:flex;align-items:center;gap:8px"><div class="ks-bar" style="flex:1"><i class="' + ksTone(p) + '" style="width:' + Math.min(100, p) + '%;background:currentColor"></i></div><span style="width:44px">' + p.toFixed(1) + '%</span></div>'; }
+        var rankHtml = '<h3 style="margin:16px 0 8px;font-size:13.5px">资源使用排行<span class="ks-r"><span class="ks-tabs">' +
+          '<button type="button" data-ks-sort="cpu" class="' + (sortBy === "cpu" ? "on" : "") + '">CPU</button><button type="button" data-ks-sort="mem" class="' + (sortBy === "mem" ? "on" : "") + '">内存</button></span></span></h3>' +
+          '<table class="ks-rank"><thead><tr><th>节点</th><th>角色</th><th>CPU</th><th>内存</th><th>Pods</th><th>状态</th></tr></thead><tbody>' +
+          rank.slice(0, 10).map(function (n) {
+            var u = n.usage || {};
+            return '<tr><td><a href="' + gEsc(clusterResourceHash("cluster", "nodes", cluster.id)) + '">' + gEsc(n.name) + '</a><div class="ks-muted">' + gEsc(n.internal_ip || "") + '</div></td>' +
+              '<td>' + gEsc((n.roles || []).join(",") || "worker") + '</td><td>' + bar(n.usage ? u.cpu_percent : null) + '</td><td>' + bar(n.usage ? u.memory_percent : null) + '</td>' +
+              '<td>' + (podsByNode[n.name] || 0) + ' / ' + gEsc((n.allocatable || {}).pods || "—") + '</td><td>' + (n.ready ? tagHtml("Ready", "ok") : tagHtml(n.status || "NotReady", "bad")) + '</td></tr>';
+          }).join("") + '</tbody></table>';
+
+        // 节点状态与资源使用排行合并为一个面板
+        nodePanel = nodePanel.replace(/<\/section>$/, rankHtml + "</section>").replace("<h3>节点状态<", "<h3>节点状态与资源使用<");
+        html += '<div class="ks-grid3">' + nodePanel + compPanel + '</div>';
+
 
         // 实时采样曲线 + 24h Prometheus 趋势
         html += '<div class="ks-grid2"><section class="ks-panel"><h3>CPU 使用率</h3>' +
@@ -1475,24 +1508,6 @@
             }).join("") + '</ul>') + '</section>';
         html += '<div class="ks-grid2">' + podPanel + evPanel + '</div>';
 
-        // 资源使用排行
-        var sortBy = el.__ksSort || "cpu";
-        var rank = nodes.slice().sort(function (a, b) {
-          var k = sortBy === "cpu" ? "cpu_percent" : "memory_percent";
-          return ((b.usage || {})[k] || -1) - ((a.usage || {})[k] || -1);
-        });
-        var podsByNode = podCountsByNode(pods);
-        function bar(p) { return p == null ? '<span class="ks-muted">—</span>' : '<div style="display:flex;align-items:center;gap:8px"><div class="ks-bar" style="flex:1"><i class="' + ksTone(p) + '" style="width:' + Math.min(100, p) + '%;background:currentColor"></i></div><span style="width:44px">' + p.toFixed(1) + '%</span></div>'; }
-        html += '<div class="ks-grid3"><section class="ks-panel"><h3>节点资源使用排行<span class="ks-r"><span class="ks-tabs">' +
-          '<button type="button" data-ks-sort="cpu" class="' + (sortBy === "cpu" ? "on" : "") + '">CPU</button><button type="button" data-ks-sort="mem" class="' + (sortBy === "mem" ? "on" : "") + '">内存</button></span></span></h3>' +
-          '<table class="ks-rank"><thead><tr><th>节点</th><th>角色</th><th>CPU</th><th>内存</th><th>Pods</th><th>状态</th></tr></thead><tbody>' +
-          rank.slice(0, 10).map(function (n) {
-            var u = n.usage || {};
-            return '<tr><td><a href="' + gEsc(clusterResourceHash("cluster", "nodes", cluster.id)) + '">' + gEsc(n.name) + '</a><div class="ks-muted">' + gEsc(n.internal_ip || "") + '</div></td>' +
-              '<td>' + gEsc((n.roles || []).join(",") || "worker") + '</td><td>' + bar(n.usage ? u.cpu_percent : null) + '</td><td>' + bar(n.usage ? u.memory_percent : null) + '</td>' +
-              '<td>' + (podsByNode[n.name] || 0) + ' / ' + gEsc((n.allocatable || {}).pods || "—") + '</td><td>' + (n.ready ? tagHtml("Ready", "ok") : tagHtml(n.status || "NotReady", "bad")) + '</td></tr>';
-          }).join("") + '</tbody></table></section>';
-
         // 告警 + 公告
         var alertBody = !r[8].ok ? '<p class="x-empty">未接入告警源</p>' : !alerts.length ? '<p class="x-empty">当前没有触发中的告警</p>' :
           '<ul class="ks-ev">' + alerts.slice(0, 5).map(function (a) {
@@ -1500,13 +1515,13 @@
             return '<li><span class="ks-pill" style="background:#fef2f2;color:#b91c1c">' + gEsc(a.severity || lb.severity || "P?") + '</span><button type="button" class="x-tlink" data-sre-alert-open="' + gEsc(alertIdOf(a)) + '">' +
               gEsc(a.summary || an.summary || a.name || lb.alertname || "告警") + '</button><span class="ks-muted">' + gEsc(fmtAgo(a.starts_at || a.created_at)) + '</span></li>';
           }).join("") + '</ul>';
-        html += '<div style="display:flex;flex-direction:column;gap:14px;min-width:0"><section class="ks-panel"><h3>活跃告警<span class="ks-r ks-muted">' + (r[8].ok ? alerts.length : "—") + ' 条 · <a href="#/observe/events">告警中心</a></span></h3>' + alertBody + '</section>' +
+        html += '<div class="ks-grid2"><section class="ks-panel"><h3>活跃告警<span class="ks-r ks-muted">' + (r[8].ok ? alerts.length : "—") + ' 条 · <a href="#/observe/events">告警中心</a></span></h3>' + alertBody + '</section>' +
           '<section class="ks-panel"><h3>平台公告<span class="ks-r"><button class="x-btn" type="button" data-nadd>+ 发布</button></span></h3>' +
           (notices.length ? notices.slice(0, 4).map(function (n) {
             return '<div style="padding:6px 0;border-bottom:1px solid var(--x-line);display:flex;gap:8px;align-items:center">' + (n.pinned ? '<span class="x-tag x-blue">置顶</span>' : "") +
               '<strong style="font-size:13px">' + gEsc(n.title) + '</strong><span class="x-grow"></span><span class="ks-muted">' + gEsc(fmtAgo(n.created_at)) + '</span>' +
               '<button class="x-btn" type="button" data-ndel="' + gEsc(n.id) + '">删除</button></div>';
-          }).join("") : '<p class="x-empty">暂无公告</p>') + '</section></div></div>';
+          }).join("") : '<p class="x-empty">暂无公告</p>') + '</section></div>';
 
         var scrollY = window.scrollY;
         mount(el, html);
@@ -2857,6 +2872,7 @@
     }, 15000);
   }
 
+  var NS_PROTECTED = { "default": 1, "kube-system": 1, "kube-public": 1, "kube-node-lease": 1, "xingshu-system": 1 };
   function clNamespacesPage(el, seq, cur, box) {
     apiGet("/clusters/" + cur.id + "/namespaces").then(function (data) {
       if (!alive(seq, el) || !box) return;
@@ -2873,7 +2889,7 @@
             }).join(" ") || "—") + "</span>",
             '<span class="x-frac">' + gEsc(fmtTime(ns.created_at)) + "</span>",
             '<span class="x-kacts">' + actBtn("详情", "ns-detail", ns.name) + actBtn("查看工作负载", "ns-workloads", ns.name) +
-              actBtn("删除", "ns-del", ns.name) + "</span>"
+              (NS_PROTECTED[ns.name] ? '<span class="x-frac" title="系统命名空间">系统</span>' : actBtn("删除", "ns-del", ns.name)) + "</span>"
           ];
         })
       ) : '<p class="x-frac" style="margin:0">该集群没有命名空间数据。</p>';
@@ -2908,7 +2924,8 @@
           return;
         }
         if (act === "ns-del") {
-          return confirmDialog("删除命名空间", "确认删除命名空间 <b>" + gEsc(id) + "</b>？其中的 Deployment、Service、配置、存储声明等所有资源都会一并删除，且无法恢复。", "确认删除", function () {
+          if (NS_PROTECTED[id]) return toastMsg("系统命名空间不允许删除");
+          return typedConfirmDialog("删除命名空间", "确认删除命名空间 <b>" + gEsc(id) + "</b>？其中的 Deployment、Service、配置、存储声明等所有资源都会一并删除，且无法恢复。", id, "确认删除", function () {
             doAction(apiDel("/clusters/" + cur.id + "/namespaces/" + encodeURIComponent(id)), "已删除命名空间 " + id, function () { repaint(); });
           });
         }

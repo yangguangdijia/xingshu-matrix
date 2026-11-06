@@ -75,6 +75,7 @@ test("pipeline definitions load first; detail does not request Jenkins or Argo C
     if (path === "/cicd/runs") return Promise.resolve({ items: [run] });
     if (path === "/cicd/runs/61") return Promise.resolve(run);
     if (path === "/cicd/runs/61/logs") return Promise.resolve([]);
+    if (path === "/cicd/credentials" || path.endsWith("/cache")) return Promise.resolve([]);
     throw Error("Unexpected " + path);
   });
   const stop = view.render(el);
@@ -99,6 +100,7 @@ test("long logs expose a continuation and load beyond 5000 lines without droppin
     if (path === "/cicd/runs/61/logs") return Promise.resolve(++page === 1
       ? Array.from({ length: 5000 }, (_, i) => ({ id: i + 1, stage: 0, line: "line " + i, ts: "2026-10-28T00:00:00Z" }))
       : [{ id: 5001, stage: 0, line: "the final line" }]);
+    if (path === "/cicd/credentials" || path.endsWith("/cache")) return Promise.resolve([]);
     throw Error("Unexpected " + path);
   });
   const stop = view.render(el);
@@ -129,6 +131,7 @@ test("an empty run list keeps the pipeline definition visible", async () => {
     if (path === "/cicd/applications/9") return Promise.resolve({ id: 9, name: "matrix" });
     if (path === "/cicd/targets") return Promise.resolve([]);
     if (path === "/cicd/runs") return Promise.resolve({ items: [] });
+    if (path === "/cicd/credentials" || path.endsWith("/cache")) return Promise.resolve([]);
     throw Error("Unexpected " + path);
   });
   const stop = view.render(el);
@@ -145,6 +148,7 @@ test("a failed run detail request preserves history and offers retry", async () 
     if (path === "/cicd/targets") return Promise.resolve([]);
     if (path === "/cicd/runs") return Promise.resolve({ items: [run] });
     if (path === "/cicd/runs/61") return Promise.reject(new Error("detail unavailable"));
+    if (path === "/cicd/credentials" || path.endsWith("/cache")) return Promise.resolve([]);
     throw Error("Unexpected " + path);
   });
   const stop = view.render(el);

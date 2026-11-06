@@ -11,7 +11,10 @@
 .xcc-state { color: var(--x-sub, #666); padding: 12px 0; }
 .xcc-error, .xcc-root [data-state="forbidden"], .xcc-root [data-state="failed"], .xcc-root [data-state="error"] { color: var(--x-red, #b42318); overflow-wrap: anywhere; }
 .xcc-root [data-state="installed"], .xcc-root [data-state="succeeded"] { color: var(--x-green, #16803c); }
-.xcc-detail { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--x-line, #ddd); }
+.xcc-detail { position: fixed; top: 0; right: 0; bottom: 0; width: min(600px, 100vw); z-index: 1001; background: #fff; box-shadow: -6px 0 24px rgba(15, 23, 42, .16); padding: 16px 20px 24px; overflow: auto; }
+.xcc-mask { position: fixed; inset: 0; z-index: 1000; background: rgba(15, 23, 42, .32); }
+.xcc-mask[hidden] { display: none; }
+.xcc-detail .xcc-toolbar { position: sticky; top: -16px; background: #fff; padding: 4px 0 10px; margin: 0 0 8px; border-bottom: 1px solid var(--x-line, #e5e7eb); z-index: 1; }
 .xcc-detail[hidden], .xcc-root [hidden] { display: none; }
 .xcc-form { max-width: 850px; }
 .xcc-form fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 0; border: 0; margin: 0 0 12px; }

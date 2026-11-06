@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,6 +52,13 @@ var kindAliases = map[string]string{
 	"job": "jobs", "cronjob": "cronjobs", "cj": "cronjobs",
 	"pod": "pods", "po": "pods",
 }
+
+// protectedNamespaces 是平台不允许删除的系统命名空间。
+var protectedNamespaces = map[string]bool{
+	"default": true, "kube-system": true, "kube-public": true, "kube-node-lease": true, "xingshu-system": true,
+}
+
+var nsNameRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 func normalizeKind(k string) (string, error) {
 	k = strings.ToLower(k)
@@ -301,10 +309,16 @@ func validateChange(pl *changePayload) error {
 		if p.Name == "" {
 			return httpx.BadRequest("name is required")
 		}
+		if !nsNameRE.MatchString(p.Name) || len(p.Name) > 63 {
+			return httpx.BadRequest("命名空间名称需符合 DNS-1123：小写字母、数字和 -，以字母或数字开头结尾，最长 63 位")
+		}
 		pl.Name = p.Name
 	case "ns_delete":
 		if pl.Namespace == "" {
 			return httpx.BadRequest("namespace is required")
+		}
+		if protectedNamespaces[pl.Namespace] {
+			return httpx.BadRequest("系统命名空间 " + pl.Namespace + " 不允许删除")
 		}
 	case "scale", "restart", "delete":
 		k, err := normalizeKind(pl.Kind)

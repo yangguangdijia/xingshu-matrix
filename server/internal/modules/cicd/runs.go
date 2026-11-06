@@ -2,9 +2,11 @@ package cicd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -53,6 +55,7 @@ type Run struct {
 	CreatedAt     time.Time   `json:"created_at"`
 	StartedAt     *time.Time  `json:"started_at"`
 	FinishedAt    *time.Time  `json:"finished_at"`
+	Cache         *RunCache   `json:"cache"` // build cache used by this run; null = not used
 	Stages        []*RunStage `json:"stages,omitempty"`
 }
 
@@ -69,13 +72,20 @@ type RunStage struct {
 	FinishedAt *time.Time `json:"finished_at"`
 }
 
-const runCols = `id,pipeline_id,app_id,status,trigger,triggered_by_id,triggered_by,branch,commit_sha,image_tag,error,created_at,started_at,finished_at`
+const runCols = `id,pipeline_id,app_id,status,trigger,triggered_by_id,triggered_by,branch,commit_sha,image_tag,error,created_at,started_at,finished_at,cache`
 
 func scanRun(row pgx.Row) (*Run, error) {
 	var r Run
+	var cache []byte
 	if err := row.Scan(&r.ID, &r.PipelineID, &r.AppID, &r.Status, &r.Trigger, &r.TriggeredByID, &r.TriggeredBy, &r.Branch,
-		&r.Commit, &r.ImageTag, &r.Error, &r.CreatedAt, &r.StartedAt, &r.FinishedAt); err != nil {
+		&r.Commit, &r.ImageTag, &r.Error, &r.CreatedAt, &r.StartedAt, &r.FinishedAt, &cache); err != nil {
 		return nil, notFound(err)
+	}
+	if len(cache) > 0 && string(cache) != "null" {
+		var rc RunCache
+		if json.Unmarshal(cache, &rc) == nil {
+			r.Cache = &rc
+		}
 	}
 	return &r, nil
 }
@@ -525,6 +535,7 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 		return err
 	}
 	var rt *runnerCtx
+	var cache *cacheRunPlan
 	needsRunner := false
 	for _, s := range pl.Stages {
 		needsRunner = needsRunner || s.Type == "build" || s.Type == "test" || s.Type == "script"
@@ -561,6 +572,12 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 		defer func() {
 			_ = rt.cs.CoreV1().Secrets(rt.ns).Delete(context.Background(), rt.secret, metav1.DeleteOptions{})
 		}()
+		if cache, err = m.prepareRunCache(ctx, cs, ns, pl, a, run, lw); err != nil {
+			return err
+		}
+		if cache != nil && cache.tracker != nil {
+			defer func() { m.saveRunCache(runID, cache.tracker.snapshot()) }()
+		}
 	}
 	for i, s := range pl.Stages {
 		if err := ctx.Err(); err != nil {
@@ -572,6 +589,7 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 		if withholdOutput {
 			logf = func(string, ...any) {}
 		}
+		logf = cache.wrapLog(i, s, logf)
 		logf("==> stage %s (%s)", s.Name, s.Type)
 		m.setStage(runID, i, "running", "", "")
 		var job string
@@ -588,7 +606,14 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 				s.registryKey = fmt.Sprintf("dockerconfig-%d", i)
 			}
 			spec := stagePod(a, run, s, rt.secret)
+			if serr = applyDockerfileTemplate(&spec, s, path.Join(srcDir, a.Dockerfile)); serr != nil {
+				break
+			}
+			cache.apply(&spec, pl.ID, a, run, s)
 			serr = runJob(ctx, rt.cs, rt.ns, job, runID, spec, s.TimeoutSec, logf)
+			if cache != nil && cache.tracker != nil {
+				m.saveRunCache(runID, cache.tracker.snapshot())
+			}
 		case "deploy":
 			serr = m.deployStage(ctx, run, a, s, i, logf)
 		case "jenkins":

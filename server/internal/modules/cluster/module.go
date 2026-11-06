@@ -175,6 +175,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.DELETE("/:id/namespaces/:ns", rbac.RequirePerm(PermNSWrite), m.change("ns_delete"))
 
 	g.GET("/:id/events", rbac.RequirePerm(PermWorkloadRead), m.listEvents)
+	g.POST("/:id/kubectl", rbac.RequirePerm(PermWorkloadRead), m.kubectlExec) // Web Shell：只读直出，变更走审批
 	g.GET("/:id/network/services", rbac.RequirePerm(PermWorkloadRead), m.listNetworkServices)
 	g.GET("/:id/network/endpoints", rbac.RequirePerm(PermWorkloadRead), m.listNetworkEndpoints)
 	g.GET("/:id/network/services/:ns/:name", rbac.RequirePerm(PermWorkloadRead), m.getService)

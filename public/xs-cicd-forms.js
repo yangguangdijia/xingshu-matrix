@@ -139,7 +139,7 @@
       branch: src.branch || "main", dockerfile: src.dockerfile || "Dockerfile", context_dir: src.context_dir || ".", image_repo: src.image_repo || "", envs: envs
     };
     var legacyToken = editing && app.git_token;
-    var targets = [], envField = null;
+    var targets = [], envField = null, detected = null;
     var kit = root.XSFormKit.open({
       title: editing ? "编辑应用" : "从代码仓库创建应用",
       subtitle: "代码源 → 构建 → 部署环境，完成后可一键生成流水线",
@@ -147,7 +147,7 @@
       aiExample: "接入 https://git.example.com/shop/web.git 的 develop 分支，镜像推到 harbor.example.com/shop/web，部署到 test 环境 shop-test 命名空间的 web Deployment",
       aiContext: function () { return "可选执行集群：" + JSON.stringify(targets.map(function (t) { return { id: t.id, name: t.name, env: t.env }; })); },
       wizard: true, width: "lg", okText: editing ? "保存" : "创建",
-      values: values,
+      values: Object.assign(values, { detected: "", gen_pipeline: false, registry_credential_id: "", pipeline_hint: "在「构建」一步点「识别语言」后可自动生成流水线" }),
       sections: [
         { title: "代码源", desc: "支持 https:// 、git:// 和 git@host:org/repo.git（SSH 私钥凭证）。私有仓库先选凭证，再读取分支验证连通性。", fields: [
           { k: "name", label: "应用名称", required: true, pattern: DNS, patternMsg: "小写字母、数字、中划线，≤63", placeholder: "shop-web", readonly: editing },
@@ -160,7 +160,10 @@
           { k: "branch", label: "默认分支", required: true, mono: true, options: [],
             button: { label: "读取分支", run: function (v, api) { return probe(v, api); } }, help: "可直接输入，或点「读取分支」从远端加载并验证凭证" }
         ] },
-        { title: "构建", desc: "流水线的「镜像构建」阶段用 Kaniko 在集群内构建，无需 Docker 守护进程。", fields: [
+        { title: "构建", desc: "流水线的「镜像构建」阶段用 Kaniko 在集群内构建，无需 Docker 守护进程。点「识别语言」会在执行集群里浅克隆所选分支，按标志文件识别语言与构建方式并填入建议模板。", fields: [
+          { k: "detected", label: "语言与构建方式", full: true, readonly: true, noAI: true, placeholder: "尚未识别",
+            button: { label: "识别语言", run: function (v, api) { return detect(v, api); } },
+            help: "识别 go.mod、package.json（含锁文件）、pom.xml、build.gradle、requirements.txt / pyproject.toml；仓库里有 Dockerfile 时优先用 Dockerfile 构建" },
           { k: "image_repo", label: "镜像仓库", required: true, full: true, mono: true, placeholder: "harbor.example.com/shop/web",
             help: "不含 tag；推送凭证在流水线构建阶段选择", check: function (s) { return /^https?:\/\//.test(s) ? "不要带 http(s)://" : /:[^/]*$/.test(s.split("/").pop()) ? "不要带 tag" : ""; } },
           { k: "dockerfile", label: "Dockerfile 路径", mono: true, required: true },
@@ -190,7 +193,15 @@
             if (e.mode === "helm" ? !(e.chart && e.release) : !(e.deployment && e.container)) return n + (e.mode === "helm" ? "Helm 方式需要 Chart 与 Release" : "需要 Deployment 与容器名");
           }
           return "";
-        } }
+        } },
+        { title: "流水线", desc: "识别语言后，可在创建应用的同时按建议模板生成流水线（测试 → 镜像构建 → 部署到第一个环境），并开启依赖缓存与镜像层缓存。", show: function () { return !editing; }, fields: [
+          { k: "gen_pipeline", type: "switch", text: "同时生成流水线", noAI: true, show: function () { return !editing && !!(detected && detected.template); } },
+          { k: "registry_credential_id", label: "镜像推送凭证", type: "select", empty: "不使用凭证（镜像仓库允许匿名推送）", noAI: true, options: [],
+            load: function () { return loadCredentials("registry").then(credOptions); },
+            show: function (v) { return !editing && !!(detected && detected.template) && !!v.gen_pipeline; } },
+          { k: "pipeline_hint", label: "说明", full: true, readonly: true, noAI: true,
+            show: function () { return !editing && !(detected && detected.template); } }
+        ] }
       ],
       toObject: function (v) {
         return { apiVersion: "cicd.xingshu.io/v1", kind: "Application", metadata: { name: v.name },
@@ -229,6 +240,12 @@
           ctx.close();
           toast(editing ? "应用已更新" : "应用已创建");
           if (!editing && r && r.webhook_secret && root.XSFormKit) showWebhook(r);
+          if (!editing && r && r.id != null && v.gen_pipeline && detected && detected.template && root.XSCICDDetect) {
+            root.XSCICDDetect.createPipeline(r, v, detected).then(function (p) {
+              if (p && p.pending) toast("流水线已提交审批，审批通过后生效");
+              else if (p) toast("已按识别结果生成流水线「" + p.name + "」");
+            }).catch(function (err) { toast("应用已创建，但生成流水线失败：" + root.XSCICDDetect.errorText(err)); });
+          }
           if (done) done(r);
         }, function (err) {
           if (approvalPending(err)) { ctx.close(); toast("已提交审批，审批通过后生效"); if (done) done(null); return; }
@@ -260,6 +277,27 @@
       kit.set({});
     }).catch(function (err) { kit.status("执行集群加载失败：" + errText(err)); });
     return kit;
+
+    function detect(v, api) {
+      if (!root.XSCICDDetect) { api.status("识别功能未加载"); return Promise.resolve(); }
+      if (!v.repo_url) { api.status("先在「代码源」一步填写仓库地址"); return Promise.resolve(); }
+      if (!v.branch) { api.status("先填写默认分支"); return Promise.resolve(); }
+      var firstEnv = (v.envs || [])[0] || {};
+      var targetId = firstEnv.target_id || (targets[0] && targets[0].id) || "";
+      if (!targetId) { api.status("还没有执行集群：识别需要在执行集群里克隆仓库，请先接入执行集群"); return Promise.resolve(); }
+      api.status("正在执行集群里浅克隆「" + v.branch + "」分支并识别，通常需要 10～60 秒…", true);
+      return root.XSCICDDetect.detect({
+        repo_url: v.repo_url, branch: v.branch, credential_id: v.credential_id ? Number(v.credential_id) : 0, app_id: editing ? app.id : 0,
+        runner_target_id: Number(targetId), context_dir: v.context_dir || ".", dockerfile: v.dockerfile || ""
+      }).then(function (r) {
+        detected = r;
+        var patch = { detected: root.XSCICDDetect.summary(r) };
+        if (r.dockerfile) patch.dockerfile = r.dockerfile;
+        if (!editing && r.template) patch.gen_pipeline = true;
+        api.set(patch);
+        api.status(root.XSCICDDetect.statusText(r), true);
+      }).catch(function (err) { detected = null; api.status(root.XSCICDDetect.errorText(err)); });
+    }
 
     function probe(v, api) {
       if (!v.repo_url) { api.status("先填写仓库地址"); return Promise.resolve(); }

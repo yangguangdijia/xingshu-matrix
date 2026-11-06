@@ -78,10 +78,10 @@
     if (!installable(s, item) || s.edit && (s.edit.busy || s.edit.locked)) return;
     var target = s.el.querySelector("[data-xcc-detail]"), defaults = item.defaults || {}, fs = features(item);
     s.edit = { item: item, version: 0, checked: "", preflight: null };
-    target.hidden = false;
+    drawer(s, true);
     target.innerHTML = '<div class="xcc-toolbar"><h3 tabindex="-1">安装 ' + val(item.name || key(item)) + '</h3><button class="x-btn" type="button" data-xcc-close>关闭</button></div><form class="xcc-form" data-xcc-form><fieldset data-xcc-editable>' +
-      '<label class="xcc-wide">自然语言描述<input class="x-input" name="instruction" maxlength="2000"></label><button class="x-btn" type="button" data-xcc-ai' + (can("ai:chat") ? '' : ' disabled') + '>生成配置草稿</button>' + field('Namespace', 'namespace', defaults.namespace || '', 'required maxlength="63"') + field('Release', 'release', defaults.release || '', 'required maxlength="53"') +
-      '<label>版本<select class="x-select" name="version" required>' + choices(item.versions || [], defaults.version, '请选择版本') + '</select></label>' +
+      '<label class="xcc-wide">自然语言描述<input class="x-input" name="instruction" maxlength="2000"></label><button class="x-btn" type="button" data-xcc-ai' + (can("ai:chat") ? '' : ' disabled') + '>生成配置草稿</button>' + field('Namespace', 'namespace', defaults.namespace || key(item), 'required maxlength="63"') + field('Release', 'release', defaults.release || key(item), 'required maxlength="53"') +
+      '<label>版本<select class="x-select" name="version" required>' + choices(item.versions || [], defaults.version || (function (v) { return v && (typeof v === 'object' ? v.version || v.name : v); })((item.versions || [])[0]), '请选择版本') + '</select></label>' +
       (fs.includes('storage') || fs.includes('storage_class') ? '<label>StorageClass<select class="x-select" name="storage_class"' + (s.storageOK ? '' : ' disabled') + '>' + choices(item.storage_classes || s.storageClasses || [], defaults.storage_class, '集群默认') + '</select></label>' + field('存储容量', 'storage_size', defaults.storage_size || '', 'placeholder="10Gi"') + (!s.storageOK ? '<p class="xcc-error">StorageClass 发现失败：' + esc(failure(s.storageError)) + '，已停止带存储的安装。</p>' : '') : '') +
       (Array.isArray(item.configuration_fields) && item.configuration_fields.length ? profileControls(item, defaults, s) : (fs.includes('resources') ? field('CPU request', 'cpu_request', defaults.cpu_request || '', 'placeholder="100m"') + field('CPU limit', 'cpu_limit', defaults.cpu_limit || '') + field('Memory request', 'memory_request', defaults.memory_request || '', 'placeholder="128Mi"') + field('Memory limit', 'memory_limit', defaults.memory_limit || '') : '')) +
       (fs.includes('exposure') ? '<label>暴露方式<select class="x-select" name="exposure">' + choices(item.exposure_types || ['ClusterIP', 'NodePort', 'LoadBalancer'], defaults.exposure || 'ClusterIP') + '</select></label>' : '') + field('变更原因', 'reason', '', 'required maxlength="500"') +
@@ -229,13 +229,19 @@
     } catch (err) { if (live(s) && s.edit === e) show(s, 'error', '草稿生成失败：' + err.message); }
     finally { e.busy = false; }
   }
+  function drawer(s, on) { var d = s.el.querySelector('[data-xcc-detail]'), m = s.el.querySelector('[data-xcc-mask]'); if (d) d.hidden = !on; if (m) m.hidden = !on; }
+  function closeDrawer(s) { if (s.edit && s.edit.busy) return; clearTimeout(s.timer); s.edit = null; drawer(s, false); var trigger = s.el.querySelector('[data-xcc-install], [data-xcc-inspect]'); if (trigger) trigger.focus(); }
+  var FIELD_ZH = { state: '状态', namespace: '命名空间', release: 'Release', version: '版本', kind: '类型', install_method: '安装方式', controller: '控制器', crd: 'CRD', storage_driver: '存储驱动' };
   function inspect(s, row) {
     if (!row) return;
     var target = s.el.querySelector('[data-xcc-detail]'); if (s.edit && (s.edit.busy || s.edit.locked)) return;
-    s.edit = null; s.inspected = row; target.hidden = false;
+    s.edit = null; s.inspected = row;
+    var cat0 = s.catalog.find(function (r) { return key(r) === key(row); });
+    if (!installed(row) && cat0 && installable(s, cat0)) return open(s, cat0);
+    drawer(s, true);
     var catalog = s.catalog.find(function (r) { return key(r) === key(row); }), route = row.configure_route || catalog && catalog.configure_route;
     var safeRoute = typeof route === 'string' && /^#\/(?:cluster|observe|traffic|storage|cicd|middleware)(?:\/[a-zA-Z0-9_/-]*)?$/.test(route);
-    target.innerHTML = '<div class="xcc-toolbar"><h3 tabindex="-1">' + val(row.name || key(row)) + '</h3><button class="x-btn" type="button" data-xcc-close>关闭</button></div><dl class="xcc-definition">' + ['state', 'namespace', 'release', 'version', 'kind', 'install_method', 'controller', 'crd', 'storage_driver'].filter(function (k) { return row[k] != null; }).map(function (k) { return '<dt>' + esc(k) + '</dt><dd>' + val(row[k]) + '</dd>'; }).join('') + '</dl>' +
+    target.innerHTML = '<div class="xcc-toolbar"><h3 tabindex="-1">' + val(row.name || key(row)) + '</h3><button class="x-btn" type="button" data-xcc-close>关闭</button></div><dl class="xcc-definition">' + ['state', 'namespace', 'release', 'version', 'kind', 'install_method', 'controller', 'crd', 'storage_driver'].filter(function (k) { return row[k] != null; }).map(function (k) { return '<dt>' + esc(FIELD_ZH[k] || k) + '</dt><dd>' + val(k === 'state' ? states[row[k]] || row[k] : row[k]) + '</dd>'; }).join('') + '</dl>' + (!installed(row) && cat0 ? '<p class="xcc-state">' + val(cat0.description || cat0.notes || '') + '</p>' + (cat0.installable !== true && cat0.supported !== true ? '<p class="xcc-state">该组件暂无经审核的安装方案，可通过 Helm 或 YAML 自行安装后在此自动发现。</p>' : !can(cat0.install_permission || 'workload:write') ? '<p class="xcc-state">当前账号没有安装权限。</p>' : '') : '') + (row.error ? '<p class="xcc-error">' + esc(row.error) + '</p>' : '') +
       (installed(row) ? '<button class="x-btn" type="button" data-xcc-select>选择此实例</button><p data-xcc-selected role="status"></p>' : '') +
       (installed(row) && safeRoute ? '<a class="x-btn" href="' + esc(route) + '">配置组件</a>' : installed(row) && /^(prometheus|loki|tempo|jaeger|alertmanager|elasticsearch)$/.test(key(row)) ? '<a class="x-btn" href="#/cluster/integrations">选择 / 配置数据源</a>' : '<p class="xcc-state">' + (installed(row) ? '组件已发现；目录未提供配置入口。' : '仅显示实际发现结果。') + '</p>');
     target.querySelector('h3').focus();
@@ -247,15 +253,16 @@
     try { s.storageClasses = result[2].ok ? items(result[2].value) : []; s.storageOK = result[2].ok && result[2].value.truncated !== true && result[2].value.complete !== false; s.storageError = result[2].error; } catch (err) { s.storageOK = false; s.storageError = err; }
     draw(s);
   }
-  function destroy(el) { var s = mounts.get(el); if (!s) return; mounts.delete(el); s.controller.abort(); clearTimeout(s.timer); if (s.unsubscribe) s.unsubscribe(); ['click', 'input', 'change', 'submit'].forEach(function (t) { el.removeEventListener(t, s[t]); }); el.innerHTML = ''; }
+  function destroy(el) { var s = mounts.get(el); if (!s) return; mounts.delete(el); s.controller.abort(); clearTimeout(s.timer); if (s.unsubscribe) s.unsubscribe(); ['click', 'input', 'change', 'submit'].forEach(function (t) { el.removeEventListener(t, s[t]); }); if (s.keydown && s.doc) s.doc.removeEventListener('keydown', s.keydown); el.innerHTML = ''; }
   function render(el, ctx) {
     destroy(el); var context = root.XSClusterContext;
     if (!context || !root.XS || !root.XS.api) { el.innerHTML = '<p class="xcc-error" role="alert">集群接口尚未就绪</p>'; return Promise.resolve(); }
     var s = { el: el, ctx: ctx || {}, context: context, snapshot: context.get(), controller: new AbortController(), inventory: [], catalog: [], search: '' }; mounts.set(el, s);
     s.unsubscribe = context.subscribe(function () { if (mounts.get(el) === s) render(el, ctx); });
     if (s.snapshot.kind !== 'cluster' || !s.snapshot.cluster_id) { el.innerHTML = '<p class="xcc-state">请选择单个集群</p>'; return Promise.resolve(); }
-    el.innerHTML = '<section class="xcc-root" aria-label="组件目录与安装"><div class="xcc-toolbar"><h2>组件目录与安装</h2><input class="x-input" type="search" data-xcc-search aria-label="搜索组件" placeholder="名称 / 类型"><button class="x-btn" type="button" data-xcc-refresh>刷新</button></div><section class="xcc-section"><h3>集群已安装组件</h3><div data-xcc-inventory><p class="xcc-state" role="status">正在发现组件…</p></div></section><details class="xcc-section" data-xcc-available hidden><summary>可安装组件</summary><div data-xcc-catalog><p class="xcc-state" role="status">正在读取目录…</p></div></details><section class="xcc-detail" data-xcc-detail hidden></section></section>';
+    el.innerHTML = '<section class="xcc-root" aria-label="组件目录与安装"><div class="xcc-toolbar"><h2>组件目录与安装</h2><input class="x-input" type="search" data-xcc-search aria-label="搜索组件" placeholder="名称 / 类型"><button class="x-btn" type="button" data-xcc-refresh>刷新</button></div><section class="xcc-section"><h3>集群已安装组件</h3><div data-xcc-inventory><p class="xcc-state" role="status">正在发现组件…</p></div></section><details class="xcc-section" data-xcc-available hidden><summary>可安装组件</summary><div data-xcc-catalog><p class="xcc-state" role="status">正在读取目录…</p></div></details><div class="xcc-mask" data-xcc-mask hidden></div><section class="xcc-detail" data-xcc-detail role="dialog" aria-modal="true" hidden></section></section>';
     s.click = function (event) {
+      if (event.target.hasAttribute && event.target.hasAttribute('data-xcc-mask')) return closeDrawer(s);
       var b = event.target.closest('button'); if (!b || !el.contains(b) || !live(s)) return;
       if (b.hasAttribute('data-xcc-refresh') && !(s.edit && s.edit.busy)) return render(el, ctx);
       if (b.hasAttribute('data-xcc-install')) return open(s, s.catalog[Number(b.getAttribute('data-xcc-install'))]);
@@ -266,12 +273,13 @@
         if (typeof root.CustomEvent === 'function' && typeof el.dispatchEvent === 'function') el.dispatchEvent(new root.CustomEvent('xs:component-select', { detail: selection, bubbles: true }));
         show(s, 'selected', '已选择当前集群实例：' + (selection.namespace ? selection.namespace + '/' : '') + selection.name);
       }
-      if (b.hasAttribute('data-xcc-close') && !(s.edit && s.edit.busy)) { clearTimeout(s.timer); s.edit = null; el.querySelector('[data-xcc-detail]').hidden = true; var trigger = el.querySelector('[data-xcc-install], [data-xcc-inspect]'); if (trigger) trigger.focus(); }
+      if (b.hasAttribute('data-xcc-close')) closeDrawer(s);
       if (b.hasAttribute('data-xcc-ai')) return generate(s);
     };
     s.input = function (event) { if (!live(s)) return; if (event.target.hasAttribute('data-xcc-search')) { s.search = event.target.value; draw(s); } else if (!event.target.hasAttribute('data-xcc-confirm')) invalidate(s); };
     s.change = s.input; s.submit = function (event) { if (event.target.hasAttribute('data-xcc-form')) { event.preventDefault(); return submit(s, event.target); } };
     ['click', 'input', 'change', 'submit'].forEach(function (t) { el.addEventListener(t, s[t]); });
+    s.keydown = function (e) { if (e.key === 'Escape' && live(s) && !el.querySelector('[data-xcc-detail]').hidden) closeDrawer(s); }; s.doc = el.ownerDocument || (typeof document !== 'undefined' ? document : null); if (s.doc && s.doc.addEventListener) s.doc.addEventListener('keydown', s.keydown);
     return load(s);
   }
   root.XSComponentCenter = { render: render, destroy: destroy, _internals: { configuration: configuration, preflightOK: preflightOK, installable: installable, operationHTML: operationHTML, pending: pending, terminal: terminal } };

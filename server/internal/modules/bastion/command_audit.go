@@ -15,7 +15,7 @@ func (m *Module) auditCommands(ctx context.Context, ref sessionRef, events []Com
 		}
 		state := "blocked"
 		switch ev.Action {
-		case "allow", "confirmed":
+		case "allow", "confirmed", "approved":
 			state = "pending"
 		case "cancelled":
 			state = "cancelled"

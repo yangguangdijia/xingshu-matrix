@@ -48,6 +48,27 @@ v1.26 起各资源有固定状态集合，写入时校验（`GET /devcenter/meta
 
 默认状态为 `todo`，默认优先级为 `P2`。所有修改由平台审计中间件记录，资源表保留创建人和更新时间。
 
+### 协作：评论、动态与关联（v1.28）
+
+- `GET /devcenter/{resource}/:id/comments`：评论列表，`{id,body,author,created_at,mine}`。
+- `POST /devcenter/{resource}/:id/comments`：`{"body":"..."}`，发表评论；`DELETE /devcenter/comments/:id` 只能删除自己的评论（管理员除外）。
+- `GET /devcenter/{resource}/:id/activities`：状态、处理人、优先级等字段变更记录，`{id,actor,action,from,to,created_at}`，由写接口自动生成。
+- `GET|POST /devcenter/requirements/:id/links`、`/devcenter/bugs/:id/links`：关联应用代码仓库或流水线，请求体 `{"ref_type":"app|pipeline","ref_id":1,"ref_name":"order-service"}`。
+- `GET /devcenter/links?ref_type=app|pipeline&ref_id=`：反查某个应用或流水线关联了哪些需求 / 缺陷；`DELETE /devcenter/links/:id` 解除关联。
+
+### 统计报表（v1.28）
+
+- `GET /devcenter/stats?days=30`：区间内按周的需求完成 / 新建、缺陷关闭 / 新建，吞吐量，周期时间与前置时间（平均、P50、P85，单位小时），需求与缺陷状态分布，未关闭缺陷按严重程度分布，处理人负载，完成率。`days` 取 7–365。
+- `GET /devcenter/iterations/:id/burndown`：迭代燃尽数据，按日 `{date,scope,done,remaining,ideal}`；迭代需在 `data.start` / `data.end` 中设置起止日期。
+
+### AI 开发（v1.28）
+
+- `GET /devcenter/ai/status`：是否已配置可用模型。
+- `POST /devcenter/requirements/:id/ai-tasks`：`{"model_id":0,"note":"补充说明"}`，`model_id` 省略时使用默认模型。接口立即返回 `201` 和任务（`status=running`），后台调用模型生成实施方案；同一需求同时只能有一个运行中的任务（否则 `409`），超时任务会被标记为失败。未启用 AI 或未配置模型时返回校验错误。
+- `GET /devcenter/ai-tasks?requirement_id=`、`GET /devcenter/ai-tasks/:id`：任务列表与详情。`result` 为 `{summary,steps[],subtasks[{title,description,priority,estimate}],risks[],test_points[]}`。
+- `POST /devcenter/ai-tasks/:id/apply`：`{"indexes":[0,2],"assignee":"alice"}`，把选中的子任务创建为需求（挂在原需求的迭代下），返回创建结果并写入 `applied`，同一子任务不会重复创建。
+- AI 调用以发起人身份执行，只授予 `ai:chat`，不携带工具调用能力；需求中的密钥类内容不会被单独提取。
+
 ## 数据库迁移
 
 迁移文件分别为：
@@ -55,5 +76,6 @@ v1.26 起各资源有固定状态集合，写入时校验（`GET /devcenter/meta
 - `server/internal/modules/automation/migrations/0001_init.up.sql`
 - `server/internal/modules/devcenter/migrations/0001_init.up.sql`
 - `server/internal/modules/devcenter/migrations/0002_fields.up.sql`（处理人、data、最后修改人）
+- `server/internal/modules/devcenter/migrations/0003_collab.up.sql`（评论、动态、关联、AI 开发任务）
 
 模块通过 `server/internal/modules/registry.go` 注册，启动时由现有迁移器执行。没有 PostgreSQL 连接时，服务会在健康接口中明确报告数据库不可用；本地前端不会伪造实时数据。

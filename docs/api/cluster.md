@@ -167,6 +167,28 @@ deployments/statefulsets/daemonsets；merge patch `spec.template.metadata.annota
 
 工具内校验 `rbac.FromContext(ctx).CanEnv(env)`；扩缩容走与 HTTP 相同的 `Gate`，需审批时返回 `{"pending_approval":true,"ticket_id":12}`。
 
+## Web kubectl 终端
+
+`POST /clusters/:id/kubectl` — 需要 `workload:read`；具体命令另按下表校验权限。
+
+请求：`{"command":"get pods -n app","namespace":"default","reason":"可选，变更审批理由"}`。`command` 可带或不带开头的 `kubectl`；`namespace` 是未写 `-n` 时的默认命名空间。
+
+响应（命令失败也返回 200，由 `exit_code` 区分）：
+
+```json
+{"output":"NAME   READY ...","exit_code":0,"namespace":"app","truncated":false,"change":false,"ticket":null}
+```
+
+| 命令 | 权限 | 执行方式 |
+| --- | --- | --- |
+| `get`（`-o wide/yaml/json/name`、`-l`、`-A`、`a,b` 多资源、`type/name`） | `workload:read` | 服务端 Table 输出，列与 kubectl 一致；yaml/json 去除 managedFields |
+| `describe`、`logs`（`-c`、`--tail` 默认 500 上限 5000、`-p`）、`top pods`、`rollout status/history`、`api-resources`、`version`、`cluster-info` | `workload:read`（`top nodes` 需 `node:read`） | 直接读取 |
+| `scale <kind>/<name> --replicas=N`、`rollout restart`、`delete <kind> <name>` | `workload:write` | 转为变更单（`scale`/`restart`/`delete`），走 `runChange` 审批；待审批时返回 `ticket` |
+| `cordon`、`uncordon <node>` | `node:write` | 同上 |
+| `exec <pod> [-c 容器] -- cmd args` | `workload:write` | SPDY 非交互执行，30 秒超时，stdout 上限 1 MiB |
+
+拒绝：管道、重定向、`;`、`&`、反引号与 `$`；`-f/-w` 跟踪；`apply/create/edit/patch/label/set` 等（请使用 YAML 编辑或创建表单）；`port-forward/proxy/attach/cp/debug/run`。Secret 在 `describe` 与 `-o yaml|json` 中一律隐藏取值（含 last-applied 注解）。所有调用记审计（action `kubectl`，detail 含命令）。
+
 ## 未实现 / 限制
 
 - 仅支持 kubeconfig 接入；未实现 matrix-cluster-agent 反向隧道、Web Shell（exec）、端口转发。

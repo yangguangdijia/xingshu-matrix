@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,8 @@ type Service struct {
 	log    *slog.Logger
 	now    func() time.Time
 
+	external ExternalAuthenticator
+
 	mu    sync.RWMutex
 	cache map[string]cacheEntry // by session id
 }
@@ -87,6 +90,20 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	now := s.now()
 	u, err := s.repo.UserByUsername(ctx, username)
 	if errors.Is(err, httpx.ErrNotFound) {
+		// 本地不存在：交给外部目录（LDAP）认证，成功则建号并登录
+		if s.external != nil {
+			uid, handled, xerr := s.external.Authenticate(ctx, username, password)
+			if handled {
+				if xerr != nil {
+					s.log.Warn("external directory login failed", "user", username, "err", xerr)
+					return nil, nil, httpx.NewError(http.StatusBadGateway, httpx.CodeInvalidCredentials, "目录服务认证失败："+xerr.Error())
+				}
+				if uid > 0 {
+					return s.LoginExternal(ctx, uid, ip, userAgent)
+				}
+				return nil, nil, errBadCredentials
+			}
+		}
 		VerifyPassword(string(dummyHash), password) // equalise timing
 		return nil, nil, errBadCredentials
 	}
@@ -107,7 +124,19 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	if pol.SessionHours > 0 {
 		sessTTL = time.Duration(pol.SessionHours) * time.Hour
 	}
-	if !VerifyPassword(u.PasswordHash, password) {
+	ok := false
+	if strings.HasPrefix(u.PasswordHash, "!ldap:") && s.external != nil {
+		// 由 LDAP 创建的账号：密码只在目录中校验；失败同样计入锁定次数
+		uid, handled, xerr := s.external.Authenticate(ctx, username, password)
+		if handled && xerr != nil {
+			s.log.Warn("external directory login failed", "user", username, "err", xerr)
+			return nil, nil, httpx.NewError(http.StatusBadGateway, httpx.CodeInvalidCredentials, "目录服务认证失败："+xerr.Error())
+		}
+		ok = handled && uid == u.ID
+	} else {
+		ok = VerifyPassword(u.PasswordHash, password)
+	}
+	if !ok {
 		until := now.Add(lockFor)
 		failures, locked, err := s.repo.RecordLoginFailure(ctx, u.ID, maxFail, until)
 		if err != nil {
@@ -134,6 +163,15 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	pair, err := s.pair(u, sess.ID, refresh)
 	return pair, u, err
 }
+
+// ExternalAuthenticator 是外部目录（LDAP / AD）认证器。handled=false 表示未启用，交还本地流程；
+// 认证成功时返回已建好或已同步的本地用户 id。
+type ExternalAuthenticator interface {
+	Authenticate(ctx context.Context, username, password string) (userID int64, handled bool, err error)
+}
+
+// SetExternal 设置外部目录认证器。
+func (s *Service) SetExternal(x ExternalAuthenticator) { s.external = x }
 
 // LoginExternal 为已由外部身份源（企业 SSO）验证过的用户建立会话。
 // 不校验密码，但仍检查账号状态与锁定，并遵守安全策略里的会话有效期。
@@ -237,6 +275,9 @@ func (s *Service) ChangePassword(ctx context.Context, p *rbac.Principal, oldPw, 
 	u, err := s.repo.UserByID(ctx, p.UserID)
 	if err != nil {
 		return err
+	}
+	if strings.HasPrefix(u.PasswordHash, "!ldap:") || strings.HasPrefix(u.PasswordHash, "!sso:") {
+		return httpx.Validation("该账号由企业目录或单点登录管理，请在对应系统中修改密码")
 	}
 	if !VerifyPassword(u.PasswordHash, oldPw) {
 		return httpx.NewError(http.StatusBadRequest, httpx.CodeInvalidCredentials, "原密码错误")

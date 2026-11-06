@@ -153,11 +153,12 @@ func (m *Module) retryRun(c *gin.Context) {
 
 // pipelineDoc is the YAML form of a pipeline definition shown in the editor.
 type pipelineDoc struct {
-	Name           string  `json:"name"`
-	AppID          int64   `json:"app_id"`
-	RunnerTargetID int64   `json:"runner_target_id"`
-	OnPush         bool    `json:"on_push"`
-	Stages         []Stage `json:"stages"`
+	Name           string       `json:"name"`
+	AppID          int64        `json:"app_id"`
+	RunnerTargetID int64        `json:"runner_target_id"`
+	OnPush         bool         `json:"on_push"`
+	Stages         []Stage      `json:"stages"`
+	Cache          *CacheConfig `json:"cache,omitempty"`
 }
 
 type yamlIn struct {

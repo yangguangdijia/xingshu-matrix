@@ -929,7 +929,7 @@
     }
     if (pg === "rules") return obsRules(el);
     if (pg === "events") return obsEvents(el, alertDeepLink());
-    if (pg === "channels") return obsChannels(el);
+    if (pg === "channels") return window.XSNotifyCenter ? window.XSNotifyCenter.render(el) : obsChannels(el);
     return obsMetrics(el);
   }
 

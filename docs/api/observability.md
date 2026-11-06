@@ -15,7 +15,7 @@
 | `alert:handle` | 认领 / 关闭告警 |
 | `alert:silence` | 创建 / 删除静默 |
 | `trace:read` | 链路查询 |
-| `notify:manage` | 通知渠道管理与测试 |
+| `notify:manage` | 通知中心：渠道、消息模板、订阅规则、发送记录与重发、通知安全策略（全部接口同一权限） |
 
 环境范围：每个数据源有 `env` 标签，所有按数据源的操作都校验 `Principal.CanEnv(env)`；告警列表按用户环境范围过滤。
 
@@ -23,7 +23,8 @@
 
 - `obs_datasources`：类型 `prometheus|loki|elasticsearch|alertmanager|jaeger|tempo`、url、env、`auth_type none|basic|bearer`、username、`secret_enc`（AES-GCM 加密的密码或 Token）、`options`（JSON，见下）、`webhook_token_hash`（SHA-256，仅 alertmanager）。
 - `obs_alerts`：按 `(datasource_id, fingerprint)` 唯一，`status firing|resolved`，`handle_status open|acked|closed`。
-- `obs_channels`：`type dingtalk|feishu|wecom|slack|webhook|email`（迁移 0004 放开 slack/webhook），`config_enc` 整体加密，`severities`/`envs` 过滤（空=全部）。
+- `obs_channels`：`type dingtalk|feishu|wecom|slack|webhook|email`（迁移 0004 放开 slack/webhook，0007 重申），`config_enc` 整体加密（含 Webhook、签名密钥、请求头、SMTP 密码），`severities`/`envs` 为渠道级告警兜底过滤（空=全部），`description`、`templates`（事件类型→模板 id）、`last_sent_at`/`last_status`（迁移 0007）。
+- `obs_notify_templates`、`obs_notify_subscriptions`、`obs_notify_records`、`obs_notify_cursors`：通知中心（迁移 0007，见第 6 节）。
 
 `options` 字段：
 - elasticsearch：`index`（必填，可被请求覆盖，如 `logs-*`）、`time_field`（默认 `@timestamp`）、`message_field`
@@ -117,7 +118,7 @@ receivers:
     send_resolved: true
 ```
 也接受 `Authorization: Bearer <token>`。Token 以 SHA-256 比对确定所属 alertmanager 数据源（及其 env）。请求体为 Alertmanager webhook v4 标准格式。
-处理：按 `fingerprint` upsert（缺失时用排序后标签的 SHA-256 前 16 位）；`resolved→firing` 重新打开（handle_status=open、fire_count+1、清空认领人）；**首次出现的 firing 或 resolved→firing** 异步推送到所有匹配的启用通知渠道；重复的 firing 不重复推送。
+处理：按 `fingerprint` upsert（缺失时用排序后标签的 SHA-256 前 16 位）；`resolved→firing` 重新打开（handle_status=open、fire_count+1、清空认领人）；**首次出现的 firing 或 resolved→firing** 异步交给通知中心按订阅规则推送（见第 6 节）；重复的 firing 不重复推送。
 ```json
 {"received":3,"notified":1}
 ```
@@ -163,31 +164,130 @@ receivers:
 
 ---
 
-## 6. 通知渠道　（全部 `notify:manage`）
+## 6. 通知中心　（全部 `notify:manage`）
 
-- GET `/observability/channels`、GET `/observability/channels/:id`（敏感信息掩码）
+对标夜莺 / KubeSphere 通知管理：**渠道**负责「发到哪里」，**订阅规则**负责「什么事件发给哪些渠道」，**消息模板**负责「发什么内容」，**发送记录**可筛选并对失败记录重发，**通知安全**控制出站地址。
+
+### 6.1 渠道
+
+- GET `/observability/channels`、GET `/observability/channels/:id`：返回渠道（敏感字段掩码：Webhook 地址 token 部分、`secret`、`password`、`headers` 的值）及 `subscriptions:[{id,name,enabled}]`（引用它的订阅）。
 - POST `/observability/channels`
+
+| 字段 | 说明 |
+|---|---|
+| `name` | 必填，≤64，唯一 |
+| `type` | `dingtalk｜feishu｜wecom｜email｜slack｜webhook`，创建后不可改 |
+| `description` | 可选，≤256 |
+| `config` | 见下表 |
+| `enabled` | 默认 true |
+| `severities` / `envs` | 渠道级告警兜底过滤（只作用于告警；空=全部） |
+| `templates` | `{"alert":3,"incident":5}`，事件类型→模板 id；缺省用默认模板；模板事件类型必须一致 |
+| `subscribe_alerts` | 仅创建时：同时生成订阅「告警 → 渠道名」，按 `severities/envs` 接收全部告警 |
+
+`config`：
+
+| 类型 | 字段 |
+|---|---|
+| 钉钉 / 飞书 / 企业微信 / Slack | `webhook`（https；白名单内地址可用 http）、`secret`（钉钉加签 / 飞书签名，可选） |
+| 通用 Webhook | `webhook`（http/https，不得含账号密码）、`secret`（HMAC，可选）、`headers`（自定义请求头，≤20 个；禁止 Host、Content-Length、Content-Type、Transfer-Encoding、Connection 与 X-Matrix-* 签名头） |
+| 邮件 | `use_system:true` 复用平台系统邮件（设置项 `mail.smtp`，只需 `to`）；或自定义 SMTP：`host`（不含协议/端口）、`port`（465 隐式 TLS，其他端口支持时 STARTTLS）、`username`、`password`、`from`、`to`（≤50） |
+
 ```json
-{"name":"运维钉钉群","type":"dingtalk","config":{"webhook":"https://oapi.dingtalk.com/robot/send?access_token=xxx","secret":"SECxxx"},"enabled":true,"severities":["critical","warning"],"envs":["prod"]}
-{"name":"飞书","type":"feishu","config":{"webhook":"https://open.feishu.cn/open-apis/bot/v2/hook/xxx","secret":"可选"}}
-{"name":"企业微信","type":"wecom","config":{"webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"}}
-{"name":"Slack","type":"slack","config":{"webhook":"https://hooks.slack.com/services/xxx"}}
-{"name":"工单系统","type":"webhook","config":{"webhook":"https://itsm.example.com/hooks/matrix","secret":"可选，用于签名"}}
-{"name":"邮件","type":"email","config":{"host":"smtp.example.com","port":465,"username":"alert@example.com","password":"***","from":"alert@example.com","to":["ops@example.com"]}}
+{"name":"值班群","type":"feishu","config":{"webhook":"https://open.feishu.cn/open-apis/bot/v2/hook/xxx","secret":"可选"},"subscribe_alerts":true}
+{"name":"工单","type":"webhook","config":{"webhook":"https://itsm.example.com/hooks/matrix","secret":"可选","headers":{"Authorization":"Bearer ..."}},"templates":{"alert":3}}
+{"name":"值班邮箱","type":"email","config":{"use_system":true,"to":["oncall@example.com"]}}
 ```
-- PUT `/observability/channels/:id`：`type` 不可改；`config` 省略=保留；`secret/password/webhook` 为空或等于掩码值时保留原值。
-- DELETE `/observability/channels/:id`
-- POST `/observability/channels/test`：用**未保存**的配置发送测试消息（新建/编辑表单的「发送测试」）。请求体同创建；带 `id` 时，空的或等于掩码的 `secret/password/webhook` 沿用已保存的值，`type` 必须与已保存渠道一致。
-- POST `/observability/channels/:id/test`：发送测试消息，返回 `{"ok":true}` 或 `{"ok":false,"error":"robot error 310000: sign not match"}`。
+
+- PUT `/observability/channels/:id`：`type` 不可改；`config` 省略=保留；`secret/password/webhook` 及同名请求头的值为空或等于掩码时保留原值；`templates` 省略=保留；只改启停时 `description` 留空即保留。修改了地址 / SMTP 主机时重新做出站地址校验。
+- PUT `/observability/channels/:id/enabled`　`{"enabled":false}`：启用 / 停用。
+- GET `/observability/channels/:id/references`：`{"subscriptions":[...]}`。
+- DELETE `/observability/channels/:id`：被订阅引用时返回 409（`details.subscriptions`）；带 `?force=true` 时同一事务内从这些订阅移除该渠道，移除后没有渠道的订阅自动停用。历史发送记录保留。
+- POST `/observability/channels/test`：用**未保存**的配置发测试消息（表单的「发送测试」）；带 `id` 时空/掩码密钥沿用已保存值。草稿测试不写发送记录。
+- POST `/observability/channels/:id/test`：发测试消息并写发送记录（`event_kind=test`）。
+
+两个测试接口返回 `{"ok":true,"duration_ms":120}` 或 `{"ok":false,"error":"robot error 310000: sign not match"}`（HTTP 200）；出站地址被策略拦截时返回 400。
 
 发送实现：
-- 钉钉：markdown 消息；有 secret 时加签 `timestamp`+`sign=Base64(HMAC-SHA256(secret, ts+"\n"+secret))`；校验 `errcode`。
-- 飞书：text 消息；有 secret 时 `sign=Base64(HMAC-SHA256(key=ts+"\n"+secret, ""))`；校验 `code`。
-- 企业微信：markdown 消息；校验 `errcode`。
-- Slack：Incoming Webhook，`{"text":"*标题*\n正文"}`。
-- 通用 Webhook（http/https，地址不得含账号密码）：POST `{"source":"xingshu-matrix","channel","title","text","sent_at"}`；配置了 secret 时带请求头 `X-Matrix-Signature: sha256=<hex(HMAC-SHA256(secret, body))>`，接收方用同一密钥校验。
-- 邮件：`net/smtp`，465 端口隐式 TLS，其他端口在服务器支持时 STARTTLS，有用户名时 PLAIN 认证；UTF-8 base64 正文。
-- 触发：Webhook 收到新 firing 告警后后台 goroutine 发送（2 分钟超时），按渠道 `severities`、`envs` 过滤；失败写 warn 日志。
+- 钉钉：markdown；有 secret 时 URL 加 `timestamp` 与 `sign=Base64(HMAC-SHA256(secret, ts+"\n"+secret))`；校验 `errcode`。
+- 飞书：text；有 secret 时 body 带 `timestamp` 与 `sign=Base64(HMAC-SHA256(key=ts+"\n"+secret, ""))`；校验 `code`。
+- 企业微信：markdown，内容截断到 4000 字节；校验 `errcode`。
+- Slack：Incoming Webhook `{"text":"*标题*\n正文"}`。
+- 通用 Webhook：POST `{"source":"xingshu-matrix","channel","title","text","sent_at","event":{kind,status,key,alert_name,severity,env,cluster,namespace,resource,summary,starts_at,link,labels,id}}`；有 secret 时带 `X-Matrix-Signature: sha256=hex(HMAC-SHA256(secret, body))`（与旧版兼容）、`X-Matrix-Timestamp`（Unix 秒）、`X-Matrix-Signature-V2: sha256=hex(HMAC-SHA256(secret, timestamp+"."+body))`（防重放，建议接收方校验时间差 ≤5 分钟）。
+- 邮件：纯文本 UTF-8 base64，主题 B 编码，头部去除 CR/LF 防注入；系统邮件走 `internal/mail.Send`（需启用且 TLS，内网中继需在系统邮件勾选「允许不加密连接」）。
+- 所有 HTTP 发送 15 秒超时、**不跟随重定向**、不使用环境代理；错误信息中的 Webhook 地址会被掩码。
+
+### 6.2 消息模板
+
+Go `text/template`。变量：`.AlertName` `.Severity`（critical/warning/info）`.SeverityText` `.SeverityRaw`（故障 P1~P4）`.Status` `.StatusText` `.Kind` `.Env` `.EnvText` `.Cluster` `.Namespace` `.Resource` `.Summary` `.Description` `.StartsAt`（北京时间字符串）`.StartsAtT` `.Link` `.Actor` `.Labels` `.LabelsText` `.Count`；函数 `default upper lower trunc join date label`（如 `{{label "pod" .Labels}}`、`{{.Summary | trunc 100}}`）。模板 ≤16KB，输出 ≤32KB；保存时用示例数据执行校验。自定义模板渲染失败时自动退回默认模板并在正文末尾注明。
+
+- GET `/observability/notify/templates?event_kind=`：`{"items":[...],"defaults":[{event_kind,name,title_tpl,body_tpl}],"statuses":{"alert":["firing","resolved"],...}}`。
+- POST `/observability/notify/templates`：`{name, description, event_kind: alert|incident|pipeline|approval|test, channel_type: ""|类型, title_tpl, body_tpl}`。
+- GET / PUT / DELETE `/observability/notify/templates/:id`：被渠道使用时不能改事件类型（409）；删除被引用模板返回 409（`details.channels`），`?force=true` 删除并让这些渠道改用默认模板。
+- POST `/observability/notify/templates/preview`：`{event_kind, status?, channel_type?, template_id? | title_tpl+body_tpl, event?}` → `{title, body, payload(按渠道类型实际发送的 JSON，不含签名), variables}`；不传模板时预览默认模板，不传 `event` 时用示例数据。
+
+### 6.3 订阅规则（路由）
+
+- GET / POST `/observability/notify/subscriptions`，GET / PUT / DELETE `/observability/notify/subscriptions/:id`，PUT `/:id/enabled`。
+
+| 字段 | 说明 |
+|---|---|
+| `name` | 必填，唯一 |
+| `event_kinds` | 必填：`alert`、`incident`、`pipeline`、`approval` |
+| `statuses` | 可选，须属于所选类型：告警 `firing resolved`；故障 `declared assigned acknowledged resolved`；流水线 `succeeded failed cancelled`；审批 `pending` |
+| `severities` | `critical warning info`；故障 P1/P2→critical、P3→warning、P4→info；流水线失败→warning、其余→info；生产审批→warning |
+| `envs` / `clusters` | 不区分大小写；告警集群取标签 `cluster`/`cluster_name`/`k8s_cluster`，流水线取执行集群 |
+| `match_labels` | `{"namespace":"payment","pod":"~pay-.*","team":"!infra"}`：精确 / `~` 正则（全匹配）/ `!` 不等于；也可匹配 `cluster namespace env alertname severity` |
+| `channel_ids` | 必填，渠道须存在 |
+| `quiet` | `{enabled,start:"22:00",end:"08:00",weekdays:[1..5],timezone:"Asia/Shanghai",allow_critical}`；结束早于开始为跨天，跨天时段按开始那天判断星期 |
+| `dedup_minutes` | 0~1440：同一事件（`key`）在该时间内对同一渠道只发一次（进程内 + 发送记录双重判断，跨副本有效） |
+| `aggregate` | 同一批到达、命中同一规则同一渠道的多条事件合并为一条（最多展开 10 条） |
+
+- POST `/observability/notify/subscriptions/match`：请求体为事件 `{kind,status,severity,env,cluster,namespace,labels,...}`，返回会命中的启用订阅及当前是否处于静默。
+
+路由规则：同一事件命中多条订阅时每个渠道只发一次（按订阅 id 顺序，先命中者的静默/限频策略生效）；渠道停用即不发送；告警还要通过渠道级 `severities/envs`。被静默或限频的发送写一条 `suppressed` 记录。
+
+**升级兼容**：迁移 0007 为每个已有渠道生成订阅「告警 → 渠道名」（复制原 `severities/envs`），升级后告警推送行为不变。
+
+### 6.4 事件来源
+
+| 事件 | 来源 | 说明 |
+|---|---|---|
+| 告警 | `notifyAlerts`（Alertmanager Webhook 新触发、健康检测、AIOps） | 保留原有自动升级故障与 AI 诊断摘要追加；`key=alert:<数据源>:<fingerprint>:<status>`；链接用 AIOps 配置的平台访问地址 |
+| 故障 | 轮询 `oncall_incident_events`（declared/assigned/acknowledged/resolved） | 值班模块无需改动；note 不通知 |
+| 审批待办 | 轮询 `approval_tickets` 新建且仍为 pending 的工单 | |
+| 流水线结果 | 轮询 `cicd_runs` 已结束（succeeded/failed/cancelled） | 只读访问 CI/CD 表，表不存在时跳过 |
+
+轮询间隔 15 秒，游标存 `obs_notify_cursors`，首次启动从当前位置开始（不补发历史），多副本通过比较并设置游标保证只有一个副本发送。发送记录保留 30 天（每小时清理）。
+
+### 6.5 发送记录
+
+- GET `/observability/notify/records`：筛选 `channel_id subscription_id resend_of event_kind status(success|failed|suppressed) env cluster severity channel_type event_status q(标题/渠道/原因/事件键) since until`（RFC3339 或 Unix 秒）、`page page_size`；返回 `{items,total,page,page_size,last_24h:{success,failed,suppressed}}`。列表不含正文。按调用者环境范围过滤（无环境的记录所有人可见）。
+- GET `/observability/notify/records/:id`：含 `body`、`event`。
+- POST `/observability/notify/records/:id/resend`：用渠道**当前**配置重发记录的标题/正文（被抑制的记录按事件重新渲染）；成功记录需 `?force=true`；渠道已删除/停用返回 409。返回 `{ok, record_id, duration_ms, error?}`，并写一条 `resend_of` 指向原记录的新记录。
+
+### 6.6 通知安全（出站地址策略）
+
+- GET / PUT `/observability/notify/security`：`{"block_private":true,"allow_hosts":["127.0.0.1:2525","10.0.0.0/16","hooks.intranet"]}`。存设置项 `notify.security`；PUT 需要不受限的环境范围（403）。未配置时默认 `block_private=true`、白名单为空。
+- `block_private` 拦截回环、私有、链路本地、CGNAT(100.64/10)、未指定、组播、IPv6 ULA 等地址；云元数据地址 169.254.169.254 即使关闭开关也拦截，除非显式列入白名单。
+- 白名单项：主机名、IP、`主机:端口`、CIDR（≤64 项）；白名单内地址允许 http 机器人地址。
+- 校验分两层：保存/测试时解析并拒绝（400）；**发送时在拨号阶段对解析出的 IP 再校验并直连该 IP**（防 DNS 重绑定），自定义 SMTP 同样适用；系统邮件不受此策略限制。
+- 沙箱联调：把本地收件桩加入白名单，例如 `PUT /observability/notify/security {"block_private":true,"allow_hosts":["127.0.0.1:2525","127.0.0.1:<HTTP 桩端口>"]}`。
+
+### 错误码
+
+| HTTP | code | 场景 |
+|---|---|---|
+| 400 | 40001 | 字段校验失败、模板语法/渲染错误、出站地址被拦截、正则不合法 |
+| 403 | 40300 | 无 `notify:manage`；修改通知安全需要不受限环境；查看/重发不在环境范围内的记录 |
+| 404 | 40400 | 渠道 / 模板 / 订阅 / 记录不存在 |
+| 409 | 40900 | 名称重复；删除被引用的渠道/模板未带 `force`；重发到已删除/停用渠道；成功记录重发未带 `force` |
+
+### 未验证 / 限制
+
+- 未在真实 PostgreSQL 上运行：`TestNotifyCenterPostgres` 需设置 `MATRIX_TEST_DATABASE_URL`；钉钉/飞书/企业微信/Slack 真实机器人未联调（单元测试用本地 HTTP 桩）。
+- 告警**恢复**通知需要告警入口把已恢复告警也传入 `notifyAlerts`（当前 Webhook 只传新触发告警），模板与路由已支持 `resolved`。
+- 故障 / 流水线 / 审批为轮询接入（最长约 15 秒延迟）；流水线读取 CI/CD 模块表结构，CI/CD 表结构变化时需同步调整。更理想的挂钩点见交付报告。
+- 聚合只合并同一批到达的事件，不做跨时间窗口的延迟聚合；没有自动重试（失败可手动重发）。
 
 ---
 
@@ -208,7 +308,7 @@ receivers:
 - 未在 `registry.go` 注册（按规范由集成方添加 `observability.New()`）。
 - 告警规则只读（不支持通过平台写 Prometheus 规则文件 / PrometheusRule CRD）。
 - 静默/告警处理未走生产审批 Gate（视为运维操作，仅 RBAC + 审计）。
-- 认领/关闭仅在平台侧记录，不回写 Alertmanager；未实现告警升级、通知重试、限流、聚合合并及恢复（resolved）通知。
+- 认领/关闭仅在平台侧记录，不回写 Alertmanager。通知中心的限制见第 6 节末尾。
 - ES 查询为 `query_string` 近似 KQL，不支持 KQL 的嵌套字段语法 `a:{b:c}`、范围 `>`/`<` 等需写成 Lucene `field:[a TO b]`；不支持 ES 的 API Key 认证（可用 bearer）。
 - Loki metric 类 LogQL 不支持（拒绝）；不支持 live tail。
 - Tempo 搜索摘要不含 span 数和错误标记；未支持 Zipkin、SkyWalking。

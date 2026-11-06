@@ -192,7 +192,7 @@ spec:
       containers:
         - name: web
           # Offline OCI image built from the current workspace for the 2026-10-28 rollout.
-          image: docker.io/xingshu/matrix-server:v1.74.2-platform-ux-20261028
+          image: docker.io/xingshu/matrix-server:v1.28
           imagePullPolicy: IfNotPresent
           ports: [{ name: http, containerPort: 8080 }]
           env:

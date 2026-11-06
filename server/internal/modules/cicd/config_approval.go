@@ -346,19 +346,47 @@ func (m *Module) applyCICDConfigMutation(ctx context.Context, change cicdConfigM
 		if err != nil {
 			return 0, err
 		}
+		var cache []byte // nil = keep the current cache configuration on update
+		if in.Cache != nil {
+			if cache, err = json.Marshal(in.Cache); err != nil {
+				return 0, err
+			}
+		}
 		if change.ID == 0 {
 			var id int64
-			err := m.db.QueryRow(ctx, `INSERT INTO cicd_pipelines(app_id,name,runner_target_id,stages,on_push) VALUES($1,$2,$3,$4,$5) RETURNING id`,
-				in.AppID, in.Name, in.RunnerTargetID, stages, in.OnPush).Scan(&id)
+			err := m.db.QueryRow(ctx, `INSERT INTO cicd_pipelines(app_id,name,runner_target_id,stages,on_push,cache) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
+				in.AppID, in.Name, in.RunnerTargetID, stages, in.OnPush, cache).Scan(&id)
 			return id, err
 		}
 		if change.ExpectedUpdatedAt == nil {
 			return 0, errors.New("pipeline update version is unavailable")
 		}
-		tag, err := m.db.Exec(ctx, `UPDATE cicd_pipelines SET app_id=$2,name=$3,runner_target_id=$4,stages=$5,on_push=$6,updated_at=now()
-			WHERE id=$1 AND updated_at=$7`, change.ID, in.AppID, in.Name, in.RunnerTargetID, stages, in.OnPush, *change.ExpectedUpdatedAt)
+		tag, err := m.db.Exec(ctx, `UPDATE cicd_pipelines SET app_id=$2,name=$3,runner_target_id=$4,stages=$5,on_push=$6,cache=COALESCE($8::jsonb,cache),updated_at=now()
+			WHERE id=$1 AND updated_at=$7`, change.ID, in.AppID, in.Name, in.RunnerTargetID, stages, in.OnPush, *change.ExpectedUpdatedAt, cache)
 		if err != nil || tag.RowsAffected() == 0 {
 			return 0, httpx.Conflict("pipeline changed while approval was pending")
+		}
+		return change.ID, nil
+	case "pipeline.cache":
+		if change.Pipeline == nil || change.Pipeline.Cache == nil || change.ID < 1 || change.ExpectedUpdatedAt == nil {
+			return 0, errors.New("invalid pipeline cache configuration")
+		}
+		cache, err := json.Marshal(change.Pipeline.Cache)
+		if err != nil {
+			return 0, err
+		}
+		tag, err := m.db.Exec(ctx, `UPDATE cicd_pipelines SET cache=$2,updated_at=now() WHERE id=$1 AND updated_at=$3`,
+			change.ID, cache, *change.ExpectedUpdatedAt)
+		if err != nil || tag.RowsAffected() == 0 {
+			return 0, httpx.Conflict("pipeline changed while approval was pending")
+		}
+		return change.ID, nil
+	case "pipeline.cache.clear":
+		if change.ID < 1 {
+			return 0, errors.New("invalid pipeline cache clear")
+		}
+		if err := m.clearCache(ctx, change.ID); err != nil {
+			return 0, err
 		}
 		return change.ID, nil
 	case "argocd.create", "argocd.update":
@@ -546,6 +574,20 @@ func (m *Module) validateConfigChange(ctx context.Context, change cicdConfigMuta
 		}
 		if err := m.validatePipelineCredentials(ctx, change.Pipeline.Stages); err != nil {
 			return err
+		}
+		if err := change.Pipeline.Cache.normalize(); err != nil {
+			return err
+		}
+	case "pipeline.cache":
+		if change.Pipeline == nil || change.Pipeline.Cache == nil {
+			return httpx.Validation("invalid pipeline cache configuration")
+		}
+		if err := change.Pipeline.Cache.normalize(); err != nil {
+			return err
+		}
+	case "pipeline.cache.clear":
+		if _, err := m.loadPipe(ctx, change.ID); err != nil {
+			return httpx.Conflict("pipeline was deleted while approval was pending")
 		}
 	case "argocd.create", "argocd.update":
 		if change.Argo == nil {

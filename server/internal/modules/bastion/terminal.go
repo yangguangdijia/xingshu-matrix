@@ -16,7 +16,7 @@ type FilterRule struct {
 	ID     int64
 	Name   string
 	Re     *regexp.Regexp
-	Action string // deny | confirm
+	Action string // deny | confirm | approve | allow
 }
 
 // Evaluate returns the first matching rule (rules are pre-sorted by priority) or nil.
@@ -36,7 +36,7 @@ func Evaluate(rules []FilterRule, cmd string) *FilterRule {
 // CommandEvent is one submitted command line to audit.
 type CommandEvent struct {
 	Command string
-	Action  string // allow | deny | confirmed | cancelled
+	Action  string // allow | deny | confirmed | cancelled | approved | rejected
 	RuleID  int64
 }
 
@@ -55,6 +55,48 @@ type InputProcessor struct {
 	screen  []byte // current output line as echoed by the remote
 	pending *CommandEvent
 	local   []byte // answer typed while waiting for confirmation
+
+	// 审批（action=approve）：命令暂存，等待审批人处理；期间只接受 Ctrl-C。
+	awaiting       *CommandEvent
+	approvalReq    *CommandEvent // 待调用方提交审批的请求（TakeApprovalRequest 取走）
+	approvalCancel bool          // 用户按 Ctrl-C 放弃，调用方应撤回审批单
+}
+
+// TakeApprovalRequest 返回本次输入触发的审批请求（只返回一次）。
+func (p *InputProcessor) TakeApprovalRequest() *CommandEvent {
+	r := p.approvalReq
+	p.approvalReq = nil
+	return r
+}
+
+// TakeApprovalCancel 返回用户是否在等待审批时按了 Ctrl-C（只返回一次）。
+func (p *InputProcessor) TakeApprovalCancel() bool {
+	c := p.approvalCancel
+	p.approvalCancel = false
+	return c
+}
+
+// Awaiting 是否正在等待审批。
+func (p *InputProcessor) Awaiting() bool { return p.awaiting != nil }
+
+// ResolveApproval 结束等待：approved 时提交原命令，否则取消。note 显示给用户。
+func (p *InputProcessor) ResolveApproval(approved bool, note string) (toRemote, toClient []byte, events []CommandEvent) {
+	if p.awaiting == nil {
+		return nil, nil, nil
+	}
+	ev := *p.awaiting
+	p.awaiting = nil
+	if approved {
+		ev.Action = "approved"
+		toClient = append(toClient, "\r\n"+colorYellow+"[bastion] "+note+colorReset+"\r\n"...)
+		toRemote = append(toRemote, ev.Command...)
+		toRemote = append(toRemote, '\r')
+	} else {
+		ev.Action = "rejected"
+		toClient = append(toClient, "\r\n"+colorRed+"[bastion] "+note+colorReset+"\r\n"...)
+		toRemote = append(toRemote, '\r')
+	}
+	return toRemote, toClient, []CommandEvent{ev}
 }
 
 func NewInputProcessor(rules []FilterRule) *InputProcessor { return &InputProcessor{rules: rules} }
@@ -70,6 +112,17 @@ const (
 func (p *InputProcessor) Input(data []byte) (toRemote, toClient []byte, events []CommandEvent) {
 	for i := 0; i < len(data); i++ {
 		b := data[i]
+		if p.awaiting != nil {
+			if b == 0x03 {
+				ev := *p.awaiting
+				ev.Action = "cancelled"
+				events = append(events, ev)
+				p.awaiting, p.approvalCancel = nil, true
+				toClient = append(toClient, "^C\r\n"+colorYellow+"[bastion] 已放弃，审批单已撤回"+colorReset+"\r\n"...)
+				toRemote = append(toRemote, '\r')
+			}
+			continue
+		}
 		if p.pending != nil {
 			switch b {
 			case '\r', '\n':
@@ -126,6 +179,20 @@ func (p *InputProcessor) Input(data []byte) (toRemote, toClient []byte, events [
 			case r == nil:
 				events = append(events, CommandEvent{Command: cmd, Action: "allow"})
 				toRemote = append(toRemote, b)
+			case r.Action == "allow": // 白名单：命中即放行，不再匹配后续规则
+				events = append(events, CommandEvent{Command: cmd, Action: "allow", RuleID: r.ID})
+				toRemote = append(toRemote, b)
+			case r.Action == "approve":
+				toRemote = append(toRemote, 0x15)
+				if wasDirty {
+					events = append(events, CommandEvent{Command: cmd, Action: "deny", RuleID: r.ID})
+					toRemote = append(toRemote, '\r')
+					toClient = append(toClient, fmt.Sprintf("\r\n%s[bastion] 命令需审批（规则「%s」），但该行经历史/补全编辑无法安全重放，已拦截，请完整重新输入%s\r\n", colorRed, r.Name, colorReset)...)
+					continue
+				}
+				p.awaiting = &CommandEvent{Command: cmd, RuleID: r.ID}
+				p.approvalReq = &CommandEvent{Command: cmd, RuleID: r.ID, Action: r.Name}
+				toClient = append(toClient, fmt.Sprintf("\r\n%s[bastion] 命令命中规则「%s」，需要审批，正在提交…（Ctrl+C 放弃）%s", colorYellow, r.Name, colorReset)...)
 			case r.Action == "confirm":
 				// Erase the line remotely; resubmit the exact buffered text if confirmed.
 				toRemote = append(toRemote, 0x15)

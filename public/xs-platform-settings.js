@@ -11,6 +11,7 @@
     { k: "basic", t: "基本信息" },
     { k: "security", t: "安全策略" },
     { k: "sso", t: "企业登录（SSO）" },
+    { k: "ldap", t: "LDAP / AD" },
     { k: "appearance", t: "外观" },
     { k: "smtp", t: "系统邮件" },
     { k: "retention", t: "审计与保留" },
@@ -276,6 +277,54 @@
           }, function (e) { out.textContent = "发送失败：" + errMsg(e); out.style.color = "#d43030"; });
         };
         bindSave(f, function () { return api("/settings/smtp", { method: "PUT", body: collect() }); });
+      }, fail);
+    } else if (tab === "ldap") {
+      Promise.all([api("/settings/ldap"), api("/roles").catch(function () { return []; })]).then(function (rs) {
+        if (!active()) return;
+        var r = rs[0] || {}, c = r.config || {}, has = r.has_bind_password;
+        var roles = (Array.isArray(rs[1]) ? rs[1] : (rs[1] && (rs[1].items || rs[1].roles)) || []).filter(function (x) { return x.code !== "admin"; });
+        var inp = function (n, v, ph, type, w) { return '<input class="x-input" name="' + n + '" type="' + (type || "text") + '" value="' + esc(v == null ? "" : v) + '" placeholder="' + esc(ph || "") + '" autocomplete="off" style="width:' + (w || 420) + 'px">'; };
+        var chk = function (n, v, t) { return '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="' + n + '"' + (v ? " checked" : "") + ' style="width:auto"> ' + esc(t) + "</label>"; };
+        var gr = c.group_roles || {};
+        var roleSel = '<select class="x-select" name="default_role" style="width:200px">' + (roles.length ? roles : [{ code: "viewer", name: "viewer" }]).map(function (x) {
+          return '<option value="' + esc(x.code) + '"' + (x.code === (c.default_role || "viewer") ? " selected" : "") + ">" + esc(x.name || x.code) + "</option>"; }).join("") + "</select>";
+        body.innerHTML = '<form class="xs-cfg-card" data-f><h3>LDAP / Active Directory</h3>' +
+          '<p style="margin:0 0 16px;color:#6b7785;font-size:13px">启用后，登录页可直接使用目录账号登录。本地已有的同名账号仍用本地密码，不会被目录接管。</p>' +
+          row("启用", chk("enabled", c.enabled, "允许使用 LDAP / AD 账号登录")) +
+          row("服务器地址", inp("url", c.url, "ldap://ldap.example.com:389 或 ldaps://…:636")) +
+          row("加密", chk("start_tls", c.start_tls, "使用 StartTLS（ldap:// 时）") + chk("insecure_skip_verify", c.insecure_skip_verify, "跳过证书校验（仅测试环境）")) +
+          row("绑定 DN", inp("bind_dn", c.bind_dn, "cn=readonly,dc=example,dc=com")) +
+          row("绑定密码", inp("bind_password", "", has ? "已保存，留空不修改" : "服务账号密码", "password")) +
+          row("用户搜索 Base DN", inp("base_dn", c.base_dn, "ou=people,dc=example,dc=com")) +
+          row("用户过滤器", inp("user_filter", c.user_filter || "(uid={username})", "(uid={username})") + '<div style="color:#8a94a3;font-size:12px;margin-top:4px">AD 常用 (sAMAccountName={username})</div>') +
+          row("属性映射", inp("attr_username", c.attr_username || "uid", "用户名属性", "text", 136) + " " + inp("attr_display_name", c.attr_display_name || "cn", "显示名属性", "text", 136) + " " + inp("attr_email", c.attr_email || "mail", "邮箱属性", "text", 136)) +
+          row("组属性", inp("attr_groups", c.attr_groups || "", "memberOf（留空不同步角色）", "text", 200)) +
+          row("组 → 角色", '<textarea class="x-input" name="group_roles" rows="3" style="width:420px" placeholder="每行：组 DN 或组名=角色编码，例如 ops=operator">' + esc(Object.keys(gr).map(function (k) { return k + "=" + gr[k]; }).join("\n")) + "</textarea>") +
+          row("自动创建", chk("auto_create", c.enabled ? c.auto_create : true, "首次登录时自动创建平台账号")) +
+          row("默认角色", roleSel + '<span style="color:#8a94a3;font-size:12px;margin-left:8px">组映射未命中时使用</span>') +
+          '<div class="xs-cfg-foot"><button class="x-btn x-btn--pri" type="submit">保存</button><input class="x-input" data-tu placeholder="测试用户名（可选）" style="width:160px"><input class="x-input" data-tp type="password" placeholder="密码（可选）" style="width:140px" autocomplete="new-password"><button class="x-btn" type="button" data-test>测试</button><span data-tres style="font-size:13px;margin-left:8px"></span></div></form>';
+        var f = body.querySelector("[data-f]");
+        var collect = function () {
+          var map = {};
+          String(f.elements.group_roles.value || "").split(/\n/).forEach(function (l) { var i = l.indexOf("="); if (i > 0) map[l.slice(0, i).trim()] = l.slice(i + 1).trim(); });
+          return { enabled: f.elements.enabled.checked, url: V(f, "url"), start_tls: f.elements.start_tls.checked, insecure_skip_verify: f.elements.insecure_skip_verify.checked,
+            bind_dn: V(f, "bind_dn"), bind_password: f.elements.bind_password.value, base_dn: V(f, "base_dn"), user_filter: V(f, "user_filter"),
+            attr_username: V(f, "attr_username"), attr_display_name: V(f, "attr_display_name"), attr_email: V(f, "attr_email"), attr_groups: V(f, "attr_groups"),
+            group_roles: map, auto_create: f.elements.auto_create.checked, default_role: f.elements.default_role.value };
+        };
+        f.querySelector("[data-test]").onclick = function () {
+          var out = f.querySelector("[data-tres]");
+          out.textContent = "正在测试…"; out.style.color = "#6b7785";
+          var b = Object.assign(collect(), { username: f.querySelector("[data-tu]").value.trim(), password: f.querySelector("[data-tp]").value });
+          api("/settings/ldap/test", { method: "POST", body: b }).then(function (t) {
+            if (t && t.ok) {
+              var id = t.identity;
+              out.textContent = t.message + (id ? "：" + (id.display_name || id.username) + (id.email ? "（" + id.email + "）" : "") + (id.roles && id.roles.length ? "，角色 " + id.roles.join("、") : "") : "");
+              out.style.color = "#1a9b55";
+            } else { out.textContent = "失败：" + ((t && t.error) || "未知错误"); out.style.color = "#d43030"; }
+          }, function (e) { out.textContent = "失败：" + errMsg(e); out.style.color = "#d43030"; });
+        };
+        bindSave(f, function () { return api("/settings/ldap", { method: "PUT", body: collect() }); });
       }, fail);
     } else if (tab === "about") {
       api("/version").then(function (v) {

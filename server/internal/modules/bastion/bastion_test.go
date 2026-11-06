@@ -2,6 +2,7 @@ package bastion
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -120,8 +121,8 @@ func TestAssetInValidation(t *testing.T) {
 		{"valid ssh defaults env", assetIn{Name: "web-01", Host: "10.0.0.1", Port: 22, Protocol: "SSH"}, false},
 		{"rdp unsupported", assetIn{Name: "win-01", Host: "10.0.0.2", Port: 3389, Protocol: "RDP"}, true},
 		{"vnc unsupported", assetIn{Protocol: "vnc"}, true},
-		{"mysql unsupported", assetIn{Protocol: "mysql"}, true},
-		{"postgres unsupported", assetIn{Name: "db-01", Host: "10.0.0.3", Port: 5432, Protocol: "postgres"}, true},
+		{"mysql supported by db console", assetIn{Name: "db-02", Host: "10.0.0.4", Port: 3306, Protocol: "MySQL"}, false},
+		{"postgres supported by db console", assetIn{Name: "db-01", Host: "10.0.0.3", Port: 5432, Protocol: "postgres"}, false},
 		{"invalid protocol", assetIn{Name: "w", Host: "h", Port: 22, Protocol: "telnet"}, true},
 		{"options rejects password", assetIn{Name: "w", Host: "h", Port: 22, Protocol: "ssh", Options: map[string]any{"password": "x"}}, true},
 		{"options rejects private key", assetIn{Name: "w", Host: "h", Port: 22, Protocol: "ssh", Options: map[string]any{"Private_Key": "x"}}, true},
@@ -308,5 +309,77 @@ func TestMaskerApply(t *testing.T) {
 	bad := maskIn{Name: "e", Pattern: `a*`}
 	if bad.check() == nil {
 		t.Fatal("empty-matching pattern must be rejected")
+	}
+}
+
+func TestGeneratePassword(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		p, err := GeneratePassword(20)
+		if err != nil || len(p) != 20 {
+			t.Fatalf("bad password %q %v", p, err)
+		}
+		if !strings.ContainsAny(p, pwLower) || !strings.ContainsAny(p, pwUpper) || !strings.ContainsAny(p, pwDigits) || !strings.ContainsAny(p, pwSymbol) {
+			t.Fatalf("missing class: %q", p)
+		}
+	}
+}
+
+func TestPasswdAnswer(t *testing.T) {
+	cases := map[string]string{"Current password:": "old", "(current) UNIX password:": "old", "New password:": "new", "Retype new password:": "new", "Login:": ""}
+	for prompt, want := range cases {
+		got := passwdAnswer(prompt, "old", "new")
+		if got != want {
+			t.Fatalf("%q => %q, want %q", prompt, got, want)
+		}
+	}
+}
+
+func TestApproveRuleHoldsCommand(t *testing.T) {
+	p := NewInputProcessor([]FilterRule{{ID: 7, Name: "生产重启", Re: regexp.MustCompile(`^systemctl restart`), Action: "approve"}})
+	toRemote, _, events := p.Input([]byte("systemctl restart nginx\r"))
+	if len(events) != 0 || !p.Awaiting() || bytes.Contains(toRemote, []byte("\r")) {
+		t.Fatalf("command must be held: %q %v", toRemote, events)
+	}
+	if req := p.TakeApprovalRequest(); req == nil || req.Command != "systemctl restart nginx" {
+		t.Fatalf("approval request missing: %+v", req)
+	}
+	if r, _, _ := p.Input([]byte("ls\r")); len(r) != 0 {
+		t.Fatal("input must be ignored while awaiting approval")
+	}
+	r, _, ev := p.ResolveApproval(true, "ok")
+	if string(r) != "systemctl restart nginx\r" || len(ev) != 1 || ev[0].Action != "approved" {
+		t.Fatalf("approved command not released: %q %+v", r, ev)
+	}
+	p.Input([]byte("systemctl restart db\r"))
+	p.TakeApprovalRequest()
+	_, _, ev = p.Input([]byte{0x03})
+	if len(ev) != 1 || ev[0].Action != "cancelled" || !p.TakeApprovalCancel() {
+		t.Fatalf("ctrl-c must cancel: %+v", ev)
+	}
+}
+
+func TestClassifySQL(t *testing.T) {
+	cases := map[string]string{
+		"SELECT * FROM users WHERE id=1":                        SQLRead,
+		"select 'drop database x' as s":                         SQLRead,
+		"show tables":                                           SQLRead,
+		"/* hi */ select 1 -- x":                                SQLRead,
+		"select * from t for update":                            SQLWrite,
+		"with d as (delete from t returning *) select * from d": SQLWrite,
+		"update users set name='a' where id=1":                  SQLWrite,
+		"update users set name='a'":                             SQLHigh,
+		"delete from logs":                                      SQLHigh,
+		"drop table t":                                          SQLHigh,
+		"alter table t add column c int":                        SQLHigh,
+		"drop database prod":                                    SQLForbidden,
+		"select 1; delete from t":                               SQLForbidden,
+		"grant all on t to bob":                                 SQLForbidden,
+		"select * into outfile '/tmp/x' from t":                 SQLForbidden,
+		"":                                                      SQLForbidden,
+	}
+	for q, want := range cases {
+		if got, _ := ClassifySQL(q); got != want {
+			t.Fatalf("%q => %s, want %s", q, got, want)
+		}
 	}
 }

@@ -12,7 +12,9 @@
 | `bastion:audit` | 会话列表/详情、命令审计、录像下载 |
 | `bastion:kill` | 强制断开在线会话 |
 
-> 连接还需同时满足：①存在**有效的授权规则**（未禁用、未过期，主体为当前用户 ID 或其角色之一）；②`Principal.CanEnv(asset.env)` 通过。`bastion:manage` **不**隐含连接权，管理员也需要授权规则。
+> 连接（SSH 终端与数据库控制台）还需同时满足：①存在**有效的资产授权**（未禁用、已到生效时间、未过期，动作含 `connect`，主体为当前用户 ID、其角色编码之一或其所在用户组；资产直接授权或位于所授权节点及其子节点下）；②`Principal.CanEnv(asset.env)` 通过；③**登录 ACL** 未拒绝。`bastion:manage` **不**隐含连接权，管理员也需要授权。
+>
+> 审批：命令复核（`bastion.command`）与 SQL 工单（`bastion.sql`）走平台审批流 `/approvals`，审批人需要 `approval:approve`，不能审批自己发起的单。
 
 ## 配置（环境变量）
 
@@ -23,9 +25,13 @@
 | `MATRIX_BASTION_RECORDING_STORAGE_ID` | （空） | 录像卷标识，必须与录像目录下 `.matrix-bastion-storage-id` 文件内容一致；未配置时拒绝 SSH 连接（不录像就不允许连接） |
 | `MATRIX_BASTION_RECORDING_MODE` | （空） | 设为 `local` 时允许录像目录不在 NFS 上，**仅限单副本部署**；多副本必须使用共享 NFS，否则会话被其它副本接管后录像不完整。目录不能是组 / 全局可写 |
 
-## 数据表（迁移 `0001_init.up.sql` … `0004_mask_rules.up.sql`）
+## 数据表（迁移 `0001_init.up.sql` … `0006_jumpserver_layout.up.sql`）
 
 `bastion_assets`（含 `options JSONB`）、`bastion_accounts`（`secret_enc`/`passphrase_enc` 用 `d.Crypto` AES-256-GCM 加密）、`bastion_rules`、`bastion_filters`、`bastion_sessions`、`bastion_commands`。
+
+`0005_approve_and_rotation.up.sql`：命令过滤动作增加 `approve`；`bastion_accounts.pending_secret_enc / password_changed_at`；`bastion_rotation_plans`、`bastion_rotation_runs`。
+
+`0006_jumpserver_layout.up.sql`（全部增量）：`bastion_nodes`（资产树）、`bastion_platforms`（内置 Linux / Unix / Windows / MySQL / PostgreSQL）、`bastion_assets.node_id / platform_id`（已有 SSH 资产回填为 Linux 平台）、`bastion_accounts.verify_status / verify_message / verified_at`、`bastion_rules.node_ids / actions / starts_at` 与主体类型 `group`、`bastion_filters.group_name / asset_ids` 与动作 `allow`、`bastion_login_acls`、`bastion_login_logs`、`bastion_db_queries`。
 
 `0002_asset_options.up.sql` 用 `ADD COLUMN IF NOT EXISTS` 增加 `options JSONB NOT NULL DEFAULT '{}'::jsonb`，对已有数据向后兼容：老行读出 `{}`，写回时整对象覆盖。
 
@@ -45,7 +51,7 @@
 ```json
 {"name":"web-01","host":"10.0.0.11","port":22,"protocol":"ssh","env":"prod","description":"Web 集群 · team=infra","host_key":"","options":{"group":"Web 集群","labels":"team=infra","source":"手动","gateway":"bastion.internal:22","sftp":true}}
 ```
-`protocol` ∈ `ssh|rdp|vnc|mysql|postgres`；`env` 默认 `dev`。`host_key` 为 authorized_keys 格式；留空则**首次连接时信任并保存**（TOFU），之后不一致即拒绝连接（防中间人）。返回 201 + 资产对象。
+`protocol` ∈ `ssh|mysql|postgres`（其余协议没有连接器，创建时 400）；`env` 默认 `dev`。可选 `node_id`（资产树节点）、`platform_id`（平台）。数据库资产的 `options` 可含 `database`（默认库）、`sslmode`（PostgreSQL：`disable|prefer|require|verify-full`）、`tls`（MySQL：`preferred|true|skip-verify`）。列表接口支持 `node_id`（包含其全部子节点）。`host_key` 为 authorized_keys 格式；留空则**首次连接时信任并保存**（TOFU），之后不一致即拒绝连接（防中间人）。返回 201 + 资产对象。
 
 `options` 规则（`assetIn.check`）：
 
@@ -114,11 +120,25 @@
 - `account_ids` 为空 = 这些资产下的全部账号。`expires_at` 为空 = 永久。
 ### PUT /bastion/rules/:id、DELETE /bastion/rules/:id — `bastion:manage`
 
+v1.27 起（资产授权，对应 JumpServer「资产授权」）请求体增加字段：
+
+| 字段 | 说明 |
+|---|---|
+| `subject_type` | `user`（用户 ID）/ `role`（角色编码）/ `group`（用户组 ID，按 `user_group_members` 匹配） |
+| `asset_ids` / `node_ids` | 至少一项非空；节点授权包含其全部子节点下的资产 |
+| `actions` | `connect` `upload` `download` `copy` `paste` 的子集，缺省为全部。`connect` 由后端强制；`copy/paste` 由 Web 终端前端执行（服务端无法区分粘贴与键入）；`upload/download` 需要文件传输通道，未实现，仅登记 |
+| `starts_at` / `expires_at` | 生效 / 失效时间（RFC3339，可空）；失效必须晚于生效 |
+
+错误：`select at least one asset or node`、`unknown action: x`、`expires_at must be later than starts_at`（均为 400 / 40001）。
+
 ### GET /bastion/my/assets — `bastion:connect`
-返回当前用户经规则授权、且环境在其范围内的资产/账号组合：
+返回当前用户可连接的 **SSH** 资产账号（多条授权覆盖同一资产账号时合并动作、取最晚到期，只返回含 `connect` 的组合）：
 ```json
-[{"asset_id":1,"asset_name":"web-01","host":"10.0.0.11","port":22,"protocol":"ssh","env":"prod","account_id":3,"account_name":"root-key","username":"root"}]
+[{"asset_id":1,"asset_name":"web-01","host":"10.0.0.11","port":22,"protocol":"ssh","env":"prod","account_id":3,"account_name":"root-key","username":"root","actions":["connect","copy","paste"],"expires_at":null}]
 ```
+
+### GET /bastion/my/databases — `bastion:connect`
+同上，返回 MySQL / PostgreSQL 资产账号。
 
 ## 命令过滤规则
 
@@ -127,7 +147,9 @@
 ```json
 {"name":"禁止删根","pattern":"rm\\s+-rf\\s+/","action":"deny","priority":10,"enabled":true}
 ```
-`action`：`deny` 直接拦截；`confirm` 需用户在终端输入 `yes` 确认后才执行。正则用 Go RE2 语法，保存前校验。
+`action`：`deny` 直接拦截；`confirm` 需用户在终端输入 `yes` 确认后才执行；`approve` 命令暂存并提交审批单（见「命令复核」），审批通过后发送到主机；`allow` 白名单，命中即放行且不再匹配后续规则。正则用 Go RE2 语法，保存前校验，不能匹配空命令。
+
+可选字段：`group_name`（规则组，默认「默认规则组」，只用于归类，匹配顺序只看 `priority`）、`asset_ids`（作用资产，空 = 全部资产；会话建立时按资产加载规则）。`priority` 取值 1–100000。
 ### PUT /bastion/filters/:id、DELETE /bastion/filters/:id — `bastion:manage`
 
 ## 数据脱敏规则（v1.26）
@@ -166,9 +188,15 @@ WebSocket（gorilla/websocket）。
 {"type":"input","data":"ls -l\r"}
 {"type":"resize","cols":160,"rows":40}
 // 服务端 → 客户端
+{"type":"session","data":"42"}
 {"type":"output","data":"total 8\r\n..."}
+{"type":"approval","data":"{\"state\":\"pending\",\"ticket_id\":17,\"command\":\"systemctl restart nginx\",\"rule\":\"重启服务需审批\",\"deadline\":\"2026-11-05T14:10:00Z\"}"}
 {"type":"closed","data":"session ended | killed | <错误>"}
 ```
+
+`approval` 消息（v1.27）：命令命中 `approve` 规则时推送审批状态，`state` ∈ `submitting|pending|approved|rejected|cancelled|timeout|error`，同时以终端黄/红字输出同样的提示（旧前端也能看到）。等待期间终端只接受 Ctrl+C（放弃并撤回审批单）；超时（默认 10 分钟）自动撤回。
+
+建立连接前还会校验登录 ACL；授权缺失、ACL 拒绝、凭据不可用、网络或 SSH 握手失败、成功连接都写入 `bastion_login_logs`。
 
 **执行流程**
 1. 校验资产存在且 `protocol=ssh`、环境范围、账号属于该资产、授权规则有效；解密凭据；加载启用的过滤规则。
@@ -224,13 +252,105 @@ WebSocket（gorilla/websocket）。
 4. 录像：在 connect 参数中设置 `recording-path`/`recording-name`（guacd 原生 `.guac` 录像，可用 `guacenc` 转 mp4）；session 表复用。
 5. mysql/postgres 资产：计划通过协议代理或临时凭据下发实现，当前仅可登记资产。
 
+## 资产树节点（v1.27）
+
+### GET /bastion/nodes — `bastion:read`
+`[{"id":1,"parent_id":null,"name":"生产","created_at":"...","asset_count":3}]`（`asset_count` 为直接挂在该节点下的资产数）。
+
+### POST /bastion/nodes、PUT /bastion/nodes/:id — `bastion:manage`
+`{"name":"支付","parent_id":1}`。名称 1–64 字符、不含 `/`，同一父节点下唯一（409）；不能移动到自身或子孙节点下（400）。
+
+### DELETE /bastion/nodes/:id — `bastion:manage`
+节点下还有子节点或资产时 409，`details` 给出 `children` / `assets` 数量。
+
+## 平台（v1.27）
+
+### GET /bastion/platforms — `bastion:read`
+`[{"id":1,"name":"Linux","category":"host","type":"linux","protocol":"ssh","port":22,"charset":"utf-8","description":"...","builtin":true,"asset_count":3,"connectable":true}]`。`connectable=false`（如 Windows / RDP）表示没有连接器，只能登记。
+
+### POST /bastion/platforms、PUT /bastion/platforms/:id — `bastion:manage`
+`{"name":"CentOS 7","type":"linux|unix|windows|mysql|postgresql","port":22,"charset":"utf-8","description":""}`，`category`/`protocol` 由 `type` 推出。内置平台只能改端口、字符集、说明。
+
+### DELETE /bastion/platforms/:id — `bastion:manage`
+内置平台、仍被资产使用的平台返回 409。
+
+## 账号连通性验证（v1.27）
+
+### POST /bastion/accounts/:id/verify — `bastion:manage`
+用托管凭据真实登录一次：SSH 完成握手与认证后立即断开（不开 Shell，按 TOFU 校验主机指纹）；数据库执行 `SELECT 1`。结果写回账号 `verify_status`（`ok|failed|unknown`）/ `verify_message` / `verified_at`，并返回 `{"id":3,"status":"ok","message":"登录成功","latency_ms":38}`。受环境范围限制（403）。
+
+## 改密计划（v1.27，`rotation.go`）
+
+| 接口 | 权限 | 说明 |
+|---|---|---|
+| `GET /bastion/rotation-plans` | read | `{"items":[{id,name,account_ids,interval_days,length,enabled,next_run_at,last_run_at,last_result,created_by,...}]}` |
+| `POST /bastion/rotation-plans` | manage | `{"name","account_ids":[1],"interval_days":30,"length":20,"enabled":true,"next_run_at":"RFC3339 可选"}`；`length` 12–64，`interval_days` 1–365，名称重复 409 |
+| `PUT /bastion/rotation-plans/:id` | manage | 同上；`next_run_at` 为空时保持原计划时间 |
+| `DELETE /bastion/rotation-plans/:id` | manage | 级联删除执行记录 |
+| `POST /bastion/rotation-plans/:id/run` | manage | 立即同步执行（最长 5 分钟），返回 `{"succeeded":1,"failed":0}` |
+| `POST /bastion/accounts/:id/rotate` | manage | 单账号立即改密，`{"length":20}` 可选，返回 `{"status":"succeeded|failed|skipped","message":"..."}` |
+| `GET /bastion/rotation-runs?plan_id=` | read | 最近 100 条执行记录（含 `plan_name`，手动执行为「手动」） |
+
+单账号流程（`rotation.Rotate`，主机与存储通过接口注入）：生成密码 → 加密写入 `pending_secret_enc` → 用当前密码登录改密（root 用 `chpasswd`，其他用户在 PTY 中运行 `passwd`）→ 用新密码登录验证 → 提交为正式凭据。失败时：改密前就登录失败 → 主机未改，丢弃新密码；旧密码仍可用 → 丢弃新密码；旧密码不可用而新密码可用 → 视为成功；两者都不可用 → 保存新密码并标记失败、提示人工核对。私钥账号与非 SSH 资产 `skipped`。后台每分钟检查到期计划（PostgreSQL advisory lock 保证多副本只执行一份）。
+
+## 登录 ACL 与登录日志（v1.27）
+
+### GET /bastion/login-acls — `bastion:read`；POST、PUT /:id、DELETE /:id — `bastion:manage`
+```json
+{"name":"仅办公网","priority":10,"subject_type":"all|user|role|group","subject":"","asset_ids":[],"ip_ranges":["10.0.0.0/8","192.168.1.10","10.1.1.1-10.1.1.50","*"],
+ "weekdays":[1,2,3,4,5],"time_from":"09:00","time_to":"18:00","action":"allow|deny","enabled":true,"description":""}
+```
+按 `priority` 升序取第一条命中的启用规则；`deny` 拒绝连接（403，原因写入登录日志），`allow` 放行；没有命中时放行（授权仍是必要条件）。`weekdays` 1=周一…7=周日，空 = 每天；`time_from > time_to` 表示跨午夜。时段按 `MATRIX_TZ`（默认 `Asia/Shanghai`，二进制内置时区库）判断。作用于 SSH Web 终端与数据库控制台（`/db/connect`、`/db/query`）。校验错误：`invalid ip range`、`time must be HH:MM`、`weekdays must be 1 (Mon) - 7 (Sun)`、`subject is required unless subject_type is all`。
+
+### GET /bastion/login-logs — `bastion:audit`
+分页；参数 `q`（用户/资产/IP/账号模糊）、`result`（`success|denied|failed`）、`protocol`、`from`、`to`（RFC3339）。项：`{id,user_id,username,asset_id,asset_name,account,protocol,client_ip,result,reason,session_id,created_at}`。
+
+## 控制台总览与命令记录（v1.27）
+
+### GET /bastion/overview — `bastion:read`
+`assets{total,hosts,databases,accounts,nodes}`、`sessions{online,today,today_users}`、`logins{success,denied,failed}`（今日）、`approvals{command,sql,access}`（待审批，直接统计 `approval_tickets`）、`rotation{failed_7d,succeeded_7d,enabled_plans,verify_failed}`、`commands{blocked_today}`、`db_queries_today`、`trend[{date,sessions}]`（近 7 天）、`top_assets[{asset,sessions}]`。「今日」按 `MATRIX_TZ` 计算。
+
+### GET /bastion/commands — `bastion:audit`
+跨会话命令检索，分页；参数 `q`（命令/用户/资产模糊）、`action`、`username`、`asset_id`、`from`、`to`。项含 `rule_name`、`session_started_at`、会话的用户 / 资产 / 账号。
+
+## 命令复核（审批单类型 `bastion.command`）
+
+由 Web 终端在命令命中 `approve` 规则时以会话用户身份创建（`CreateOwned`，需要 `bastion:connect`），`payload`：`{session_id, asset_id, asset, command, rule_id, rule}`。列表 / 处理使用平台接口：`GET /approvals?scope=todo|mine|all&type=bastion.command`、`POST /approvals/:id/approve|reject|cancel`。终端每 2 秒查询一次状态，通过后把原命令发送到主机，拒绝 / 撤回 / 超时则取消；结果写入命令审计（`approved` / `rejected` / `cancelled`）。
+
+## 数据库控制台与 SQL 工单（v1.27，`dbconsole.go`）
+
+驱动：`github.com/go-sql-driver/mysql` 与 `github.com/jackc/pgx/v5/stdlib`（均已在 go.mod 中，无需新增依赖）。
+
+### POST /bastion/db/connect — `bastion:connect`
+`{"asset_id":5,"account_id":9,"database":""}`。校验授权、环境、登录 ACL 后真实连接一次并记录登录日志；返回 `{version, databases[], default_database, protocol, limits{max_rows:1000, default_rows:200, max_timeout_sec:60}}`。
+
+### POST /bastion/db/query — `bastion:connect`
+`{"asset_id":5,"account_id":9,"database":"app","sql":"SELECT ...","reason":"变更时必填","limit":200,"timeout_sec":15}`。按 `ClassifySQL` 路由：
+
+| 分级 | 处理 | 响应 |
+|---|---|---|
+| `read` | 只读事务（`BEGIN READ ONLY` / `START TRANSACTION READ ONLY`）内执行，PostgreSQL `SET LOCAL statement_timeout`、MySQL `max_execution_time`，最多 `limit` 行（≤1000），文本单元格按启用的脱敏规则替换，事务回滚 | 200 `{query_id, level, risk, status:"executed", result{columns,rows,row_count,truncated,duration_ms}}`；数据库报错 400 `SQL 执行失败：...`，`details` 同结构 |
+| `write` / `high` | 必须填写 `reason`，创建审批单 `bastion.sql`（不连库） | 202 / code 40304 `{query_id, status:"pending", ticket_id}` |
+| `forbidden` | 直接拒绝（不连库） | 400 / 40001，`details.status="rejected"` |
+
+每条语句先写入 `bastion_db_queries`（SQL 原文以 `d.Crypto` 加密并绑定记录 ID 作为附加数据，列表只返回去掉注释与字面量的 `summary`），执行后更新 `status`（`executed|failed|rejected|pending`）、行数、耗时。
+
+审批通过后处理器：重新读取申请人的角色 / 权限 / 环境范围并校验 `bastion:connect`、资产授权仍有效、资产环境未变 → 解密 SQL → 重新分级（变严格则失败）→ 普通事务执行并提交（超时 5 分钟）→ 更新记录；审批单结果 `{query_id, rows_affected, duration_ms}`。拒绝 / 撤回时记录置为 `rejected`。审批单 `payload` 对外去掉加密 SQL，保留 `asset, account, database, level, risk, summary`。
+
+### GET /bastion/my/db-queries — `bastion:connect`；GET /bastion/db/queries — `bastion:audit`
+分页；参数 `q`、`level`、`status`、`asset_id`。不返回 SQL 原文。
+
 ## 未实现 / 限制
 
-- RDP、VNC、MySQL、PostgreSQL 的实际连接代理（仅资产登记 + guacd 健康检查）。
+- RDP、VNC 的实际连接代理（仅资产登记 + guacd 健康检查）；MySQL / PostgreSQL 只提供 Web 数据库控制台（HTTP 查询），不提供原生协议代理（客户端工具直连）。
+- 文件传输（SFTP / 上传下载）未实现，因此没有「文件传输记录」；授权里的 `upload` / `download` 动作仅登记。
+- MySQL 的 `max_execution_time` 只约束 SELECT；变更语句的超时依赖连接上下文取消（驱动断开连接），服务器端语句可能在断开后继续执行到结束。
+- 数据库控制台结果脱敏是对每个文本单元格做正则替换，不识别列语义；二进制列按字符串处理。
+- 登录 ACL 不支持「需要审核后登录」动作，只有允许 / 拒绝。
 - 录像上传 S3/MinIO：当前只写本地目录。计划：会话结束后用 minio-go `PutObject` 上传到 `recordings/<id>.cast`，`recording_path` 改存对象键，下载接口改为预签名 URL 重定向；多实例部署时必须启用，否则录像只存在于产生它的实例上。
 - 强制断开、在线会话注册表为**单实例内存**；多实例需通过 Redis pub/sub 广播 kill。
 - 命令识别基于输入行缓冲 + 回显屏幕行启发式：`vim` 等全屏程序内的按键、`sudo` 密码输入等也可能被当作"命令"记录；多行粘贴、shell 别名/变量展开、`bash -c` 嵌套可能绕过正则——过滤规则是辅助控制，不能替代最小权限账号。
-- 生产环境连接未接入审批（`d.Approval.Gate`）；可后续增加"连接申请"工单类型。
+- 连接本身不走审批（临时访问用 `bastion.access_request`）；命令级审批见「命令复核」。
 - 未提供 SFTP 文件传输、会话实时监看（旁观）。
 - `?token=` / `Sec-WebSocket-Protocol` 传 token 未实现，见上文，请用 `access_token`。
 
@@ -268,3 +388,8 @@ SSH 会话使用 `XS.ws("/bastion/sessions/ssh/ws", {asset, account, cols, rows}
 已在本轮验证：`go test ./...`、`go vet ./...`、前端脚本解析、`git diff --check`、静态预览下的登录/改密/资产表单/终端空态交互。
 
 界面约束：未接入后端时，资产与审计页显示"静态示例数据"提示；`live` 模式下未接入后端的子页（账号、授权策略、命令过滤、审计、脱敏、数据库）同样标注，避免把演示数据当成生产状态。
+
+### v1.27（JumpServer 结构补全）验证边界
+
+- 已验证：`go test ./internal/modules/bastion/`（改密流程用假 SSH 主机 / 假存储覆盖成功、旧密码可用回滚、新密码已生效、新旧都失败、主机不可达、保存失败、提交失败、跳过；SQL 执行器分级路由、禁止语句不执行、无审批服务拒绝、只读结果脱敏与行数上限；登录 ACL 匹配与输入校验；授权合并、过滤规则 allow 短路）、`go vet`、`gofmt -l`、前端 `node --check`。
+- **未验证**：0006 迁移在真实 PostgreSQL 上执行；节点递归授权 SQL、总览统计 SQL、用户组主体匹配；真实 MySQL / PostgreSQL 的只读事务、超时与审批后执行；真实主机上的 `passwd` / `chpasswd` 改密；Web 终端 `approval` 消息在浏览器中的展示（需要应用 index.html 补丁）；跨实例的命令审批等待。

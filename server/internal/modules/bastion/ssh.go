@@ -3,6 +3,7 @@ package bastion
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -130,19 +131,33 @@ func (m *Module) sshWS(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
+	logIn := loginLog{UserID: p.UserID, Username: p.Username, AssetID: asset.ID, AssetName: asset.Name, Account: acc.Username, Protocol: "ssh", ClientIP: c.ClientIP()}
 	if okk, err := m.authorized(c, p, assetID, accountID); err != nil {
 		httpx.Fail(c, err)
 		return
 	} else if !okk {
+		logIn.Result, logIn.Reason = "denied", "没有生效的资产授权"
+		m.writeLoginLog(logIn)
 		httpx.Fail(c, httpx.Forbidden("no active authorization rule for this asset/account"))
+		return
+	}
+	if reason, err := m.checkACL(c, p, asset.ID, c.ClientIP()); err != nil {
+		httpx.Fail(c, err)
+		return
+	} else if reason != "" {
+		logIn.Result, logIn.Reason = "denied", reason
+		m.writeLoginLog(logIn)
+		httpx.Fail(c, httpx.Forbidden(reason))
 		return
 	}
 	auth, err := m.authMethod(acc)
 	if err != nil {
+		logIn.Result, logIn.Reason = "failed", "托管凭据不可用"
+		m.writeLoginLog(logIn)
 		httpx.Fail(c, httpx.Conflict("SSH credential is unavailable or invalid"))
 		return
 	}
-	filters, err := m.loadFilters(c)
+	filters, err := m.loadFilters(c, asset.ID)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -278,6 +293,8 @@ func (m *Module) sshWS(c *gin.Context) {
 	raw, err = (&net.Dialer{}).DialContext(dialCtx, "tcp", addr)
 	dialCancel()
 	if err != nil {
+		logIn.Result, logIn.Reason, logIn.SessionID = "failed", "网络连接失败", &ref.ID
+		m.writeLoginLog(logIn)
 		fail("SSH network connection failed")
 		return
 	}
@@ -294,9 +311,13 @@ func (m *Module) sshWS(c *gin.Context) {
 		HostKeyCallback: m.hostKeyCallback(asset), Timeout: 10 * time.Second,
 	})
 	if err != nil {
+		logIn.Result, logIn.Reason, logIn.SessionID = "failed", "SSH 握手、认证或主机指纹校验失败", &ref.ID
+		m.writeLoginLog(logIn)
 		fail("SSH handshake, authentication or host key verification failed")
 		return
 	}
+	logIn.Result, logIn.Reason, logIn.SessionID = "success", "", &ref.ID
+	m.writeLoginLog(logIn)
 	_ = raw.SetDeadline(time.Time{})
 	client := ssh.NewClient(conn, chans, reqs)
 	sess, err = client.NewSession()
@@ -377,6 +398,37 @@ func (m *Module) sshWS(c *gin.Context) {
 		done <- ioResult{"remote", err}
 	}()
 
+	// deliver 把处理器结果写回客户端、审计并转发到远端；出错时返回结束原因。
+	var deliverMu sync.Mutex
+	deliver := func(toRemote, toClient []byte, events []CommandEvent) *ioResult {
+		deliverMu.Lock()
+		defer deliverMu.Unlock()
+		if len(toClient) > 0 {
+			if err := rec.Output(toClient); err != nil {
+				return &ioResult{"recording", err}
+			}
+			_ = send(wsMsg{Type: "output", Data: string(toClient)})
+		}
+		ids, err := m.auditCommands(ctx, ref, events)
+		if err != nil {
+			return &ioResult{"audit", err}
+		}
+		if len(toRemote) > 0 {
+			n, writeErr := stdin.Write(toRemote)
+			if n != len(toRemote) && writeErr == nil {
+				writeErr = io.ErrShortWrite
+			}
+			if err := m.commandDelivery(ctx, ref, ids, writeErr); err != nil {
+				return &ioResult{"audit", err}
+			}
+			if writeErr != nil {
+				return &ioResult{"input", writeErr}
+			}
+		}
+		return nil
+	}
+	var approvalMu sync.Mutex
+	var approvalTicket int64
 	input.Add(1)
 	go func() { // client -> remote
 		defer input.Done()
@@ -394,32 +446,43 @@ func (m *Module) sshWS(c *gin.Context) {
 			case "input":
 				pmu.Lock()
 				toRemote, toClient, events := proc.Input([]byte(msg.Data))
+				req, cancelReq := proc.TakeApprovalRequest(), proc.TakeApprovalCancel()
 				pmu.Unlock()
-				if len(toClient) > 0 {
-					if err := rec.Output(toClient); err != nil {
-						done <- ioResult{"recording", err}
-						return
-					}
-					_ = send(wsMsg{Type: "output", Data: string(toClient)})
-				}
-				ids, err := m.auditCommands(ctx, ref, events)
-				if err != nil {
-					done <- ioResult{"audit", err}
+				if r := deliver(toRemote, toClient, events); r != nil {
+					done <- *r
 					return
 				}
-				if len(toRemote) > 0 {
-					n, writeErr := stdin.Write(toRemote)
-					if n != len(toRemote) && writeErr == nil {
-						writeErr = io.ErrShortWrite
+				if cancelReq {
+					approvalMu.Lock()
+					tid := approvalTicket
+					approvalTicket = 0
+					approvalMu.Unlock()
+					if tid > 0 && m.d.Approval != nil {
+						_, _ = m.d.Approval.Cancel(context.Background(), p, tid)
 					}
-					if err := m.commandDelivery(ctx, ref, ids, writeErr); err != nil {
-						done <- ioResult{"audit", err}
-						return
+					if b, err := json.Marshal(approvalNotice{State: "cancelled", TicketID: tid, Note: "已放弃，审批单已撤回"}); err == nil {
+						_ = send(wsMsg{Type: "approval", Data: string(b)})
 					}
-					if writeErr != nil {
-						done <- ioResult{"input", writeErr}
-						return
-					}
+				}
+				if req != nil {
+					go m.awaitCommandApproval(ctx, p, asset, ref.ID, req, &approvalMu, &approvalTicket, func(approved bool, note string) {
+						pmu.Lock()
+						tr, tc, ev := proc.ResolveApproval(approved, note)
+						pmu.Unlock()
+						if r := deliver(tr, tc, ev); r != nil {
+							select {
+							case done <- *r:
+							default:
+							}
+						}
+					}, func(text string) {
+						_ = rec.Output([]byte(text))
+						_ = send(wsMsg{Type: "output", Data: text})
+					}, func(n approvalNotice) {
+						if b, err := json.Marshal(n); err == nil {
+							_ = send(wsMsg{Type: "approval", Data: string(b)})
+						}
+					})
 				}
 			case "resize":
 				if msg.Cols > 0 && msg.Rows > 0 {

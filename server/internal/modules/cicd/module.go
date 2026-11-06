@@ -139,6 +139,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.PUT("/credentials/:id", manage, m.updateCredential)
 	g.DELETE("/credentials/:id", manage, m.deleteCredential)
 	g.POST("/repos/probe", read, m.probeRepo)
+	g.POST("/repos/detect", manage, m.detectRepo)
 
 	g.GET("/applications", read, m.listApps)
 	g.POST("/applications", manage, m.createApp)
@@ -157,6 +158,9 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.PUT("/pipelines/:id", manage, m.updatePipeline)
 	g.DELETE("/pipelines/:id", manage, m.deleteRow("cicd_pipelines", "pipeline"))
 	g.POST("/pipelines/:id/run", run, m.runPipelineHTTP)
+	g.GET("/pipelines/:id/cache", read, m.getPipelineCache)
+	g.PUT("/pipelines/:id/cache", manage, m.updatePipelineCache)
+	g.POST("/pipelines/:id/cache/clear", manage, m.clearPipelineCache)
 	g.POST("/pipelines/yaml/render", read, m.renderPipelineYAML)
 	g.POST("/pipelines/yaml/parse", read, m.parsePipelineYAML)
 
@@ -265,6 +269,7 @@ type Stage struct {
 	JenkinsJob           string            `json:"jenkins_job,omitempty"`
 	Params               map[string]string `json:"params,omitempty"`
 	TimeoutSec           int               `json:"timeout_sec,omitempty"`
+	DockerfileTemplate   string            `json:"dockerfile_template,omitempty"` // build: built-in Dockerfile when the repo has none (e.g. go:1.23)
 
 	registryKey string // runtime: key of the dockerconfigjson in the run Secret
 }
@@ -325,14 +330,15 @@ func validateStageSecrets(stage Stage) error {
 
 // Pipeline is an ordered list of stages for an application.
 type Pipeline struct {
-	ID             int64     `json:"id"`
-	AppID          int64     `json:"app_id" binding:"required"`
-	Name           string    `json:"name" binding:"required,max=64"`
-	RunnerTargetID int64     `json:"runner_target_id" binding:"required"`
-	Stages         []Stage   `json:"stages" binding:"required"`
-	OnPush         bool      `json:"on_push"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             int64        `json:"id"`
+	AppID          int64        `json:"app_id" binding:"required"`
+	Name           string       `json:"name" binding:"required,max=64"`
+	RunnerTargetID int64        `json:"runner_target_id" binding:"required"`
+	Stages         []Stage      `json:"stages" binding:"required"`
+	OnPush         bool         `json:"on_push"`
+	Cache          *CacheConfig `json:"cache,omitempty"` // build cache; omitted on update = keep current
+	CreatedAt      time.Time    `json:"created_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
 
 	Stats *PipelineStats `json:"stats,omitempty"` // list only; ignored on write
 }
@@ -359,6 +365,11 @@ func validateStages(st []Stage, a *Application) error {
 		case "build":
 			if a.ImageRepo == "" && s.Image == "" {
 				return httpx.Validation(fmt.Sprintf("stage %s: application image_repo required for build", s.Name))
+			}
+			if s.DockerfileTemplate != "" {
+				if _, err := renderDockerfileTemplate(s.DockerfileTemplate); err != nil {
+					return httpx.Validation(fmt.Sprintf("stage %s: unknown dockerfile_template %q", s.Name, s.DockerfileTemplate))
+				}
 			}
 		case "test", "script":
 			if s.Image == "" || len(s.Commands) == 0 {
@@ -911,13 +922,19 @@ func (m *Module) rotateWebhookSecret(c *gin.Context) {
 
 // ---------------------------------------------------------------- pipelines
 
-const pipeCols = `id,app_id,name,runner_target_id,stages,on_push,created_at,updated_at`
+const pipeCols = `id,app_id,name,runner_target_id,stages,on_push,cache,created_at,updated_at`
 
 func scanPipe(row pgx.Row) (*Pipeline, error) {
 	var p Pipeline
-	var st []byte
-	if err := row.Scan(&p.ID, &p.AppID, &p.Name, &p.RunnerTargetID, &st, &p.OnPush, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	var st, cache []byte
+	if err := row.Scan(&p.ID, &p.AppID, &p.Name, &p.RunnerTargetID, &st, &p.OnPush, &cache, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, notFound(err)
+	}
+	if len(cache) > 0 && string(cache) != "null" {
+		var c CacheConfig
+		if err := json.Unmarshal(cache, &c); err == nil {
+			p.Cache = &c
+		}
 	}
 	return &p, json.Unmarshal(st, &p.Stages)
 }
@@ -1003,6 +1020,10 @@ func (m *Module) savePipeline(c *gin.Context, id int64) {
 		httpx.Fail(c, err)
 		return
 	}
+	if err := in.Cache.normalize(); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	if err := m.validatePipelineCredentials(c, in.Stages); err != nil {
 		httpx.Fail(c, err)
 		return
@@ -1071,6 +1092,12 @@ func (p *Pipeline) public() *Pipeline {
 	cp := *p
 	cp.Stages = append([]Stage(nil), p.Stages...)
 	cp.Name = redactCICDText(cp.Name)
+	if p.Cache != nil {
+		cc := *p.Cache
+		cc.Paths = append([]string(nil), p.Cache.Paths...)
+		cc.LayerCacheRepo = redactCICDText(cc.LayerCacheRepo)
+		cp.Cache = &cc
+	}
 	for i := range cp.Stages {
 		stage := &cp.Stages[i]
 		stage.Commands = append([]string(nil), stage.Commands...)

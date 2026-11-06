@@ -130,11 +130,51 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.POST("/sessions/:id/kill", rbac.RequirePerm(PermKill), m.killSession)
 
 	g.GET("/guacd/health", rbac.RequirePerm(PermRead), m.guacdHealth)
+	m.registerRotation(g)
+
+	// 控制台总览
+	g.GET("/overview", rbac.RequirePerm(PermRead), m.overview)
+	// 资产树节点
+	g.GET("/nodes", rbac.RequirePerm(PermRead), m.listNodes)
+	g.POST("/nodes", rbac.RequirePerm(PermManage), m.saveNode)
+	g.PUT("/nodes/:id", rbac.RequirePerm(PermManage), m.saveNode)
+	g.DELETE("/nodes/:id", rbac.RequirePerm(PermManage), m.deleteNode)
+	// 平台
+	g.GET("/platforms", rbac.RequirePerm(PermRead), m.listPlatforms)
+	g.POST("/platforms", rbac.RequirePerm(PermManage), m.savePlatform)
+	g.PUT("/platforms/:id", rbac.RequirePerm(PermManage), m.savePlatform)
+	g.DELETE("/platforms/:id", rbac.RequirePerm(PermManage), m.deletePlatform)
+	// 账号连通性验证
+	g.POST("/accounts/:id/verify", rbac.RequirePerm(PermManage), m.verifyAccount)
+	// 登录 ACL 与登录日志
+	g.GET("/login-acls", rbac.RequirePerm(PermRead), m.listACLs)
+	g.POST("/login-acls", rbac.RequirePerm(PermManage), m.saveACL)
+	g.PUT("/login-acls/:id", rbac.RequirePerm(PermManage), m.saveACL)
+	g.DELETE("/login-acls/:id", rbac.RequirePerm(PermManage), m.deleteACL)
+	g.GET("/login-logs", rbac.RequirePerm(PermAudit), m.listLoginLogs)
+	// 全局命令记录
+	g.GET("/commands", rbac.RequirePerm(PermAudit), m.listAllCommands)
+	// 数据库控制台
+	g.GET("/my/databases", rbac.RequirePerm(PermConnect), m.myDatabases)
+	g.POST("/db/connect", rbac.RequirePerm(PermConnect), m.dbConnect)
+	g.POST("/db/query", rbac.RequirePerm(PermConnect), m.dbQuery)
+	g.GET("/my/db-queries", rbac.RequirePerm(PermConnect), func(c *gin.Context) { m.listDBQueries(c, true) })
+	g.GET("/db/queries", rbac.RequirePerm(PermAudit), func(c *gin.Context) { m.listDBQueries(c, false) })
 	if d.Approval != nil {
 		d.Approval.MustRegister(approval.TypeSpec{
 			Type: AccessRequestType, Module: "bastion", Description: "申请 SSH 资产临时访问授权",
 			CreatePermission: PermRequest, ApproverPermission: "approval:approve", PolicyIndependent: true,
 			Handler: approval.HandlerFunc(m.approveAccessRequest),
+		})
+		d.Approval.MustRegister(approval.TypeSpec{
+			Type: CommandApprovalType, Module: "bastion", Description: "堡垒机命令执行审批（命中需审批的命令过滤规则）",
+			CreatePermission: PermConnect, ApproverPermission: "approval:approve", PolicyIndependent: true,
+			Handler: approval.HandlerFunc(func(context.Context, *approval.Ticket) (any, error) { return gin.H{"released": true}, nil }),
+		})
+		d.Approval.MustRegister(approval.TypeSpec{
+			Type: SQLApprovalType, Module: "bastion", Description: "堡垒机数据库变更审批（数据库控制台提交的写操作 / 高危 SQL）",
+			CreatePermission: PermConnect, ApproverPermission: "approval:approve", PolicyIndependent: true, Timeout: 6 * time.Minute,
+			Handler: sqlApprovalHandler{m: m}, SanitizePayload: sanitizeSQLPayload,
 		})
 		g.GET("/requestable-assets", rbac.RequirePerm(PermRequest), m.listRequestableAssets)
 		g.POST("/access-requests", rbac.RequirePerm(PermRequest), m.createAccessRequest)
@@ -153,6 +193,11 @@ func (m *Module) Start(ctx context.Context, d *app.Deps) error {
 	if err := m.store.reap(ctx); err != nil {
 		return err
 	}
+	m.workers.Add(1)
+	go func() {
+		defer m.workers.Done()
+		m.rotationLoop(run)
+	}()
 	m.workers.Add(1)
 	go func() {
 		defer m.workers.Done()
@@ -267,6 +312,11 @@ func (m *Module) sessionReason(id int64) string {
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
+// validProtocol 报告协议是否有可用连接器：SSH 走 Web 终端，MySQL / PostgreSQL 走数据库控制台。
 func validProtocol(p string) bool {
-	return strings.ToLower(p) == "ssh"
+	switch strings.ToLower(p) {
+	case "ssh", "mysql", "postgres":
+		return true
+	}
+	return false
 }

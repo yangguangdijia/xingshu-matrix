@@ -91,6 +91,7 @@
       record("镜像标签", val(run.image_tag), "x-cicd-mono x-cicd-break") + record("创建时间", date(run.created_at)) +
       record("开始时间", date(run.started_at)) + record("结束时间", date(run.finished_at)) +
       record("运行耗时", run.started_at ? escapeHTML(duration(run.started_at, run.finished_at)) : "—") +
+      (window.XSCICDCache ? window.XSCICDCache.runFactHTML(run) : "") +
       (run.error ? record("运行错误", val(run.error), "x-cicd-error x-cicd-break") : "") +
       "</dl></section>";
   }
@@ -322,8 +323,9 @@
         (state.relatedErrors.apps ? '<p class="x-cicd-alert" role="status">应用信息暂不可用：' + escapeHTML(state.relatedErrors.apps) + '</p>' : "") +
         (state.relatedErrors.targets ? '<p class="x-cicd-alert" role="status">执行集群信息暂不可用：' + escapeHTML(state.relatedErrors.targets) + '</p>' : "") +
         info + '<div class="x-cicd-detail-grid">' + history() + '<div class="x-cicd-detail-main">' + runContent +
-        currentConfig(pl) + '</div></div>' + modalHTML() + '</main>';
+        (window.XSCICDCache ? window.XSCICDCache.sectionHTML(pl) : "") + currentConfig(pl) + '</div></div>' + modalHTML() + '</main>';
       if (state.log.follow) { var box = el.querySelector("[data-log-body]"); if (box) box.scrollTop = box.scrollHeight; }
+      if (window.XSCICDCache) window.XSCICDCache.bind(el, pl, function () { if (active() && state.selected && String(state.selected.id) === String(pl.id)) paint(); });
     }
     function paint() { if (!active()) return; state.selected ? paintDetail() : paintList(); }
     function fail(text, retry) {

@@ -118,14 +118,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	tr.GET("/search", rbac.RequirePerm(PermTraceRead), m.traceSearch)
 	tr.GET("/:traceId", rbac.RequirePerm(PermTraceRead), m.traceGet)
 
-	ch := g.Group("/channels")
-	ch.GET("", rbac.RequirePerm(PermNotify), m.listChannels)
-	ch.POST("", rbac.RequirePerm(PermNotify), m.createChannel)
-	ch.POST("/test", rbac.RequirePerm(PermNotify), m.testChannelDraft)
-	ch.GET("/:id", rbac.RequirePerm(PermNotify), m.getChannel)
-	ch.PUT("/:id", rbac.RequirePerm(PermNotify), m.updateChannel)
-	ch.DELETE("/:id", rbac.RequirePerm(PermNotify), m.deleteChannel)
-	ch.POST("/:id/test", rbac.RequirePerm(PermNotify), m.testChannel)
+	m.registerNotify(g) // 通知中心：渠道、模板、订阅、发送记录、通知安全
 
 	// Unauthenticated Alertmanager receiver, authenticated by ?token=.
 	if d.Public != nil {

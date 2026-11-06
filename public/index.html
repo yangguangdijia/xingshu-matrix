@@ -1617,12 +1617,14 @@
       .x-kib { color: #c9d1d9; }
       .x-ktab button:hover, .x-kib:hover { background: #30363d; }
       .x-kprod { padding: 0 6px; border-radius: 4px; background: #da3633; color: #fff; font: 500 12px/18px var(--x-font); }
-      .x-kadd { height: 28px; max-width: 120px; padding: 0 6px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #c9d1d9; font: inherit; cursor: pointer; }
+      .x-kadd { height: 28px; max-width: 160px; padding: 0 6px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #c9d1d9; font: inherit; cursor: pointer; }
       .x-kbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
       .x-kbody .x-log { flex: 1; height: auto; }
       .x-kbody .x-log[hidden] { display: none; }
       .x-kdock .r { color: #ff7b72; }
       .x-kdock .b { color: #79c0ff; }
+      .x-kdock .g { color: #7ee787; }
+      .x-kdock .x-log > div { white-space: pre; }
       @media (max-width: 767px) {
         #kcbtn span { display: none; }
         #kcbtn > svg { display: block; }
@@ -1991,12 +1993,12 @@
         settings: { label: "系统设置", icon: "gear", render: renderSettings },
       };
       const REAL_DATA_ROUTES = new Set(["sre", "ops", "observe", "logs", "ai", "automation", "coding", "project", "bugs", "traffic", "trace", "netpol", "bastion", "workbench", "requirements", "testing"]);
-      // 研发中心实时模式由 xs-devcenter.js 渲染（需求 AI 开发 #/requirements/ai 仍走原页面）
+      // 研发中心实时模式由 xs-devcenter.js 渲染（含 AI 开发 #/coding/ai 与 #/requirements/ai、统计报表 #/project/stats）
       ["workbench", "requirements", "coding", "project", "bugs", "testing"].forEach((k) => {
         const orig = routes[k].render;
         routes[k].render = (el) => {
           const live = window.XS && XS.mode === "live" && window.XSDev;
-          if (!live || (k === "requirements" && location.hash.split("/")[2] === "ai")) return orig(el);
+          if (!live) return orig(el);
           return window.XSDev.render(el, k);
         };
       });
@@ -2389,7 +2391,7 @@
         const n = (f) => state.reqs.filter(f).length;
         const recent = [...state.reqs].sort((a, b) => b.touched - a.touched).slice(0, 6);
         el.innerHTML = `
-          <h1 class="x-h1">工作台</h1><p class="x-desc">早上好，今天有 ${n((r) => r.stage === 8)} 个需求等待你验收。</p>
+          <h1 class="x-h1">工作台</h1><p class="x-desc">${(() => { const h = new Date().getHours(); return h < 6 ? "夜深了" : h < 11 ? "早上好" : h < 13 ? "中午好" : h < 18 ? "下午好" : "晚上好"; })()}，今天有 ${n((r) => r.stage === 8)} 个需求等待你验收。</p>
           <div class="x-cards">
             <a class="x-card" href="#/requirements" data-tab="open" style="text-decoration:none;color:inherit"><p>未完成需求</p><strong>${n(TABS[0][2])}</strong></a>
             <a class="x-card" href="#/requirements" data-tab="accept" style="text-decoration:none;color:inherit"><p>待验收</p><strong style="color:#1677ff">${n(TABS[1][2])}</strong></a>
@@ -6326,30 +6328,42 @@
       const SEC = [
         { k: "audit", t: "运维审计", sub: "堡垒机会话中执行的每条命令，可按用户、资产与结果追溯", q: "搜索用户 / 资产 / 命令", fc: "结果", act: "导出记录",
           d: T("操作审计", "时间 用户 资产 命令 结果", []) },
-        { k: "assets", t: "资产", i: "console", view: renderBasAssets },
-        { k: "accounts", t: "账号", i: "user", view: renderBasAccounts },
-        { k: "policy", t: "授权策略", i: "lock", view: renderBasPolicy },
+        { k: "dash", t: "控制台总览", i: "home", live: true },
+        { k: "assets", t: "资产列表", i: "console", view: renderBasAssets },
+        { k: "platforms", t: "平台", i: "cube", live: true },
+        { k: "accounts", t: "账号管理", i: "user", view: renderBasAccounts },
+        { k: "policy", t: "资产授权", i: "lock", view: renderBasPolicy },
+        { k: "acl", t: "登录 ACL", i: "shield", live: true },
+        { k: "myassets", t: "我的资产", i: "console", live: true },
+        { k: "dbc", t: "数据库控制台", i: "code", live: true },
+        { k: "replay", t: "会话录像", i: "eye", live: true },
+        { k: "cmdlog", t: "命令记录", i: "list", live: true },
+        { k: "loginlog", t: "登录日志", i: "doc", live: true },
         { k: "cmd", t: "命令过滤", i: "shield", sub: "会话中命中规则的命令将被拒绝或告警", q: "搜索命令", fc: "动作", act: "+ 新建规则", d: adm("命令过滤") },
         { k: "mask", t: "数据脱敏", i: "eye", sub: "查询结果中的敏感字段按规则脱敏后展示", q: "搜索字段", fc: "类型", act: "+ 新建规则", d: adm("数据脱敏规则") },
-        { k: "db", t: "数据库审查", i: "check", sub: "SQL 变更以工单提交，审核通过后执行，高危语句驳回", q: "搜索工单 / SQL", fc: "状态", act: "+ 提交工单",
+        { k: "db", t: "SQL 工单", i: "check", sub: "SQL 变更以工单提交，审核通过后执行，高危语句驳回", q: "搜索工单 / SQL", fc: "状态", act: "+ 提交工单",
           d: T("数据库审查", "工单 数据库 SQL 申请人 状态", []) },
         { k: "term", t: "Web 终端", i: "term", view: renderTerm },
         { k: "batch", t: "批量执行", i: "flow", view: renderBatch },
-        { k: "sess", t: "会话管理", i: "eye", view: renderSess },
-        { k: "cmdap", t: "命令审批", i: "check", view: renderCmdAp, n: () => GOV.cmdq.filter((q) => q.st === "待审批").length },
+        { k: "sess", t: "会话", i: "eye", view: renderSess },
+        { k: "cmdap", t: "命令复核", i: "check", view: renderCmdAp, n: () => (basIsLive() ? 0 : GOV.cmdq.filter((q) => q.st === "待审批").length) },
         { k: "req", t: "访问申请", i: "doc", view: renderReq, n: () => GOV.reqs.filter((q) => q.st === "待审批").length },
         { k: "pwd", t: "改密计划", i: "clock", view: renderPlan },
         { k: "lsec", t: "登录安全", i: "lock", view: renderLsec },
       ];
       const secHash = (s) => "#/bastion/" + s.k;
       const secCur = () => (current() === "audit" ? SEC[0] : SEC.find((s) => s.k === location.hash.split("/")[2]) || SEC[1]);
-      const BAS_G = [["Web 终端", "term", "term"], ["批量执行", "flow", "batch"], ["会话管理", "eye", "sess"], ["资产与账号", "console", "assets accounts"], ["访问策略", "lock", "policy cmd mask pwd lsec"], ["审批工单", "check", "cmdap req db"]]
+      const BAS_G = [["控制台总览", "home", "dash"], ["资产管理", "console", "assets platforms accounts pwd"], ["权限管理", "lock", "policy cmd acl mask lsec"],
+        ["工作台", "term", "myassets term dbc batch"], ["审计台", "eye", "sess replay cmdlog loginlog"], ["工单", "check", "cmdap db req"]]
         .map(([t, i, ks]) => ({ t, i, ks: ks.split(" ") }));
+      // 只读取后端真实数据的页面（live: true）在静态预览里不出现在分组页签中
+      const basKs = (g) => g.ks.filter((k) => (basIsLive() ? !BAS_UNWIRED.includes(k) : !(SEC.find((x) => x.k === k) || {}).live));
+      const basXsHooks = () => ({ connect: (a) => basConnect([a.name, a.host, "", "SSH", "已登记"], "SSH"), ssh: (g) => basLiveSSH(g) });
       // A 堡垒机 menu item that covers several pages shows them as tabs above the page
       function renderSec(el) {
         const s0 = secCur(), s = basIsLive() && BAS_UNWIRED.includes(s0.k) ? SEC.find((x) => x.k === "req") : s0;
         const g0 = current() === "bastion" && BAS_G.find((x) => x.ks.includes(s.k));
-        const g = g0 && (basIsLive() ? { t: g0.t, ks: g0.ks.filter((k) => !BAS_UNWIRED.includes(k)) } : g0);
+        const g = g0 && { t: g0.t, ks: basKs(g0) };
         if (!g || g.ks.length < 2) return secBody(el, s);
         el.innerHTML = `<div class="x-bar"><nav class="x-tabs" aria-label="${g.t}">${g.ks.map((k) => { const p = SEC.find((x) => x.k === k), n = (basIsLive() && k === "req") || BAS_UNWIRED.includes(k) ? 0 : p.n ? p.n() : 0;
           return `<button type="button" data-sh="${secHash(p)}"${p === s ? ' class="on" aria-current="page"' : ""}>${p.t}${n ? `<b>${n}</b>` : ""}</button>`; }).join("")}</nav></div><div></div>`;
@@ -6357,13 +6371,16 @@
         secBody(el.lastElementChild, s);
       }
       // 未接入后端的堡垒机子页：live 模式明确标注为静态示例，避免把演示数据当成生产状态
-      // 实时模式下：数据脱敏、登录安全已接入后端（xs-bastion.js）；数据库审查、命令审批、改密计划尚未实现，直接隐藏而不是展示空壳
-      const BAS_UNWIRED = ["db", "cmdap", "pwd"];
+      // 实时模式下堡垒机页面全部由 xs-bastion*.js 接入后端，没有需要隐藏的页面
+      const BAS_UNWIRED = [];
       const basStaticNote = (s) => (!basIsLive() || current() !== "bastion" || !BAS_UNWIRED.includes(s.k) ? ""
         : `<p class="x-frac" style="margin:0 0 10px;padding:8px 12px;border:1px solid #ffe0a3;border-radius:8px;background:#fffaf0">${esc(s.t)} 尚未接入后端接口。</p>`);
       function secBody(el, s) {
-        if (basIsLive() && window.XSBastion && s.k === "mask") { window.XSBastion.renderMask(el); return; }
-        if (basIsLive() && window.XSBastion && s.k === "lsec") { window.XSBastion.renderLsec(el); return; }
+        if (basIsLive() && window.XSBastion && window.XSBastion.has(s.k)) { window.XSBastion.render(s.k, el, basXsHooks()); return; }
+        if (s.live && !basIsLive()) {
+          el.innerHTML = phead(s.t, "") + '<section class="x-panel"><p class="x-empty">该页面读取平台后端的真实数据，连接后端后可用。</p></section>';
+          return;
+        }
         if (basIsLive() && BAS_UNWIRED.includes(s.k)) {
           el.innerHTML = phead(s.t, s.sub) + '<section class="x-panel"><p class="x-empty">该页面尚未接入真实数据接口，当前无可展示的数据。</p></section>';
           return;
@@ -7263,7 +7280,7 @@
       // 真实 SSH 会话：契约 {type:input|resize} ↔ {type:output|error|closed}；失败时如实显示原因，不渲染成功态
       function basLiveSSH(g) {
         const s = {
-          live: true, demo: false, id: ++BAS.seq, host: g.asset_name, ip: g.host, proto: "SSH", acct: g.username,
+          live: true, demo: false, id: ++BAS.seq, host: g.asset_name, ip: g.host, proto: "SSH", acct: g.username, actions: g.actions || null, approval: null,
           os: g.env ? "环境 " + g.env : "SSH", open: true, conn: "connecting", err: "", t0: Date.now(),
           screen: [[]], cx: 0, cy: 0, ws: null, cols: 120, rows: 32,
         };
@@ -7278,6 +7295,7 @@
             if (m.type === "output" && m.data) basTermFeed(s, m.data);
             else if (m.type === "error") { s.err = m.data || "会话出错"; basTermFeed(s, "\r\n[错误] " + s.err); }
             else if (m.type === "closed") { s.open = false; s.conn = "closed"; basTermFeed(s, "\r\n[会话结束] " + (m.data || "")); }
+            else if (m.type === "approval") { s.approval = window.XSBastion ? XSBastion.parseApproval(m.data) : null; if (window.XSBastion) XSBastion.paintApproval(s); return; }
             basTermPaint(s);
           };
           ws.onerror = () => {
@@ -7462,6 +7480,7 @@
         el.innerHTML = head + `<section class="x-panel"><div class="x-btabs" role="tablist">${T.map((t, i) => `<div class="x-btab${i === BAS.cur ? " on" : ""}"><button role="tab" aria-selected="${i === BAS.cur}" data-btab="${i}"><i class="${t.open ? "" : "off"}"></i>${esc(t.host)}   ${t.proto}</button><button data-bx="${i}" aria-label="关闭会话 ${esc(t.host)}">×</button></div>`).join("")}</div>
           <div class="x-bwrap"><div class="x-btool">${pillTag(st[0], st[1])}<span class="x-frac">真实 WebSocket 通道：命令由后端「命令过滤」拦截，会话与录像写入 bastion_sessions</span><button class="x-btn" data-lt="clear" style="margin-left:auto">清屏</button><button class="x-btn x-bdanger" data-lt="off">断开</button></div>
           <pre class="x-lterm-out" data-lterm="${s.id}" tabindex="0" aria-label="${esc(s.acct)}@${esc(s.host)} 终端输出">${esc(basTermText(s))}</pre>
+          <div data-lapv="${s.id}">${window.XSBastion ? XSBastion.approvalBanner(s.approval) : ""}</div>
           ${s.err ? `<p class="x-aerr" role="alert" style="margin:8px 0 0">${esc(s.err)}</p>` : ""}
           <input class="x-lterm-in" aria-label="${esc(s.host)} 终端输入" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="点这里输入，Enter 发送，Ctrl+C 中断" />
           <div class="x-bstat" role="group" aria-label="会话状态"><span>资产<b>${esc(s.host)}</b></span><span>账号<b>${esc(s.acct)}</b></span><span>协议<b>SSH</b></span><span>IP<b>${esc(s.ip || "—")}</b></span><span>时长<b data-bdur="${s.t0}">${basDur((s.open ? Date.now() : (s.t1 ||= Date.now())) - s.t0)}</b></span><span class="x-bstat-rec${s.open ? "" : " off"}">${s.open ? "● 会话录像中" : "● 会话已结束"}</span></div></div></section>`;
@@ -7496,6 +7515,7 @@
           const t = (e.clipboardData || window.clipboardData).getData("text");
           if (!t) return;
           e.preventDefault();
+          if (s.actions && !s.actions.includes("paste")) { toast("当前授权不允许向该资产粘贴"); return; }
           send(t.replace(/\r?\n/g, "\r"));
         };
         el.querySelectorAll("[data-lt]").forEach((b) => (b.onclick = () => {
@@ -12422,7 +12442,7 @@
         { k: "logs", t: "日志检索", i: "doc", sub: "按级别、应用与时间检索容器日志，点击行查看完整 JSON" },
         { k: "rules", t: "告警规则", i: "flag", sub: "PromQL 告警规则的级别、持续时间与通知渠道，可启停与静默" },
         { k: "events", t: "告警事件", i: "bell", sub: "告警中与已恢复的事件，可确认、指派与静默" },
-        { k: "channels", t: "通知渠道", i: "flow", sub: "飞书、钉钉、企业微信、邮件与 Webhook，告警按规则配置的渠道发送" },
+        { k: "channels", t: "通知渠道", i: "flow", sub: "钉钉、飞书、企业微信、邮件、Slack 与 Webhook，按订阅规则发送告警、故障、流水线结果与审批待办" },
       ];
       const obHash = (p) => (p.k === "metrics" ? "#/observe" : p.k === "logs" ? "#/logs" : "#/observe/" + p.k);
       const obCur = () => OB_PAGES.find((p) => p.k === (location.hash.split("/")[2] === "alerts" ? "events" : location.hash.split("/")[2])) || OB_PAGES[0];
@@ -13577,6 +13597,7 @@
         const contextState = clusterContextApi() && clusterContextApi().get();
         const renderContext = nav.env + ":" + (contextState && contextState.kind === "cluster" ? contextState.cluster_id : "");
         if (!demo && pg.k === "rules" && window.XSLiveOpsRules) return window.XSLiveOpsRules(el);
+        if (!demo && pg.k === "channels" && window.XSNotifyCenter) return window.XSNotifyCenter.render(el);
         let loadError = "";
         if (!demo) {
           try {
@@ -16269,13 +16290,14 @@ spec:
           { t: "工作台", i: "home", h: "#/workbench" },
           { t: "需求管理", i: "list", h: "#/requirements", n: () => (window.XS && XS.mode === "live" ? 0 : reqN("open")) },
           { t: "开发", i: "code", kids: [
-            { t: "Coding", i: "code", h: "#/coding" },
-            { t: "代码仓库", i: "box", h: "#/coding/repos", s: "托管团队的 Git 仓库，管理分支保护与成员权限。" },
-            { t: "合并请求", i: "branch", h: "#/coding/mr", s: "发起与评审合并请求，关联需求并触发检查。" },
+            { t: "AI 开发", i: "spark", h: "#/coding/ai", s: "由需求生成实施方案与任务拆解，确认后创建为任务。" },
+            { t: "代码仓库", i: "box", h: "#/coding/repos", s: "已接入的代码仓库及其关联的需求、缺陷与最近构建。" },
+            { t: "合并请求", i: "branch", h: "#/coding/mr", s: "合并请求在代码托管平台完成，合并后可自动触发流水线。" },
           ] },
           { t: "项目管理", i: "board", kids: [
             { t: "迭代", i: "loop", h: "#/project/sprint", s: "按两周一个迭代规划需求与缺陷，跟踪燃尽与交付。" },
             { t: "看板", i: "board", h: "#/project/board", s: "按状态列拖动卡片，团队进展一目了然。" },
+            { t: "统计报表", i: "chart", h: "#/project/stats", s: "需求吞吐、周期时长、缺陷与测试的真实统计。" },
           ] },
           { t: "团队协作", i: "users", h: "#/team" },
           { t: "缺陷总览", i: "bug", h: "#/bugs" },
@@ -16305,7 +16327,7 @@ spec:
             ...AI_PAGES.filter((p) => p.k !== "config").map((p) => ({ t: p.t, i: p.i, h: aiHash(p), s: p.sub })),
           ] },
           // 堡垒机: its 6 groups, then 审计 (#/audit)
-          { t: "堡垒机", i: "term", kids: [...basL(), { t: "审计", i: "shield", h: "#/bastion/audit" }] },
+          { t: "堡垒机", i: "term", kids: basL() },
           { t: "值班故障", i: "bell", kids: OC_PAGES.map((p) => ({ t: p.t, i: p.i, h: ocHash(p), s: p.sub, ...(p.k === "inc" ? { n: ocOpen } : {}) })) },
           { t: "设置", i: "gear", foot: true, kids: [
             ...IAM_PAGES.map((p) => ({ t: p.t, i: p.i, h: iamHash(p), free: true })),
@@ -16815,6 +16837,7 @@ spec:
     <script src="xs-monitoring.js"></script>
     <script src="xs-topo-cards.js"></script>
     <script src="xs-live-ops.js"></script>
+    <script src="xs-cicd-build.js"></script>
     <script src="xs-cicd-forms.js"></script>
     <script src="xs-bastion.js"></script>
     <script src="xs-branding.js"></script>
@@ -16822,173 +16845,9 @@ spec:
     <script src="xs-cicd-pipeline.js"></script>
     <script src="xs-platform-settings.js"></script>
     <script src="xs-channel-form.js"></script>
+    <script src="xs-notify-center.js"></script>
     <script src="xs-cluster-registries.js"></script>
-    <script>
-      (function () {
-        var dock = document.getElementById("kdock"), btn = document.getElementById("kcbtn");
-        var body = document.getElementById("kbody"), inp = document.getElementById("kin"), ps = document.getElementById("kps");
-        if (!dock || !btn || !body || !inp || !ps) return;
-        var tabsEl = dock.querySelector("#ktabs"), addSel = dock.querySelector("#kadd"), grip = dock.querySelector("#kgrip"), tin = body.querySelector(".x-tin");
-        var ctxs = [], ctx = "", tabs = [], cur = null, seq = 0;
-        var ASK = "该操作作用于生产集群，请输入集群名确认:";
-        var isProd = function (c) { return /^prod-/.test(c); };
-        var prompt = function () { return cur && cur.pod ? "/ #" : "admin@" + ctx + " ~ $"; };
-        function print(text, cls, t) {
-          t = t || cur; if (!t) return;
-          var d = document.createElement("div");
-          if (cls) d.className = cls;
-          d.textContent = text; t.out.appendChild(d); t.out.scrollTop = t.out.scrollHeight;
-        }
-        function audit(host, cmd, res) {
-          if (typeof basAudit !== "function") return;
-          try { basAudit(host, cmd, res); } catch (e) {}
-        }
-        function setPs() {
-          if (!cur) return;
-          ps.textContent = cur.ask ? ASK : prompt();
-          inp.setAttribute("aria-label", cur.ask ? "输入集群名确认生产操作" : cur.pod ? "Pod Shell 命令" : "kubectl 命令");
-        }
-        function drawTabs() {
-          tabsEl.textContent = "";
-          tabs.forEach(function (t, i) {
-            var el = document.createElement("div"), on = t === cur, name = t.pod || t.ctx;
-            el.className = "x-ktab" + (on ? " on" : ""); el.id = "ktab-" + t.id;
-            el.setAttribute("role", "tab"); el.setAttribute("aria-selected", String(on)); el.setAttribute("aria-controls", t.out.id); el.tabIndex = on ? 0 : -1;
-            var s = document.createElement("span"); s.textContent = name; el.appendChild(s);
-            if (isProd(t.ctx)) { var b = document.createElement("span"); b.className = "x-kprod"; b.textContent = "生产"; el.appendChild(b); }
-            var x = document.createElement("button"); x.type = "button"; x.textContent = "✕"; x.tabIndex = -1; x.setAttribute("aria-label", "关闭标签页 " + name);
-            x.addEventListener("click", function (e) { e.stopPropagation(); closeTab(t); });
-            el.appendChild(x);
-            el.addEventListener("click", function () { select(t); });
-            el.addEventListener("keydown", function (e) {
-              var j = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : -2;
-              if (j > -2) { e.preventDefault(); var n = tabs[(j + tabs.length) % tabs.length]; select(n, true); var f = document.getElementById("ktab-" + n.id); if (f) f.focus(); }
-              else if (e.key === "Delete") { e.preventDefault(); closeTab(t); }
-              else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(t); }
-            });
-            tabsEl.appendChild(el);
-          });
-        }
-        function select(t, keepFocus) {
-          cur = t; ctx = t.ctx;
-          tabs.forEach(function (x) { x.out.hidden = x !== t; });
-          drawTabs(); setPs();
-          if (!keepFocus && !dock.hidden) inp.focus();
-        }
-        function addTab(c, w) {
-          var t = { id: ++seq, ctx: c, pod: null, hist: [], hi: 0, ask: null, out: document.createElement("div") };
-          t.out.className = "x-log"; t.out.id = "kout-" + t.id;
-          t.out.setAttribute("role", "log"); t.out.setAttribute("aria-live", "polite");
-          body.insertBefore(t.out, tin);
-          tabs.push(t);
-          print("集群 Web Shell 未接入真实执行接口。", "d", t);
-          select(t);
-          return t;
-        }
-        function closeTab(t) {
-          var i = tabs.indexOf(t);
-          if (i < 0) return;
-          tabs.splice(i, 1); t.out.remove();
-          if (!tabs.length) { cur = null; drawTabs(); ps.textContent = ""; open(false); btn.focus(); return; }
-          if (t === cur) select(tabs[Math.min(i, tabs.length - 1)]); else drawTabs();
-        }
-        function open(show, noDefault) {
-          dock.hidden = !show; btn.setAttribute("aria-expanded", String(show));
-          if (show) { dock.classList.remove("min"); inp.focus(); }
-        }
-        btn.addEventListener("click", function () { open(dock.hidden); });
-        var kc = dock.querySelector("#kclose"), km = dock.querySelector("#kmin");
-        if (kc) kc.addEventListener("click", function () { open(false); btn.focus(); });
-        if (km) km.addEventListener("click", function () { dock.classList.toggle("min"); if (!dock.classList.contains("min")) inp.focus(); });
-        if (addSel) {
-          addSel.innerHTML = '<option value="">尚未接入集群</option>';
-          addSel.disabled = true;
-        }
-        inp.disabled = true;
-        inp.placeholder = "尚未接入 Web Shell";
-        var empty = document.createElement("div");
-        empty.className = "x-log";
-        empty.setAttribute("role", "status");
-        empty.textContent = "尚未接入真实 Kubernetes Web Shell。";
-        body.insertBefore(empty, tin);
-        // Resize: drag the grip or use ↑↓; height stays between 160px and 80vh
-        var maxH = function () { return Math.round(window.innerHeight * 0.8); };
-        function setH(h) {
-          h = Math.round(Math.max(160, Math.min(maxH(), h)));
-          dock.style.setProperty("--kh", h + "px");
-          grip.setAttribute("aria-valuenow", String(h)); grip.setAttribute("aria-valuemax", String(maxH()));
-        }
-        if (grip) {
-          grip.setAttribute("aria-valuemin", "160");
-          grip.addEventListener("pointerdown", function (e) {
-            e.preventDefault();
-            var y0 = e.clientY, h0 = dock.getBoundingClientRect().height;
-            try { grip.setPointerCapture(e.pointerId); } catch (x) {}
-            function mv(ev) { setH(h0 + y0 - ev.clientY); }
-            function up() { grip.removeEventListener("pointermove", mv); grip.removeEventListener("pointerup", up); grip.removeEventListener("pointercancel", up); }
-            grip.addEventListener("pointermove", mv); grip.addEventListener("pointerup", up); grip.addEventListener("pointercancel", up);
-          });
-          grip.addEventListener("keydown", function (e) {
-            if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-            e.preventDefault(); setH(dock.getBoundingClientRect().height + (e.key === "ArrowUp" ? 20 : -20));
-          });
-          window.addEventListener("resize", function () { if (dock.style.getPropertyValue("--kh")) setH(parseFloat(dock.style.getPropertyValue("--kh"))); });
-        }
-        // Keep the shell entry visible while its real executor is unavailable.
-        window.kcExecOpen = function () { open(true, true); };
-        function shell() { print("集群 Web Shell 未接入真实执行接口，未执行命令。", "r"); }
-        var PODS = {}, DEP = {};
-        function pods(ns, all) {
-          var rows = [], keys = all ? Object.keys(PODS) : [ns];
-          keys.forEach(function (k) { (PODS[k] || []).forEach(function (p) { rows.push(all ? [k].concat(p) : p); }); });
-          if (!rows.length) return "No resources found in " + ns + " namespace.";
-          var h = (all ? ["NAMESPACE"] : []).concat(["NAME", "READY", "STATUS", "RESTARTS", "AGE"]);
-          return table([h].concat(rows));
-        }
-        function table(rows) {
-          var w = rows[0].map(function (_, i) { return Math.max.apply(null, rows.map(function (r) { return String(r[i]).length; })) + 3; });
-          return rows.map(function (r) { return r.map(function (c, i) { return i < r.length - 1 ? String(c).padEnd(w[i]) : c; }).join(""); }).join("\n");
-        }
-        function findPod(n) { for (var k in PODS) for (var i = 0; i < PODS[k].length; i++) if (PODS[k][i][0] === n) return [k, PODS[k][i]]; return null; }
-        function run() { return null; }
-        var risky = function (a) { return a[0] === "kubectl" && (a[1] === "scale" || a[1] === "delete" || (a[1] === "rollout" && a[2] === "restart")); };
-        function exec(line) {
-          var c = line.trim(), r = run(c);
-          if (r === null) { print("error: unknown command \"" + c + "\"", "r"); audit(cur.ctx, c, "失败"); }
-          else if (Array.isArray(r)) { print(r[0], r[1]); audit(cur.ctx, c, r[1] === "r" ? "失败" : "成功"); }
-          else { print(r); audit(cur.ctx, c, "成功"); }
-          if (ctx !== cur.ctx) { cur.ctx = ctx; drawTabs(); }
-        }
-        inp.addEventListener("keydown", function (e) {
-          var t = cur;
-          if (!t) return;
-          if (e.key === "Enter") {
-            e.preventDefault();
-            var line = inp.value; inp.value = "";
-            if (t.ask) {
-              var cmd = t.ask; t.ask = null;
-              print(ASK + " " + line, "d");
-              if (line.trim() === t.ctx) exec(cmd);
-              else { print("集群名不匹配，已取消：" + cmd, "r"); audit(t.ctx, cmd, "已取消"); }
-              setPs(); return;
-            }
-            print(prompt() + " " + line, "d");
-            if (!line.trim()) return;
-            t.hist.push(line); t.hi = t.hist.length;
-            if (t.pod) return shell(line.trim());
-            if (line.trim() === "clear") { t.out.textContent = ""; audit(t.ctx, "clear", "成功"); return; }
-            if (isProd(t.ctx) && risky(line.trim().split(/\s+/))) { t.ask = line.trim(); setPs(); return; }
-            exec(line);
-          } else if (e.key === "Escape" && t.ask) {
-            e.preventDefault(); print("已取消：" + t.ask, "r"); audit(t.ctx, t.ask, "已取消"); t.ask = null; inp.value = ""; setPs();
-          } else if (e.key === "ArrowUp" && t.hist.length && !t.ask) {
-            e.preventDefault(); t.hi = Math.max(0, t.hi - 1); inp.value = t.hist[t.hi];
-          } else if (e.key === "ArrowDown" && t.hist.length && !t.ask) {
-            e.preventDefault(); t.hi = Math.min(t.hist.length, t.hi + 1); inp.value = t.hist[t.hi] || "";
-          }
-        });
-      })();
-    </script>
+    <script src="xs-kubectl.js"></script>
       <link rel="stylesheet" href="xs-clean.css" />
     <script src="xs-clean.js"></script>
 </body>
