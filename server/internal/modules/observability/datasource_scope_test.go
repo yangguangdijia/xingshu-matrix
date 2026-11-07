@@ -198,12 +198,7 @@ func TestCentralSilenceMatchersAndDeletion(t *testing.T) {
 		t.Fatalf("foreign silence deleted: %v, deletes=%d", err, deletes)
 	}
 	in := &SilenceInput{Comment: "maintenance"}
-	in.Matchers = append(in.Matchers, struct {
-		Name    string `json:"name"`
-		Value   string `json:"value"`
-		IsRegex bool   `json:"isRegex"`
-		IsEqual *bool  `json:"isEqual,omitempty"`
-	}{Name: "service", Value: "api"})
+	in.Matchers = append(in.Matchers, SilenceMatcher{Name: "service", Value: "api"})
 	if _, err := c.CreateSilence(context.Background(), in, "tester"); err != nil || !createdWithScope {
 		t.Fatalf("central silence missing cluster matcher: %v, created=%v", err, createdWithScope)
 	}

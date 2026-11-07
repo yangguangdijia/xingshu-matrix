@@ -215,6 +215,18 @@ func (m *Module) dispatch(ctx context.Context, events []*NotifyEvent) {
 			AND created_at > now() - make_interval(mins => $3))`, ch.ID, ev.Key, s.DedupMinutes).Scan(&hit)
 		return hit
 	}
+	events, muted := splitSilenced(events, m.activeSilences(ctx))
+	if len(muted) > 0 {
+		// Record which channels a muted event would have reached, as suppressed.
+		for ev, s := range muted {
+			would, _ := planDeliveries([]*NotifyEvent{ev}, subs, chans, now, nil)
+			for _, d := range would {
+				r := recordFor(d.sub, d.ch, ev)
+				r.Status, r.Reason = "suppressed", "命中平台静默规则 #"+strconv.FormatInt(s.id, 10)+firstN("（"+s.comment+"）", 300)
+				m.saveRecord(ctx, r)
+			}
+		}
+	}
 	plan, suppressed := planDeliveries(events, subs, chans, now, recently)
 	for _, r := range suppressed {
 		m.saveRecord(ctx, r)
@@ -312,6 +324,26 @@ func (m *Module) notifyAlerts(ctx context.Context, alerts []Alert) {
 		if d, err := m.diagnosis(ctx, a); err == nil {
 			ev.extra = diagnosisNotification(d, policy)
 		}
+		events = append(events, &ev)
+	}
+	m.dispatch(ctx, events)
+}
+
+// notifyResolved sends recovery notifications for alerts that changed from
+// firing to resolved. It skips escalation and diagnosis (firing-only hooks).
+func (m *Module) notifyResolved(ctx context.Context, alerts []Alert) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	policy := m.aiopsPolicy(ctx)
+	events := make([]*NotifyEvent, 0, len(alerts))
+	for i := range alerts {
+		a := alerts[i]
+		a.Status = "resolved"
+		link := ""
+		if policy.PublicURL != "" {
+			link = strings.TrimRight(policy.PublicURL, "/") + "/#/observe/alerts/" + strconv.FormatInt(a.ID, 10)
+		}
+		ev := alertEvent(a, link)
 		events = append(events, &ev)
 	}
 	m.dispatch(ctx, events)

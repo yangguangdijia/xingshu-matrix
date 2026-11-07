@@ -55,8 +55,9 @@ type Run struct {
 	CreatedAt     time.Time   `json:"created_at"`
 	StartedAt     *time.Time  `json:"started_at"`
 	FinishedAt    *time.Time  `json:"finished_at"`
-	Cache         *RunCache   `json:"cache"` // build cache used by this run; null = not used
-	Stages        []*RunStage `json:"stages,omitempty"`
+	Cache         *RunCache    `json:"cache"` // build cache used by this run; null = not used
+	Stages        []*RunStage  `json:"stages,omitempty"`
+	Scans         []*ImageScan `json:"scans,omitempty"` // image scan results (detail only)
 }
 
 // RunStage is the state of one stage of a run.
@@ -253,6 +254,15 @@ func (m *Module) getRun(c *gin.Context) {
 	if err != nil {
 		httpx.Fail(c, err)
 		return
+	}
+	for _, s := range r.Stages {
+		if s.Type == "scan" {
+			if r.Scans, err = m.runScans(c, id); err != nil {
+				httpx.Fail(c, err)
+				return
+			}
+			break
+		}
 	}
 	httpx.OK(c, r)
 }
@@ -538,7 +548,8 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 	var cache *cacheRunPlan
 	needsRunner := false
 	for _, s := range pl.Stages {
-		needsRunner = needsRunner || s.Type == "build" || s.Type == "test" || s.Type == "script"
+		needsRunner = needsRunner || s.Type == "build" || s.Type == "test" || s.Type == "script" ||
+			(s.Type == "scan" && (s.Scan == nil || s.Scan.Source != scanSourceHarbor))
 	}
 	if needsRunner {
 		conn, err := m.targetClient(ctx, pl.RunnerTargetID)
@@ -557,10 +568,19 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 			a.sshClone = true
 		}
 		for i, s := range pl.Stages {
-			if s.Type != "build" || s.RegistryCredentialID == 0 {
+			credID := s.RegistryCredentialID
+			if s.Type == "scan" {
+				if s.Scan != nil && s.Scan.Source == scanSourceHarbor {
+					continue
+				}
+				_, credID, _ = scanTarget(pl.Stages, i, a, run)
+			} else if s.Type != "build" {
 				continue
 			}
-			cfg, err := m.registryConfig(ctx, s.RegistryCredentialID)
+			if credID == 0 {
+				continue
+			}
+			cfg, err := m.registryConfig(ctx, credID)
 			if err != nil {
 				return fmt.Errorf("stage %s registry credential: %w", s.Name, err)
 			}
@@ -614,6 +634,13 @@ func (m *Module) runStages(ctx context.Context, runID int64, lw *logWriter) erro
 			if cache != nil && cache.tracker != nil {
 				m.saveRunCache(runID, cache.tracker.snapshot())
 			}
+		case "scan":
+			job = fmt.Sprintf("cicd-%d-%d-%s", runID, i, s.Name)
+			if len(job) > 63 {
+				job = strings.TrimRight(job[:63], "-")
+			}
+			m.setStage(runID, i, "running", job, "")
+			serr = m.scanStage(ctx, rt, run, a, pl.Stages, i, job, logf)
 		case "deploy":
 			serr = m.deployStage(ctx, run, a, s, i, logf)
 		case "jenkins":

@@ -46,8 +46,9 @@ type Event struct {
 }
 
 type agentConn struct {
-	hostID int64
-	ws     *websocket.Conn
+	hostID    int64
+	sessionID string
+	ws        *websocket.Conn
 	send   chan []byte
 	done   chan struct{}
 	once   sync.Once
@@ -75,7 +76,10 @@ type taskRun struct {
 	done       chan struct{}
 	timer      *time.Timer
 	transient  bool
+	remote     bool               // relayed to the owner replica; the owner persists the result
+	cancel     context.CancelFunc // aborts the relay request of a remote run
 	status     string
+	exit       *int
 	errMsg     string
 }
 
@@ -101,7 +105,9 @@ func (t *taskRun) append(stream, data string) {
 	}
 }
 
-// Hub holds live agent connections and in-flight tasks (single server instance).
+// Hub holds this replica's live agent connections and in-flight tasks. With a
+// relay configured (see relay.go) it records which replica owns each agent in
+// the owner registry and forwards tasks for agents connected elsewhere.
 type Hub struct {
 	st       agentStore
 	log      *slog.Logger
@@ -109,6 +115,7 @@ type Hub struct {
 	mu       sync.Mutex
 	conns    map[int64]*agentConn
 	tasks    map[int64]*taskRun
+	relay    *relayConfig // nil: single replica, local connections only
 }
 
 var diagnosticTaskID atomic.Int64
@@ -123,11 +130,25 @@ func newHub(st agentStore, log *slog.Logger) *Hub {
 	}
 }
 
+// Connected reports whether the host's agent is connected to this replica.
 func (h *Hub) Connected(id int64) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	_, ok := h.conns[id]
 	return ok
+}
+
+// Online reports whether the host's agent is connected to this replica or,
+// with a relay configured, holds a fresh claim on another replica.
+func (h *Hub) Online(ctx context.Context, id int64) bool {
+	if h.Connected(id) {
+		return true
+	}
+	if h.relay == nil {
+		return false
+	}
+	o, err := h.relay.lookupOwner(ctx, id)
+	return err == nil && o.usable(h.relay.selfAddr)
 }
 
 // ServeWS is mounted on the public group: GET /agent/ws.
@@ -180,15 +201,17 @@ func (h *Hub) ServeWS(c *gin.Context) {
 		h.closeWith(ws, "internal error")
 		return
 	}
-	conn := &agentConn{hostID: hostID, ws: ws, send: make(chan []byte, 256), done: make(chan struct{})}
+	conn := &agentConn{hostID: hostID, sessionID: newSessionID(), ws: ws, send: make(chan []byte, 256), done: make(chan struct{})}
 	h.mu.Lock()
 	if old := h.conns[hostID]; old != nil {
 		old.close() // newest connection wins
 	}
 	h.conns[hostID] = conn
 	h.mu.Unlock()
+	h.claimOwner(conn)
 	h.log.Info("agent connected", "host_id", hostID, "version", hello.AgentVersion)
 	go h.writer(conn)
+	go h.leaseLoop(conn)
 	b, _ := proto.Encode(proto.TypeWelcome, proto.Welcome{HostID: hostID})
 	_ = conn.enqueue(b)
 	h.reader(conn)
@@ -206,8 +229,13 @@ func (h *Hub) ServeWS(c *gin.Context) {
 		}
 	}
 	h.mu.Unlock()
+	released := h.releaseOwner(conn)
 	if stillCurrent {
-		_ = h.st.markOffline(bg, hostID)
+		if released {
+			// Only mark offline when this replica still held the agent's claim:
+			// if it already reconnected through another replica, it stays online.
+			_ = h.st.markOffline(bg, hostID)
+		}
 		for _, id := range orphaned {
 			h.finish(id, StatusFailed, nil, "agent disconnected")
 		}
@@ -307,31 +335,72 @@ func (h *Hub) task(id, hostID int64) *taskRun {
 	return nil
 }
 
-// Dispatch sends an exec / file_push frame to the host's agent and tracks the task.
+// runSpec describes one task to start on a host's agent.
+type runSpec struct {
+	hostID, taskID int64
+	frameType      string
+	payload        any
+	timeout        time.Duration
+	transient      bool       // not persisted to the task history (diagnostics)
+	timeoutMsg     string     // error recorded when no result arrives in time
+	sub            chan Event // optional subscriber attached before the frame is sent
+}
+
+// Dispatch sends an exec / file_push frame to the host's agent and tracks the
+// task. When the agent is connected to another replica the task is relayed to
+// that replica; the result is persisted by whichever replica holds the agent.
 func (h *Hub) Dispatch(hostID, taskID int64, frameType string, payload any, timeout time.Duration) error {
+	_, err := h.start(runSpec{hostID: hostID, taskID: taskID, frameType: frameType, payload: payload, timeout: timeout, timeoutMsg: "no result from agent"})
+	return err
+}
+
+func (h *Hub) start(spec runSpec) (*taskRun, error) {
 	h.mu.Lock()
-	conn := h.conns[hostID]
-	if conn == nil {
-		h.mu.Unlock()
-		return errOffline
-	}
-	t := &taskRun{id: taskID, hostID: hostID, subs: map[chan Event]struct{}{}, done: make(chan struct{})}
-	h.tasks[taskID] = t
+	conn := h.conns[spec.hostID]
 	h.mu.Unlock()
-	b, err := proto.Encode(frameType, payload)
+	if conn != nil {
+		return h.startLocal(conn, spec)
+	}
+	if h.relay == nil {
+		return nil, errOffline
+	}
+	return h.startRemote(spec)
+}
+
+func newTaskRun(spec runSpec) *taskRun {
+	t := &taskRun{id: spec.taskID, hostID: spec.hostID, subs: map[chan Event]struct{}{}, done: make(chan struct{}), transient: spec.transient}
+	if spec.sub != nil {
+		t.subs[spec.sub] = struct{}{}
+	}
+	return t
+}
+
+func (h *Hub) startLocal(conn *agentConn, spec runSpec) (*taskRun, error) {
+	t := newTaskRun(spec)
+	h.mu.Lock()
+	if _, dup := h.tasks[spec.taskID]; dup {
+		h.mu.Unlock()
+		return nil, errors.New("task is already running")
+	}
+	h.tasks[spec.taskID] = t
+	h.mu.Unlock()
+	b, err := proto.Encode(spec.frameType, spec.payload)
 	if err == nil {
 		err = conn.enqueue(b)
 	}
 	if err != nil {
 		h.mu.Lock()
-		delete(h.tasks, taskID)
+		if h.tasks[spec.taskID] == t {
+			delete(h.tasks, spec.taskID)
+		}
 		h.mu.Unlock()
-		return err
+		return nil, err
 	}
+	msg := spec.timeoutMsg
 	t.mu.Lock()
-	t.timer = time.AfterFunc(timeout+resultGrace, func() { h.finish(taskID, StatusFailed, nil, "no result from agent") })
+	t.timer = time.AfterFunc(spec.timeout+resultGrace, func() { h.finish(spec.taskID, StatusFailed, nil, msg) })
 	t.mu.Unlock()
-	return nil
+	return t, nil
 }
 
 // RunDiagnostic executes a fixed internal inspection without persisting raw output
@@ -344,26 +413,12 @@ func (h *Hub) runDiagnostic(ctx context.Context, hostID int64, timeout time.Dura
 		timeout = 30 * time.Second
 	}
 	id := -diagnosticTaskID.Add(1)
-	t := &taskRun{id: id, hostID: hostID, subs: map[chan Event]struct{}{}, done: make(chan struct{}), transient: true}
-	h.mu.Lock()
-	conn := h.conns[hostID]
-	if conn == nil {
-		h.mu.Unlock()
-		return "", errOffline
-	}
-	h.tasks[id] = t
-	h.mu.Unlock()
-	t.mu.Lock()
-	t.timer = time.AfterFunc(timeout+resultGrace, func() {
-		h.finish(id, StatusFailed, nil, "host diagnostic timed out")
+	t, err := h.start(runSpec{
+		hostID: hostID, taskID: id, frameType: proto.TypeExec, transient: true, timeout: timeout,
+		payload:    proto.Exec{TaskID: id, Command: hostDiagnosticCommand, TimeoutSec: int(timeout.Seconds())},
+		timeoutMsg: "host diagnostic timed out",
 	})
-	t.mu.Unlock()
-	b, err := proto.Encode(proto.TypeExec, proto.Exec{TaskID: id, Command: hostDiagnosticCommand, TimeoutSec: int(timeout.Seconds())})
-	if err == nil {
-		err = conn.enqueue(b)
-	}
 	if err != nil {
-		h.finish(id, StatusFailed, nil, "host diagnostic could not be dispatched")
 		return "", err
 	}
 	select {
@@ -382,6 +437,12 @@ func (h *Hub) runDiagnostic(ctx context.Context, hostID int64, timeout time.Dura
 
 // finish persists the final state and releases waiters/subscribers. Idempotent.
 func (h *Hub) finish(taskID int64, status string, exit *int, errMsg string) {
+	h.finishRun(taskID, status, exit, errMsg, true)
+}
+
+// finishRun ends a tracked task. persist=false is used when the owner replica
+// already persisted the result of a relayed task.
+func (h *Hub) finishRun(taskID int64, status string, exit *int, errMsg string, persist bool) {
 	h.mu.Lock()
 	t := h.tasks[taskID]
 	delete(h.tasks, taskID)
@@ -397,14 +458,20 @@ func (h *Hub) finish(taskID int64, status string, exit *int, errMsg string) {
 	if t.truncated {
 		out += "\n[output truncated]"
 	}
+	cancel := t.cancel
 	t.mu.Unlock()
-	if !t.transient {
+	if cancel != nil {
+		cancel()
+	}
+	if persist && !t.transient {
+		// finishTask only updates a still-running row, so a relayed task the
+		// owner already finished is never overwritten here.
 		if err := h.st.finishTask(context.Background(), taskID, status, exit, out, errMsg); err != nil {
 			h.log.Error("persist task result failed", "task_id", taskID, "err", err)
 		}
 	}
 	t.mu.Lock()
-	t.status, t.errMsg = status, errMsg
+	t.status, t.exit, t.errMsg = status, exit, errMsg
 	for ch := range t.subs {
 		close(ch)
 	}

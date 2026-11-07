@@ -1114,12 +1114,7 @@ func parseOTLPTrace(id string, raw []byte) (*Trace, error) {
 type SilenceInput struct {
 	Datasource int64             `json:"datasource" binding:"required"`
 	ClusterID  flexibleClusterID `json:"cluster_id,omitempty"`
-	Matchers   []struct {
-		Name    string `json:"name"`
-		Value   string `json:"value"`
-		IsRegex bool   `json:"isRegex"`
-		IsEqual *bool  `json:"isEqual,omitempty"`
-	} `json:"matchers" binding:"required,min=1"`
+	Matchers   []SilenceMatcher  `json:"matchers" binding:"required,min=1"`
 	StartsAt string `json:"startsAt"`
 	EndsAt   string `json:"endsAt"`
 	Duration string `json:"duration"` // alternative to endsAt, e.g. "2h"
@@ -1191,12 +1186,7 @@ func (c *client) CreateSilence(ctx context.Context, in *SilenceInput, createdBy 
 			found = true
 		}
 		if !found {
-			in.Matchers = append(in.Matchers, struct {
-				Name    string `json:"name"`
-				Value   string `json:"value"`
-				IsRegex bool   `json:"isRegex"`
-				IsEqual *bool  `json:"isEqual,omitempty"`
-			}{Name: c.scope.Label, Value: c.scope.Value})
+			in.Matchers = append(in.Matchers, SilenceMatcher{Name: c.scope.Label, Value: c.scope.Value})
 		}
 	}
 	now := time.Now()
@@ -1221,10 +1211,14 @@ func (c *client) CreateSilence(ctx context.Context, in *SilenceInput, createdBy 
 	if !end.After(start) {
 		return "", httpx.Validation("endsAt must be after startsAt")
 	}
-	for _, mt := range in.Matchers {
-		if mt.Name == "" {
-			return "", httpx.Validation("matcher name required")
-		}
+	if _, err := compileMatchers(in.Matchers); err != nil {
+		return "", err
+	}
+	if end.Sub(start) > maxSilenceDuration {
+		return "", httpx.Validation("静默时长不能超过 30 天")
+	}
+	if strings.TrimSpace(in.Comment) == "" {
+		return "", httpx.Validation("请填写注释")
 	}
 	body := map[string]any{"matchers": in.Matchers, "startsAt": start.UTC().Format(time.RFC3339),
 		"endsAt": end.UTC().Format(time.RFC3339), "createdBy": createdBy, "comment": in.Comment}

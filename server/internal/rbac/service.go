@@ -54,6 +54,8 @@ type Service struct {
 	// OnChange is invoked after any change that can alter a user's effective
 	// permissions (auth uses it to drop its principal cache).
 	OnChange func()
+
+	scopes scopeCache
 }
 
 // NewService builds the RBAC service.
@@ -62,6 +64,7 @@ func NewService(db store.DB, catalog *Catalog) *Service {
 }
 
 func (s *Service) changed() {
+	s.InvalidateScopes()
 	if s.OnChange != nil {
 		s.OnChange()
 	}

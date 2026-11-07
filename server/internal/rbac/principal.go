@@ -19,7 +19,20 @@ type Principal struct {
 	// EnvScope lists environments the user may operate on; nil means all.
 	EnvScope           []string `json:"env_scope"`
 	MustChangePassword bool     `json:"must_change_password"`
+	// Scopes is the v1.29 data range (workspaces / scoped role bindings), set
+	// by Service.ScopeMiddleware; nil means legacy behaviour (no data scope).
+	Scopes *DataScope `json:"scopes,omitempty"`
+	// AuthMethod is "session" (interactive login) or "token" (API token).
+	AuthMethod string `json:"auth_method,omitempty"`
+	// TokenID / TokenName identify the API token of a token-authenticated call.
+	TokenID   int64  `json:"token_id,omitempty"`
+	TokenName string `json:"token_name,omitempty"`
+	// ServiceAccount marks a non-interactive service account.
+	ServiceAccount bool `json:"service_account,omitempty"`
 }
+
+// ViaToken reports whether the caller authenticated with an API token.
+func (p *Principal) ViaToken() bool { return p != nil && p.TokenID > 0 }
 
 // Can reports whether the principal holds perm.
 func (p *Principal) Can(perm string) bool { return p != nil && Match(p.Permissions, perm) }

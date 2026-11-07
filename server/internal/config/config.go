@@ -26,6 +26,11 @@ type Config struct {
 	Log      LogConfig      `yaml:"log"`
 	AI       AIConfig       `yaml:"ai"`
 
+	// Data safety (v1.29): object storage, audit archive, platform backups.
+	ObjectStore ObjectStoreConfig `yaml:"object_store"`
+	Archive     ArchiveConfig     `yaml:"archive"`
+	Backup      BackupConfig      `yaml:"backup"`
+
 	// Warnings holds non-fatal issues found while loading (e.g. generated
 	// ephemeral secrets in dev mode). Not read from YAML.
 	Warnings []string `yaml:"-"`
@@ -63,6 +68,9 @@ type RedisConfig struct {
 
 type AuthConfig struct {
 	JWTSecret            string        `yaml:"jwt_secret"`
+	// JWTPreviousSecrets 是轮换前的旧签名密钥：只用于验签（宽限期内的旧令牌仍有效），
+	// 新令牌始终用 JWTSecret 签发。环境变量 MATRIX_JWT_PREVIOUS_SECRETS，逗号分隔。
+	JWTPreviousSecrets []string `yaml:"jwt_previous_secrets"`
 	Issuer               string        `yaml:"issuer"`
 	AccessTTL            time.Duration `yaml:"access_ttl"`
 	RefreshTTL           time.Duration `yaml:"refresh_ttl"`
@@ -75,6 +83,9 @@ type AuthConfig struct {
 type SecurityConfig struct {
 	// EncryptionKey is a 32-byte AES-256 key, base64 (std) or hex encoded.
 	EncryptionKey string `yaml:"encryption_key"`
+	// EncryptionPreviousKeys are retired keys (same encoding), used only to
+	// decrypt values not yet re-wrapped (env MATRIX_ENCRYPTION_PREVIOUS_KEYS, comma separated).
+	EncryptionPreviousKeys []string `yaml:"encryption_previous_keys"`
 }
 
 type LogConfig struct {
@@ -155,6 +166,9 @@ func applyEnv(c *Config, env lookupFunc) error {
 	str("MATRIX_REDIS_ADDR", &c.Redis.Addr)
 	str("MATRIX_REDIS_PASSWORD", &c.Redis.Password)
 	str("MATRIX_JWT_SECRET", &c.Auth.JWTSecret)
+	if v, ok := env("MATRIX_JWT_PREVIOUS_SECRETS"); ok {
+		c.Auth.JWTPreviousSecrets = splitList(v)
+	}
 	str("MATRIX_ADMIN_INITIAL_PASSWORD", &c.Auth.InitialAdminPassword)
 	str("MATRIX_ENCRYPTION_KEY", &c.Security.EncryptionKey)
 	str("MATRIX_LOG_LEVEL", &c.Log.Level)
@@ -178,6 +192,9 @@ func applyEnv(c *Config, env lookupFunc) error {
 			return fmt.Errorf("MATRIX_REDIS_DB: %w", err)
 		}
 		c.Redis.DB = n
+	}
+	if err := applyDataSafetyEnv(c, env); err != nil {
+		return err
 	}
 	return nil
 }
@@ -214,6 +231,11 @@ func (c *Config) finalize() error {
 	if len(c.Auth.JWTSecret) < 32 {
 		errs = append(errs, errors.New("auth.jwt_secret must be at least 32 characters (MATRIX_JWT_SECRET)"))
 	}
+	for i, p := range c.Auth.JWTPreviousSecrets {
+		if len(p) < 32 {
+			errs = append(errs, fmt.Errorf("auth.jwt_previous_secrets[%d] must be at least 32 characters (MATRIX_JWT_PREVIOUS_SECRETS)", i))
+		}
+	}
 	if c.Security.EncryptionKey == "" && c.IsDev() {
 		k := make([]byte, 32)
 		_, _ = rand.Read(k)
@@ -244,6 +266,7 @@ func (c *Config) finalize() error {
 	if c.AI.RequestTimeout <= 0 {
 		c.AI.RequestTimeout = 120 * time.Second
 	}
+	errs = append(errs, c.finalizeDataSafety()...)
 	return errors.Join(errs...)
 }
 

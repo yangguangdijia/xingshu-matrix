@@ -123,3 +123,76 @@ func (c *Catalog) List() []Permission {
 	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
 	return out
 }
+
+// meetPart intersects one component ("*" or a literal) of two grants.
+func meetPart(a, b string) (string, bool) {
+	switch {
+	case a == "*":
+		return b, true
+	case b == "*" || a == b:
+		return a, true
+	}
+	return "", false
+}
+
+func splitGrant(g string) (string, string, bool) {
+	if g == "*" {
+		return "*", "*", true
+	}
+	return strings.Cut(g, ":")
+}
+
+// Intersect returns grants matching exactly the permissions matched by both a
+// and b: Match(Intersect(a, b), p) == Match(a, p) && Match(b, p). It is used to
+// narrow an API token's owner permissions to the token's scopes.
+func Intersect(a, b []string) []string {
+	set := map[string]bool{}
+	for _, x := range a {
+		xr, xa, ok := splitGrant(x)
+		if !ok {
+			continue
+		}
+		for _, y := range b {
+			yr, ya, ok := splitGrant(y)
+			if !ok {
+				continue
+			}
+			r, ok1 := meetPart(xr, yr)
+			act, ok2 := meetPart(xa, ya)
+			if !ok1 || !ok2 {
+				continue
+			}
+			if r == "*" && act == "*" {
+				set["*"] = true
+			} else {
+				set[r+":"+act] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for g := range set {
+		out = append(out, g)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Covers reports whether a single grant in granted includes every permission
+// that code grants (code may itself use wildcards). A token scope is accepted
+// only when its owner's permissions cover it.
+func Covers(granted []string, code string) bool {
+	cr, ca, ok := splitGrant(code)
+	if !ok {
+		return false
+	}
+	for _, g := range granted {
+		gr, ga, ok := splitGrant(g)
+		if !ok {
+			continue
+		}
+		if (gr == "*" || gr == cr) && (ga == "*" || ga == ca) {
+			return true
+		}
+	}
+	return false
+}

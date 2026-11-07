@@ -19,7 +19,12 @@ type User struct {
 	Status             string
 	MustChangePassword bool
 	LockedUntil        *time.Time
+	// AccountType is "human" or "service" (service accounts cannot log in interactively).
+	AccountType string
 }
+
+// IsService reports whether u is a non-interactive service account.
+func (u *User) IsService() bool { return u != nil && u.AccountType == "service" }
 
 // Session is a refresh-token family.
 type Session struct {
@@ -62,14 +67,14 @@ type PgRepo struct{ DB store.DB }
 
 func (r *PgRepo) scanUser(row pgx.Row) (*User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash, &u.Status, &u.MustChangePassword, &u.LockedUntil)
+	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash, &u.Status, &u.MustChangePassword, &u.LockedUntil, &u.AccountType)
 	if store.IsNoRows(err) {
 		return nil, httpx.ErrNotFound
 	}
 	return &u, err
 }
 
-const userCols = `id, username, display_name, password_hash, status, must_change_password, locked_until`
+const userCols = `id, username, display_name, password_hash, status, must_change_password, locked_until, account_type`
 
 func (r *PgRepo) UserByUsername(ctx context.Context, username string) (*User, error) {
 	return r.scanUser(r.DB.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE lower(username)=lower($1)`, username))
@@ -167,7 +172,7 @@ func (r *PgRepo) ListUserSessions(ctx context.Context, userID int64) ([]Session,
 
 func (r *PgRepo) CountUsers(ctx context.Context) (int64, error) {
 	var n int64
-	err := r.DB.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&n)
+	err := r.DB.QueryRow(ctx, `SELECT count(*) FROM users WHERE account_type='human'`).Scan(&n)
 	return n, err
 }
 

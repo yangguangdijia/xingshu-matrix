@@ -49,6 +49,7 @@ type Service struct {
 	now    func() time.Time
 
 	external ExternalAuthenticator
+	identity *identity
 
 	mu    sync.RWMutex
 	cache map[string]cacheEntry // by session id
@@ -76,6 +77,7 @@ var (
 	errDisabled       = httpx.NewError(http.StatusForbidden, httpx.CodeAccountDisabled, "账号已被禁用")
 	errSessionInvalid = httpx.NewError(http.StatusUnauthorized, httpx.CodeUnauthorized, "会话已失效，请重新登录")
 	errTokenExpired   = httpx.NewError(http.StatusUnauthorized, httpx.CodeTokenExpired, "access token expired")
+	errServiceLogin   = httpx.NewError(http.StatusForbidden, httpx.CodeAccountDisabled, "服务账号不能交互登录，请使用访问令牌")
 )
 
 func lockedError(until time.Time, now time.Time) *httpx.Error {
@@ -99,6 +101,23 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 					return nil, nil, httpx.NewError(http.StatusBadGateway, httpx.CodeInvalidCredentials, "目录服务认证失败："+xerr.Error())
 				}
 				if uid > 0 {
+					// 目录账号同样走两步验证（与 OIDC 单点登录不同，见 docs/api/core.md）
+					nu, err := s.repo.UserByID(ctx, uid)
+					if err != nil {
+						return nil, nil, err
+					}
+					if nu.IsService() {
+						return nil, nil, errBadCredentials
+					}
+					if nu.LockedUntil != nil && nu.LockedUntil.After(now) {
+						return nil, nil, lockedError(*nu.LockedUntil, now)
+					}
+					if nu.Status != "active" {
+						return nil, nil, errDisabled
+					}
+					if err := s.mfaGate(ctx, nu, ip, userAgent); err != nil {
+						return nil, nu, err
+					}
 					return s.LoginExternal(ctx, uid, ip, userAgent)
 				}
 				return nil, nil, errBadCredentials
@@ -109,6 +128,11 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	}
 	if err != nil {
 		return nil, nil, err
+	}
+	if u.IsService() {
+		// 服务账号没有密码、不能交互登录；与“用户名或密码错误”同样的响应，避免枚举
+		VerifyPassword(string(dummyHash), password)
+		return nil, nil, errBadCredentials
 	}
 	if u.LockedUntil != nil && u.LockedUntil.After(now) {
 		return nil, nil, lockedError(*u.LockedUntil, now)
@@ -151,17 +175,34 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	if u.Status != "active" {
 		return nil, nil, errDisabled
 	}
-	if err := s.repo.RecordLoginSuccess(ctx, u.ID, ip); err != nil {
-		return nil, nil, err
+	// 启用（或按角色强制）两步验证时，密码正确只换来短期挑战票据
+	if err := s.mfaGate(ctx, u, ip, userAgent); err != nil {
+		return nil, u, err
 	}
-	sess := &Session{ID: NewSessionID(), UserID: u.ID, UserAgent: truncate(userAgent, 512), IP: ip, ExpiresAt: now.Add(sessTTL)}
+	pair, err := s.openSession(ctx, u, ip, userAgent, sessTTL)
+	return pair, u, err
+}
+
+// openSession records a successful login and creates a session + token pair.
+func (s *Service) openSession(ctx context.Context, u *User, ip, userAgent string, sessTTL time.Duration) (*TokenPair, error) {
+	if err := s.repo.RecordLoginSuccess(ctx, u.ID, ip); err != nil {
+		return nil, err
+	}
+	sess := &Session{ID: NewSessionID(), UserID: u.ID, UserAgent: truncate(userAgent, 512), IP: ip, ExpiresAt: s.now().Add(sessTTL)}
 	refresh, hash := NewRefreshToken(sess.ID)
 	sess.RefreshHash = hash
 	if err := s.repo.CreateSession(ctx, sess); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	pair, err := s.pair(u, sess.ID, refresh)
-	return pair, u, err
+	return s.pair(u, sess.ID, refresh)
+}
+
+// sessionTTL is the refresh-token lifetime from the security policy.
+func (s *Service) sessionTTL(ctx context.Context) time.Duration {
+	if pol := CurrentPolicy(ctx); pol.SessionHours > 0 {
+		return time.Duration(pol.SessionHours) * time.Hour
+	}
+	return s.opts.RefreshTTL
 }
 
 // ExternalAuthenticator 是外部目录（LDAP / AD）认证器。handled=false 表示未启用，交还本地流程；
@@ -187,23 +228,17 @@ func (s *Service) LoginExternal(ctx context.Context, userID int64, ip, userAgent
 	if u.Status != "active" {
 		return nil, nil, errDisabled
 	}
-	sessTTL := s.opts.RefreshTTL
-	if pol := CurrentPolicy(ctx); pol.SessionHours > 0 {
-		sessTTL = time.Duration(pol.SessionHours) * time.Hour
+	if u.IsService() {
+		return nil, nil, errServiceLogin
 	}
-	if err := s.repo.RecordLoginSuccess(ctx, u.ID, ip); err != nil {
-		return nil, nil, err
-	}
-	sess := &Session{ID: NewSessionID(), UserID: u.ID, UserAgent: truncate(userAgent, 512), IP: ip, ExpiresAt: now.Add(sessTTL)}
-	refresh, hash := NewRefreshToken(sess.ID)
-	sess.RefreshHash = hash
-	if err := s.repo.CreateSession(ctx, sess); err != nil {
+	pair, err := s.openSession(ctx, u, ip, userAgent, s.sessionTTL(ctx))
+	if err != nil {
 		return nil, nil, err
 	}
 	// SSO 用户的密码由身份源管理，不要求在本平台改密
 	u.MustChangePassword = false
-	pair, err := s.pair(u, sess.ID, refresh)
-	return pair, u, err
+	pair.MustChangePassword = false
+	return pair, u, nil
 }
 
 func (s *Service) pair(u *User, sid, refresh string) (*TokenPair, error) {
@@ -276,7 +311,7 @@ func (s *Service) ChangePassword(ctx context.Context, p *rbac.Principal, oldPw, 
 	if err != nil {
 		return err
 	}
-	if strings.HasPrefix(u.PasswordHash, "!ldap:") || strings.HasPrefix(u.PasswordHash, "!sso:") {
+	if strings.HasPrefix(u.PasswordHash, "!ldap:") || strings.HasPrefix(u.PasswordHash, "!sso:") || u.IsService() {
 		return httpx.Validation("该账号由企业目录或单点登录管理，请在对应系统中修改密码")
 	}
 	if !VerifyPassword(u.PasswordHash, oldPw) {
@@ -308,6 +343,9 @@ func (s *Service) ResetPassword(ctx context.Context, userID int64, newPw string)
 	u, err := s.repo.UserByID(ctx, userID)
 	if err != nil {
 		return err
+	}
+	if u.IsService() {
+		return httpx.Validation("服务账号没有密码")
 	}
 	if err := ValidatePassword(newPw, u.Username); err != nil {
 		return err
@@ -360,6 +398,9 @@ func (s *Service) RevokeAllSessions(ctx context.Context, userID int64) error {
 // Authenticate verifies an access token and returns the principal. The session
 // must still be live and the user active.
 func (s *Service) Authenticate(ctx context.Context, token string) (*rbac.Principal, error) {
+	if IsAPIToken(token) {
+		return s.AuthenticateAPIToken(ctx, token, "")
+	}
 	claims, err := s.tokens.ParseAccess(token)
 	if errors.Is(err, ErrTokenExpired) {
 		return nil, errTokenExpired
@@ -419,6 +460,7 @@ func (s *Service) loadPrincipal(ctx context.Context, userID int64, sid string) (
 	return &rbac.Principal{
 		UserID: u.ID, Username: u.Username, DisplayName: u.DisplayName, SessionID: sid,
 		Roles: roles, Permissions: perms, EnvScope: scope, MustChangePassword: u.MustChangePassword,
+		AuthMethod: "session", ServiceAccount: u.IsService(),
 	}, nil
 }
 

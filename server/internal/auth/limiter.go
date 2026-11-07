@@ -15,6 +15,7 @@ type RateLimiter struct {
 	buckets map[string]*bucket
 	now     func() time.Time
 	lastGC  time.Time
+	remote  RemoteLimiter // optional shared backend (ratelimit_redis.go)
 }
 
 type bucket struct {
@@ -29,6 +30,9 @@ func NewRateLimiter(perMinute int) *RateLimiter {
 
 // Allow consumes one token for key; it returns false and the wait time when empty.
 func (l *RateLimiter) Allow(key string) (bool, time.Duration) {
+	if handled, ok, wait := l.allowRemote(key); handled {
+		return ok, wait
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()

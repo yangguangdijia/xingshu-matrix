@@ -132,9 +132,15 @@ func AccessLog(log *slog.Logger) gin.HandlerFunc {
 			"method", c.Request.Method,
 			"path", c.Request.URL.Path,
 			"status", status,
+		}
+		if q := c.Request.URL.RawQuery; q != "" {
+			// access_token / ticket / token (and other credentials) are masked.
+			attrs = append(attrs, "query", RedactQuery(q))
+		}
+		attrs = append(attrs,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"ip", c.ClientIP(),
-		}
+		)
 		if uid, ok := c.Get("auth.user_id"); ok {
 			attrs = append(attrs, "user_id", uid)
 		}

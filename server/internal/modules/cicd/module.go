@@ -257,7 +257,7 @@ func (a *Application) env(name string) (*EnvTarget, error) {
 // Stage is one step of a pipeline.
 type Stage struct {
 	Name                 string            `json:"name"`
-	Type                 string            `json:"type"` // build | test | script | deploy | jenkins
+	Type                 string            `json:"type"` // build | test | script | scan | deploy | jenkins
 	Image                string            `json:"image,omitempty"`
 	Commands             []string          `json:"commands,omitempty"`
 	Env                  map[string]string `json:"env,omitempty"`
@@ -270,6 +270,7 @@ type Stage struct {
 	Params               map[string]string `json:"params,omitempty"`
 	TimeoutSec           int               `json:"timeout_sec,omitempty"`
 	DockerfileTemplate   string            `json:"dockerfile_template,omitempty"` // build: built-in Dockerfile when the repo has none (e.g. go:1.23)
+	Scan                 *ScanPolicy       `json:"scan,omitempty"`                // scan: scanner source and gate policy
 
 	registryKey string // runtime: key of the dockerconfigjson in the run Secret
 }
@@ -349,12 +350,16 @@ func validateStages(st []Stage, a *Application) error {
 	if len(st) == 0 {
 		return httpx.Validation("pipeline needs at least one stage")
 	}
-	for i, s := range st {
+	for i := range st {
+		s := &st[i]
 		if s.Name == "" || len(s.Name) > 40 || !nameRe.MatchString(s.Name) {
 			return httpx.Validation(fmt.Sprintf("stage %d: name must be a DNS label (<=40)", i))
 		}
-		if err := validateStageSecrets(s); err != nil {
+		if err := validateStageSecrets(*s); err != nil {
 			return err
+		}
+		if s.Type != "scan" {
+			s.Scan = nil
 		}
 		for _, value := range []string{s.Type, s.Image, s.RegistrySecret, s.DeployEnv, s.JenkinsJob} {
 			if inlineSecretText(value) {
@@ -374,6 +379,10 @@ func validateStages(st []Stage, a *Application) error {
 		case "test", "script":
 			if s.Image == "" || len(s.Commands) == 0 {
 				return httpx.Validation(fmt.Sprintf("stage %s: image and commands required", s.Name))
+			}
+		case "scan":
+			if err := validateScanStage(s, a, st, i); err != nil {
+				return err
 			}
 		case "deploy":
 			if _, err := a.env(s.DeployEnv); err != nil {

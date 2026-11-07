@@ -178,7 +178,12 @@ func (m *Module) createSilence(c *gin.Context) {
 		return
 	}
 	if cl, ok := m.clientForCluster(c, strconv.FormatInt(in.Datasource, 10), string(in.ClusterID), "alertmanager"); ok {
-		id, err := cl.CreateSilence(c, &in, rbac.PrincipalFrom(c).Username)
+		p := rbac.PrincipalFrom(c)
+		if env := cl.scope.Cluster.Env; m.silencePolicy(c).NeedsApproval(env) {
+			m.requestSilenceApproval(c, p, cl, &in)
+			return
+		}
+		id, err := cl.CreateSilence(c, &in, p.Username)
 		if err != nil {
 			httpx.Fail(c, err)
 			return
@@ -292,7 +297,7 @@ func (m *Module) alertWebhook(c *gin.Context) {
 	if !httpx.Bind(c, &p) {
 		return
 	}
-	var newlyFiring []Alert
+	var newlyFiring, resolved []Alert
 	for _, a := range p.Alerts {
 		if a.Status != "firing" && a.Status != "resolved" {
 			continue
@@ -332,6 +337,9 @@ func (m *Module) alertWebhook(c *gin.Context) {
 		}
 		if a.Status == "resolved" && prev == "firing" {
 			m.noteResolved(c, id, a.Labels["alertname"])
+			resolved = append(resolved, Alert{ID: id, DatasourceID: dsID, Datasource: dsName, Env: env, Fingerprint: a.Fingerprint,
+				Alertname: a.Labels["alertname"], Severity: a.Labels["severity"], Status: "resolved", Labels: a.Labels,
+				Annotations: a.Annotations, GeneratorURL: a.GeneratorURL, StartsAt: nilTime(a.StartsAt), EndsAt: nilTime(a.EndsAt), FireCount: occurrence})
 		}
 		if notify {
 			newlyFiring = append(newlyFiring, Alert{ID: id, DatasourceID: dsID, Datasource: dsName, Env: env, Fingerprint: a.Fingerprint,
@@ -342,7 +350,10 @@ func (m *Module) alertWebhook(c *gin.Context) {
 	if len(newlyFiring) > 0 {
 		go m.notifyAlerts(context.Background(), newlyFiring)
 	}
-	httpx.OK(c, gin.H{"received": len(p.Alerts), "notified": len(newlyFiring)})
+	if len(resolved) > 0 {
+		go m.notifyResolved(context.Background(), resolved)
+	}
+	httpx.OK(c, gin.H{"received": len(p.Alerts), "notified": len(newlyFiring), "resolved": len(resolved)})
 }
 
 const alertCols = `a.id,a.datasource_id,d.name,d.env,a.fingerprint,a.alertname,a.severity,a.status,a.handle_status,a.labels,a.annotations,
