@@ -39,7 +39,7 @@ import (
 
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/crypto"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/hosts/proto"
-	"github.com/yangguangdijia/xingshu-matrix/server/internal/store"
+	dbstore "github.com/yangguangdijia/xingshu-matrix/server/internal/store"
 )
 
 const (
@@ -60,8 +60,10 @@ var (
 	// errOwnerUnreachable: the agent is connected to another replica that this
 	// replica cannot reach. Shown to operators in task errors.
 	errOwnerUnreachable = errors.New("主机 Agent 连接在其他服务副本上，但该副本当前不可达，请稍后重试")
-	errRelayBroken      = "与主机 Agent 所在服务副本的连接中断，任务结果以该副本记录为准"
 )
+
+// errRelayBroken is recorded when the owner replica's stream ends without a result.
+const errRelayBroken = "与主机 Agent 所在服务副本的连接中断，任务结果以该副本记录为准"
 
 // agentOwner is the replica holding an agent's socket.
 type agentOwner struct {
@@ -507,7 +509,7 @@ func rewriteTaskID(raw json.RawMessage, id int64) (json.RawMessage, error) {
 // ---- PostgreSQL owner registry -------------------------------------------------------
 
 type pgOwnerRegistry struct {
-	db         store.DB
+	db         dbstore.DB
 	staleAfter time.Duration
 }
 
@@ -556,7 +558,7 @@ func (r pgOwnerRegistry) lookup(ctx context.Context, hostID int64) (agentOwner, 
 }
 
 // hostsRelayKey returns the HMAC key shared by all replicas, creating it once.
-func hostsRelayKey(ctx context.Context, db store.DB, cipher *crypto.Cipher) ([]byte, error) {
+func hostsRelayKey(ctx context.Context, db dbstore.DB, cipher *crypto.Cipher) ([]byte, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return nil, err

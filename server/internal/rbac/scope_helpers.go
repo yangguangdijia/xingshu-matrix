@@ -94,7 +94,7 @@ func principalOrFail(c *gin.Context) *Principal {
 // RequireClusterAccess rejects callers whose data scope excludes the cluster in
 // path parameter param. It is a no-op for unrestricted callers.
 func RequireClusterAccess(param string) gin.HandlerFunc {
-	return func(c *gin.Context) {
+	h := func(c *gin.Context) {
 		p := principalOrFail(c)
 		if p == nil {
 			return
@@ -109,12 +109,13 @@ func RequireClusterAccess(param string) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+	return registerGuard(h, Guard{Kind: "scope", Scope: "cluster"})
 }
 
 // RequireNamespaceAccess rejects callers whose data scope excludes the project
 // given by the cluster and namespace path parameters.
 func RequireNamespaceAccess(clusterParam, nsParam string) gin.HandlerFunc {
-	return func(c *gin.Context) {
+	h := func(c *gin.Context) {
 		p := principalOrFail(c)
 		if p == nil {
 			return
@@ -129,12 +130,13 @@ func RequireNamespaceAccess(clusterParam, nsParam string) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+	return registerGuard(h, Guard{Kind: "scope", Scope: "namespace"})
 }
 
 // RequireWorkspaceAccess rejects callers that cannot see the workspace in path
 // parameter param; with manage=true the caller must be able to manage it.
 func RequireWorkspaceAccess(param string, manage bool) gin.HandlerFunc {
-	return func(c *gin.Context) {
+	h := func(c *gin.Context) {
 		p := principalOrFail(c)
 		if p == nil {
 			return
@@ -153,4 +155,5 @@ func RequireWorkspaceAccess(param string, manage bool) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+	return registerGuard(h, Guard{Kind: "scope", Scope: workspaceScope(manage)})
 }

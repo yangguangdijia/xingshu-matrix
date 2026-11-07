@@ -87,7 +87,7 @@ func PrincipalFrom(c *gin.Context) *Principal {
 
 // RequirePerm requires the caller to hold every listed permission.
 func RequirePerm(perms ...string) gin.HandlerFunc {
-	return func(c *gin.Context) {
+	h := func(c *gin.Context) {
 		p := PrincipalFrom(c)
 		if p == nil {
 			httpx.Fail(c, httpx.Unauthorized("authentication required"))
@@ -101,11 +101,12 @@ func RequirePerm(perms ...string) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+	return registerGuard(h, Guard{Kind: "all", Perms: perms})
 }
 
 // RequireAnyPerm requires at least one of the listed permissions.
 func RequireAnyPerm(perms ...string) gin.HandlerFunc {
-	return func(c *gin.Context) {
+	h := func(c *gin.Context) {
 		p := PrincipalFrom(c)
 		if p == nil {
 			httpx.Fail(c, httpx.Unauthorized("authentication required"))
@@ -119,13 +120,14 @@ func RequireAnyPerm(perms ...string) gin.HandlerFunc {
 		}
 		httpx.Fail(c, httpx.Forbidden("permission denied").WithDetails(gin.H{"required_any": perms}))
 	}
+	return registerGuard(h, Guard{Kind: "any", Perms: perms})
 }
 
 // RequireEnvPerm requires perm and that the caller's env scope covers the
 // environment returned by envOf (e.g. read from a path param or the target
 // cluster). An empty env is treated as "no environment" and only perm is checked.
 func RequireEnvPerm(perm string, envOf func(*gin.Context) string) gin.HandlerFunc {
-	return func(c *gin.Context) {
+	h := func(c *gin.Context) {
 		p := PrincipalFrom(c)
 		if p == nil {
 			httpx.Fail(c, httpx.Unauthorized("authentication required"))
@@ -141,4 +143,5 @@ func RequireEnvPerm(perm string, envOf func(*gin.Context) string) gin.HandlerFun
 		}
 		c.Next()
 	}
+	return registerGuard(h, Guard{Kind: "env", Perms: []string{perm}})
 }

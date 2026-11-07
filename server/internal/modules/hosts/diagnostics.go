@@ -75,7 +75,7 @@ func (m *Module) diagnosticHost(ctx context.Context, env string, nodeIPs []strin
 	if age < -30*time.Second || age >= onlineWindow {
 		return nil, "stale", nil
 	}
-	if !host.Online || m.hub == nil || !m.hub.Connected(host.ID) {
+	if !host.Online || m.hub == nil || !m.hub.Online(ctx, host.ID) {
 		return nil, "offline", nil
 	}
 	return host, "available", nil

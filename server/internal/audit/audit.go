@@ -235,6 +235,9 @@ func FromGin(c *gin.Context, start time.Time) Entry {
 	if len(c.Errors) > 0 {
 		detail["error"] = trunc(c.Errors.String(), 2000)
 	}
+	if p := rbac.PrincipalFrom(c); p != nil && p.TokenID > 0 { // 通过 API 访问令牌调用
+		detail["via"] = map[string]any{"token_id": p.TokenID, "token_name": p.TokenName}
+	}
 	if len(detail) > 0 {
 		e.Detail, _ = json.Marshal(detail)
 	}

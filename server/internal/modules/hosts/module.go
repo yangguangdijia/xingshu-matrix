@@ -24,6 +24,7 @@ import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/hosts/proto"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/rbac"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/tunnel"
 )
 
 //go:embed migrations/*.sql
@@ -41,6 +42,8 @@ const (
 	defaultTimeout = 60
 	maxTimeout     = 3600
 	maxBatchHosts  = 200
+
+	sweepInterval = 60 * time.Second
 )
 
 type Module struct {
@@ -48,6 +51,9 @@ type Module struct {
 	st  *store
 	hub *Hub
 	log *slog.Logger
+
+	relayOn  bool   // owner registry configured (DB + Crypto available)
+	selfAddr string // this replica's relay base URL, "" without MATRIX_POD_IP
 }
 
 func New() *Module { return &Module{} }
@@ -72,6 +78,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	}
 	m.st = &store{db: d.DB}
 	m.hub = newHub(m.st, m.log)
+	m.initRelay(d)
 	if d.HostDiagnostics == nil {
 		d.HostDiagnostics = m
 	}
@@ -110,15 +117,65 @@ func (m *Module) mount(r, public *gin.RouterGroup) {
 	g.POST("/:id/files", rbac.RequirePerm(permExec), m.pushFile)
 	if public != nil {
 		public.GET("/agent/ws", m.hub.ServeWS)
+		public.POST(relayPath, m.hub.ServeRelay)
+	}
+}
+
+// initRelay enables multi-replica routing of host agent tasks. Without a DB or
+// cipher the hub stays single-replica (local connections only).
+func (m *Module) initRelay(d *app.Deps) {
+	if d.DB == nil || d.Crypto == nil {
+		return
+	}
+	listen := ""
+	if d.Cfg != nil {
+		listen = d.Cfg.Server.Listen
+	}
+	selfAddr := tunnel.SelfAddrFromEnv(listen)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	key, err := hostsRelayKey(ctx, d.DB, d.Crypto)
+	if err != nil {
+		m.log.Error("host agent relay key unavailable; cross-replica forwarding disabled", "err", err)
+		key = nil
+	}
+	m.hub.configureRelay(pgOwnerRegistry{db: d.DB}, selfAddr, key)
+	m.relayOn, m.selfAddr = true, m.hub.relay.selfAddr
+	if selfAddr == "" {
+		m.log.Warn("MATRIX_POD_IP is not set; peer replicas cannot forward host agent tasks to agents connected here")
 	}
 }
 
 func (m *Module) Start(ctx context.Context, d *app.Deps) error {
-	// Single-instance hub: no agent is connected to us yet.
-	if err := m.st.resetOnline(ctx); err != nil {
+	if !m.relayOn {
+		// Single-instance hub: no agent is connected to us yet.
+		if err := m.st.resetOnline(ctx); err != nil {
+			return fmt.Errorf("hosts: reset online: %w", err)
+		}
+		go func() { <-ctx.Done(); m.hub.Close() }()
+		return nil
+	}
+	// Multi-replica: keep hosts whose agent holds a fresh claim on another replica.
+	if err := m.st.resetOnlineAtStart(ctx, m.selfAddr); err != nil {
 		return fmt.Errorf("hosts: reset online: %w", err)
 	}
-	go func() { <-ctx.Done(); m.hub.Close() }()
+	go func() {
+		t := time.NewTicker(sweepInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				m.hub.Close()
+				return
+			case <-t.C:
+				sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				if err := m.st.sweep(sctx); err != nil {
+					m.log.Warn("host agent sweep failed", "err", err)
+				}
+				cancel()
+			}
+		}
+	}()
 	return nil
 }
 

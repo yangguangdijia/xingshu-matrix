@@ -148,7 +148,11 @@ func (h *Hub) Online(ctx context.Context, id int64) bool {
 		return false
 	}
 	o, err := h.relay.lookupOwner(ctx, id)
-	return err == nil && o.usable(h.relay.selfAddr)
+	if err != nil || !o.usable() {
+		return false
+	}
+	// A fresh claim naming this replica without a local socket is stale.
+	return h.relay.selfAddr == "" || o.Addr != h.relay.selfAddr
 }
 
 // ServeWS is mounted on the public group: GET /agent/ws.

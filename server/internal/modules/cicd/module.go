@@ -161,6 +161,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.GET("/pipelines/:id/cache", read, m.getPipelineCache)
 	g.PUT("/pipelines/:id/cache", manage, m.updatePipelineCache)
 	g.POST("/pipelines/:id/cache/clear", manage, m.clearPipelineCache)
+	g.GET("/pipelines/:id/webhook-deliveries", read, m.listWebhookDeliveries)
 	g.POST("/pipelines/yaml/render", read, m.renderPipelineYAML)
 	g.POST("/pipelines/yaml/parse", read, m.parsePipelineYAML)
 
@@ -186,6 +187,8 @@ func (m *Module) Start(ctx context.Context, d *app.Deps) error {
 	}
 	m.wg.Add(1)
 	go func() { defer m.wg.Done(); m.dispatch(ctx) }()
+	m.wg.Add(1)
+	go func() { defer m.wg.Done(); m.pruneDeliveriesLoop(ctx) }()
 	return nil
 }
 

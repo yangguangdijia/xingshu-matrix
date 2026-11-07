@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -26,14 +27,39 @@ import (
 
 // ---------------------------------------------------------------- webhooks
 
-// verifyWebhook authenticates a GitLab (X-Gitlab-Token) or GitHub
-// (X-Hub-Signature-256 HMAC) delivery and returns the provider name.
+// giteeSignatureSkew bounds how far a Gitee signature timestamp may drift
+// from the server clock.
+const giteeSignatureSkew = time.Hour
+
+// verifyWebhook authenticates a GitLab (X-Gitlab-Token), Gitee (X-Gitee-Token:
+// the plain WebHook password, or a signature when X-Gitee-Timestamp is sent)
+// or GitHub / Gitea / Gogs (X-Hub-Signature-256 HMAC) delivery and returns
+// the provider name.
 func verifyWebhook(h http.Header, body []byte, secret string) (string, error) {
+	return verifyWebhookAt(h, body, secret, time.Now())
+}
+
+func verifyWebhookAt(h http.Header, body []byte, secret string, now time.Time) (string, error) {
+	if secret == "" {
+		return "", errors.New("webhook secret not configured")
+	}
 	if tok := h.Get("X-Gitlab-Token"); tok != "" {
 		if subtle.ConstantTimeCompare([]byte(tok), []byte(secret)) == 1 {
 			return "gitlab", nil
 		}
 		return "", errors.New("bad gitlab token")
+	}
+	if tok := h.Get("X-Gitee-Token"); tok != "" {
+		if ts := strings.TrimSpace(h.Get("X-Gitee-Timestamp")); ts != "" {
+			if verifyGiteeSignature(tok, ts, secret, now) {
+				return "gitee", nil
+			}
+			return "", errors.New("bad gitee signature")
+		}
+		if subtle.ConstantTimeCompare([]byte(tok), []byte(secret)) == 1 {
+			return "gitee", nil
+		}
+		return "", errors.New("bad gitee token")
 	}
 	if sig := h.Get("X-Hub-Signature-256"); strings.HasPrefix(sig, "sha256=") {
 		mac := hmac.New(sha256.New, []byte(secret))
@@ -45,7 +71,56 @@ func verifyWebhook(h http.Header, body []byte, secret string) (string, error) {
 		}
 		return "", errors.New("bad github signature")
 	}
-	return "", errors.New("missing X-Gitlab-Token or X-Hub-Signature-256")
+	return "", errors.New("missing X-Gitlab-Token, X-Gitee-Token or X-Hub-Signature-256")
+}
+
+// verifyGiteeSignature checks a Gitee signed delivery:
+// token = base64(HMAC-SHA256(secret, timestamp + "\n" + secret)), timestamp in
+// milliseconds. Gitee may send the token URL-encoded.
+func verifyGiteeSignature(token, ts, secret string, now time.Time) bool {
+	ms, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return false
+	}
+	if d := now.Sub(time.UnixMilli(ms)); d > giteeSignatureSkew || d < -giteeSignatureSkew {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts + "\n" + secret))
+	want := mac.Sum(nil)
+	for _, cand := range []string{token, unescapeOrEmpty(token)} {
+		if cand == "" {
+			continue
+		}
+		got, err := base64.StdEncoding.DecodeString(cand)
+		if err == nil && hmac.Equal(got, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func unescapeOrEmpty(s string) string {
+	v, err := url.QueryUnescape(s)
+	if err != nil || v == s {
+		return ""
+	}
+	return v
+}
+
+// webhookEvent returns the event name of a delivery (first provider header set).
+func webhookEvent(h http.Header) string {
+	for _, k := range []string{"X-GitHub-Event", "X-Gitlab-Event", "X-Gitee-Event", "X-Gitea-Event", "X-Gogs-Event"} {
+		if v := strings.TrimSpace(h.Get(k)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// isPushEvent accepts GitHub/Gitea/Gogs "push" and GitLab/Gitee "Push Hook".
+func isPushEvent(event string) bool {
+	return event == "push" || event == "Push Hook"
 }
 
 type pushEvent struct {
@@ -82,27 +157,66 @@ func (m *Module) webhook(c *gin.Context) {
 		httpx.Fail(c, httpx.Unauthorized("invalid webhook signature"))
 		return
 	}
-	event := c.GetHeader("X-GitHub-Event") + c.GetHeader("X-Gitlab-Event")
-	if event != "push" && event != "Push Hook" {
-		httpx.OK(c, gin.H{"ignored": "event " + event})
-		return
+	event := webhookEvent(c.Request.Header)
+	keyProvider, deliveryID := deliveryKey(c.Request.Header)
+	if keyProvider == "" {
+		keyProvider = provider
 	}
+
+	// Parse the push payload before claiming so the delivery row carries ref/commit.
 	var ev pushEvent
-	if err := json.Unmarshal(body, &ev); err != nil {
-		httpx.Fail(c, httpx.BadRequest("invalid push payload"))
-		return
+	payloadErr := error(nil)
+	if isPushEvent(event) {
+		if err := json.Unmarshal(body, &ev); err != nil {
+			payloadErr = err
+		}
 	}
 	sha := ev.After
 	if ev.CheckoutSHA != "" {
 		sha = ev.CheckoutSHA
 	}
+	if len(sha) > 64 {
+		sha = sha[:64]
+	}
+	ref := ev.Ref
+	if len(ref) > 255 {
+		ref = ref[:255]
+	}
+	if len(event) > 64 {
+		event = event[:64]
+	}
+
+	rowID, duplicate, err := m.claimDelivery(c, appID, keyProvider, deliveryID, event, ref, sha)
+	if err != nil {
+		m.log.Error("webhook claim delivery", "app", appID, "err", err)
+		httpx.Fail(c, err)
+		return
+	}
+	if duplicate {
+		m.log.Info("webhook duplicate delivery ignored", "app", appID, "provider", keyProvider, "delivery", deliveryID)
+		httpx.OK(c, gin.H{"duplicate": true, "delivery_id": deliveryID, "runs": []int64{}})
+		return
+	}
+
+	if !isPushEvent(event) {
+		m.finishDelivery(rowID, "ignored", "event "+event, nil)
+		httpx.OK(c, gin.H{"ignored": "event " + event})
+		return
+	}
+	if payloadErr != nil {
+		m.finishDelivery(rowID, "error", "invalid push payload", nil)
+		httpx.Fail(c, httpx.BadRequest("invalid push payload"))
+		return
+	}
 	branch := strings.TrimPrefix(ev.Ref, "refs/heads/")
 	if ev.Deleted || strings.Trim(sha, "0") == "" || branch != a.Branch {
+		m.finishDelivery(rowID, "ignored", "ref "+ev.Ref, nil)
 		httpx.OK(c, gin.H{"ignored": "ref " + ev.Ref})
 		return
 	}
 	rows, err := m.db.Query(c, `SELECT id FROM cicd_pipelines WHERE app_id=$1 AND on_push ORDER BY id`, appID)
 	if err != nil {
+		m.finishDelivery(rowID, "error", err.Error(), nil)
 		httpx.Fail(c, err)
 		return
 	}
@@ -114,16 +228,47 @@ func (m *Module) webhook(c *gin.Context) {
 		}
 	}
 	rows.Close()
+	if len(ids) == 0 {
+		m.finishDelivery(rowID, "ignored", "no pipeline triggers on push", nil)
+		httpx.OK(c, gin.H{"runs": []int64{}, "ignored": "no pipeline triggers on push"})
+		return
+	}
 	runs := []int64{}
+	refs := []WebhookRunRef{}
+	var failures []string
 	for _, id := range ids {
 		r, err := m.startRun(c, nil, id, runIn{Branch: branch, Commit: sha}, "webhook:"+provider)
 		if err != nil {
 			m.log.Error("webhook start run", "pipeline", id, "err", err)
+			failures = append(failures, fmt.Sprintf("pipeline %d: %v", id, err))
 			continue
 		}
 		runs = append(runs, r.ID)
+		refs = append(refs, WebhookRunRef{PipelineID: id, RunID: r.ID})
+	}
+	switch {
+	case len(refs) == 0:
+		// Nothing started: a redelivery is processed again.
+		m.finishDelivery(rowID, "error", strings.Join(failures, "; "), nil)
+	default:
+		m.finishDelivery(rowID, "triggered", strings.Join(failures, "; "), refs)
 	}
 	httpx.OK(c, gin.H{"runs": runs})
+}
+
+// pruneDeliveriesLoop removes expired webhook deliveries hourly.
+func (m *Module) pruneDeliveriesLoop(ctx context.Context) {
+	m.pruneDeliveries(ctx)
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			m.pruneDeliveries(ctx)
+		}
+	}
 }
 
 // ---------------------------------------------------------------- Jenkins

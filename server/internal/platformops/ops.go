@@ -196,6 +196,13 @@ type Ops struct {
 	migReady      bool
 	metricsServer *metricsServer
 
+	// Probe hooks (set by New from db/rdb; tests replace them).
+	pingDB       func(ctx context.Context) error
+	pingRedis    func(ctx context.Context) error
+	appliedMigs  func(ctx context.Context) (map[string]map[int]bool, error)
+	versions     VersionStore
+	lockResource httpx.LockFunc
+
 	cancel context.CancelFunc
 }
 
@@ -222,6 +229,16 @@ func New(o Options) *Ops {
 	}
 	ops.userLimiter = newAPILimiter(o.Redis, "api:user", o.Config.APIRatePerMinute)
 	ops.anonLimiter = newAPILimiter(o.Redis, "api:anon", o.Config.AnonRatePerMinute)
+	if o.DB != nil {
+		ops.pingDB = o.DB.Ping
+		ops.appliedMigs = func(ctx context.Context) (map[string]map[int]bool, error) { return queryAppliedMigrations(ctx, o.DB) }
+		ops.versions = &pgVersionStore{db: o.DB}
+		ops.lockResource = pgAdvisoryLock(o.DB)
+	}
+	if o.Redis != nil {
+		rdb := o.Redis
+		ops.pingRedis = func(ctx context.Context) error { return rdb.Ping(ctx).Err() }
+	}
 	return ops
 }
 
