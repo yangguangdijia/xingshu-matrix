@@ -288,6 +288,12 @@
     login: function (username, password) {
       return request("/auth/login", { method: "POST", body: { username: username, password: password }, noAuth: true, timeoutMs: 20000 })
         .then(function (data) {
+          data = data || {};
+          if (data.mfa_required) {
+            // 账号开启（或被要求开启）两步验证：交给身份组件完成二次校验，校验通过后由其写入会话。
+            if (window.XSIdentity && typeof window.XSIdentity.mfaChallenge === "function") return window.XSIdentity.mfaChallenge(data);
+            return Promise.reject(new Error("该账号需要两步验证，但验证组件未加载，请刷新页面重试"));
+          }
           var user = data.user || (data.token && data.token.user) || null;
           XS.setSession(data.token || data, user);
           return { pair: data.token || data, user: user };

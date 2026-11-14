@@ -85,7 +85,7 @@ function load({ healthOk = true, failProfileOnce = false, expireOnce = false, re
   vm.createContext(context);
   if (withContext) vm.runInContext(contextSource, context, { filename: "xs-cluster-context.js" });
   vm.runInContext(source, context, { filename: "xs-api.js" });
-  return { XS: window.XS, cluster: window.XSClusterContext, calls, storage, state };
+  return { XS: window.XS, cluster: window.XSClusterContext, calls, storage, state, window };
 }
 
 test("probe + login + authorized request", async () => {
@@ -279,4 +279,18 @@ test("cluster-scoped WebSocket and SSE close before delivering old cluster messa
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(delivered, []);
   stop();
+});
+
+test("login hands mfa_required challenges to XSIdentity", async () => {
+  const intercept = (u, init, json) => (u.endsWith("/auth/login") ? json(200, { code: 0, data: { mfa_required: true, mfa_ticket: "tk-1", expires_in: 300 } }) : undefined);
+  const { XS, storage, window } = load({ intercept });
+  await XS.ready;
+  const missing = await XS.auth.login("admin", "pw").then(() => "resolved", (e) => e.message);
+  assert.match(missing, /两步验证/);
+  assert.equal(storage.getItem("xs_access_token"), null);
+  let seen = null;
+  window.XSIdentity = { mfaChallenge: async (c) => { seen = c; return { pair: { access_token: "m1" }, user: { username: "admin" }, recovery_codes: [] }; } };
+  const r = await XS.auth.login("admin", "pw");
+  assert.equal(seen.mfa_ticket, "tk-1");
+  assert.equal(r.user.username, "admin");
 });

@@ -26,7 +26,7 @@ const (
 	resultGrace  = 30 * time.Second // extra wait beyond the command timeout before failing a task
 )
 
-var errOffline = errors.New("agent offline")
+var errOffline = errors.New("主机代理不在线，请确认 Agent 正在运行且能连接平台")
 
 // agentStore is the persistence the hub needs (implemented by *store; faked in tests).
 type agentStore interface {

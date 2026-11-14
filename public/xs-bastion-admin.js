@@ -430,13 +430,19 @@
     allow: ["允许", "x-green", "白名单：命中即放行，不再匹配后续规则"]
   };
   function renderCmd(el) {
-    el.innerHTML = head("命令过滤", "SSH 会话中的每条命令按优先级从小到大匹配规则，第一条命中的规则决定动作。",
-      '<button class="x-btn" data-test>测试命令</button><button class="x-btn x-btn--pri" data-new>+ 新建规则</button>') + '<div class="xb-body"><p class="x-frac">正在读取…</p></div>';
+    el.innerHTML = head("命令过滤", "SSH 会话中的每条命令按优先级从小到大匹配规则；用 ; | && $() 拼接的命令会拆开逐段检查，取最严格的动作。",
+      (window.XSBastionAIDraft ? '<button class="x-btn" data-ai>AI 起草</button>' : "") + '<button class="x-btn" data-test>测试命令</button><button class="x-btn x-btn--pri" data-new>+ 新建规则</button>') + '<div class="xb-body"><p class="x-frac">正在读取…</p></div>';
     var reload = function () { renderCmd(el); };
     Promise.all([list("/bastion/filters"), list("/bastion/assets", { size: 200 })]).then(function (r) {
       var fs = r[0], assets = r[1], groups = {};
       fs.forEach(function (f) { (groups[f.group_name || "默认规则组"] = groups[f.group_name || "默认规则组"] || []).push(f); });
       el.querySelector("[data-new]").onclick = function () { filterForm(null, assets, Object.keys(groups), reload); };
+      var aiBtn = el.querySelector("[data-ai]");
+      if (aiBtn) aiBtn.onclick = function () {
+        window.XSBastionAIDraft.open({ onApply: function (d) {
+          filterForm(null, assets, Object.keys(groups), reload, { name: d.name || "", pattern: d.pattern || "", action: FACT[d.action] ? d.action : "deny" });
+        } });
+      };
       el.querySelector("[data-test]").onclick = function () { testCommand(fs, assets); };
       var names = Object.keys(groups).sort();
       var html = names.map(function (g) {
@@ -481,7 +487,7 @@
     m.body.querySelector("[data-ta]").onchange = run;
     setTimeout(function () { m.body.querySelector("[data-tc]").focus(); }, 0);
   }
-  function filterForm(f, assets, groups, done) {
+  function filterForm(f, assets, groups, done, prefill) {
     var editing = !!f;
     U.form({
       title: editing ? "编辑命令规则 · " + f.name : "新建命令规则", okText: editing ? "保存" : "创建", scene: "bastion.filter", width: "md",
@@ -494,7 +500,7 @@
         { k: "asset_ids", label: "作用资产", type: "checks", options: assets.filter(function (a) { return a.protocol === "ssh"; }).map(function (a) { return { v: String(a.id), t: U.assetLabel(a) }; }), help: "不选表示全部资产" },
         { k: "enabled", label: "启用", type: "switch", def: true }
       ] }],
-      values: editing ? { group_name: f.group_name, name: f.name, pattern: f.pattern, action: f.action, priority: f.priority, asset_ids: (f.asset_ids || []).map(String), enabled: f.enabled } : {},
+      values: editing ? { group_name: f.group_name, name: f.name, pattern: f.pattern, action: f.action, priority: f.priority, asset_ids: (f.asset_ids || []).map(String), enabled: f.enabled } : (prefill || {}),
       toObject: function (v) { return { group_name: (v.group_name || "").trim() || "默认规则组", name: (v.name || "").trim(), pattern: v.pattern, action: v.action, priority: Number(v.priority), asset_ids: (v.asset_ids || []).map(Number), enabled: v.enabled !== false }; },
       validate: function (v) { var p = Number(v.priority); if (!(p >= 1 && p <= 100000)) return "优先级需为 1–100000"; var re = jsRe(v.pattern || ""); return re && re.test("") ? "表达式不能匹配空命令" : ""; },
       submit: function (v, obj, ctx) {
@@ -509,8 +515,8 @@
     el.innerHTML = head("登录 ACL", "按来源 IP、星期与时段控制谁能通过堡垒机连接哪些资产（Web 终端与数据库控制台）。",
       '<button class="x-btn x-btn--pri" data-new>+ 新建规则</button>') + '<div class="xb-body"><p class="x-frac">正在读取…</p></div>';
     var reload = function () { renderAcl(el); };
-    Promise.all([list("/bastion/login-acls"), list("/bastion/assets", { size: 200 }), loadSubjects()]).then(function (r) {
-      var acls = r[0], assets = r[1], subs = r[2];
+    Promise.all([list("/bastion/login-acls"), list("/bastion/assets", { size: 200 }), loadSubjects(), soft("/bastion/acl-exemptions")]).then(function (r) {
+      var acls = r[0], assets = r[1], subs = r[2], exs = r[3] || [];
       el.querySelector("[data-new]").onclick = function () { aclForm(null, assets, subs, reload); };
       var when = function (x) {
         var d = (x.weekdays || []).length ? x.weekdays.slice().sort().map(function (n) { return WEEK[n]; }).join("、") : "每天";
@@ -520,12 +526,18 @@
         return [E(x.priority), "<b>" + E(x.name) + "</b>" + (x.description ? '<div class="x-frac">' + E(x.description) + "</div>" : ""), E(subjectText(x.subject_type, x.subject, subs)),
           (x.asset_ids || []).length ? x.asset_ids.map(function (id) { var a = byId(assets, id); return E(a ? a.name : "#" + id); }).join("、") : '<span class="x-frac">全部资产</span>',
           (x.ip_ranges || []).length ? '<span class="x-mono">' + x.ip_ranges.map(E).join("<br>") + "</span>" : '<span class="x-frac">任意来源</span>', when(x),
-          x.action === "deny" ? tag("拒绝", "x-red") : tag("允许", "x-green"),
+          x.action === "deny" ? tag("拒绝", "x-red") : x.action === "review" ? tag("审批后登录", "x-blue") + (x.exempt_minutes > 0 ? '<div class="x-frac">免审 ' + E(x.exempt_minutes) + " 分钟</div>" : "") : tag("允许", "x-green"),
           '<label class="xb-switch"><input type="checkbox" data-toggle="' + x.id + '"' + (x.enabled ? " checked" : "") + "><span></span>" + (x.enabled ? "启用" : "停用") + "</label>",
           '<span class="xb-ops"><button class="x-act" data-edit="' + x.id + '">编辑</button><button class="x-act x-act--danger" data-del="' + x.id + '">删除</button></span>'];
       });
       el.querySelector(".xb-body").innerHTML = '<div class="xb-main">' + table(["优先级", "规则", "适用对象", "资产", "来源 IP", "时段", "动作", "状态", "操作"], rows, "还没有登录 ACL，所有已授权的连接都会放行") +
-        '<p class="x-frac xb-note">规则按优先级从小到大匹配，第一条命中的规则决定允许或拒绝；没有命中时放行（授权仍是必要条件）。常见做法：先放行办公网段，再用一条「所有人 · 任意来源 · 拒绝」兜底。时段按平台时区（默认北京时间）判断。被拒绝的尝试记入「登录日志」。</p></div>';
+        '<p class="x-frac xb-note">规则按优先级从小到大匹配，第一条命中的规则决定允许、审批或拒绝；审批类型为「堡垒机登录」，审批服务不可用时按拒绝处理；没有命中时放行（授权仍是必要条件）。常见做法：先放行办公网段，再用一条「所有人 · 任意来源 · 拒绝」兜底。时段按平台时区（默认北京时间）判断。被拒绝的尝试记入「登录日志」。</p></div>' + exemptHTML(exs, assets, subs, acls);
+      on(el, "data-revoke", function (id) {
+        var ex = byId(exs, id);
+        U.confirmBox("撤销免审窗口", "撤销 <b>" + E(userName(ex.user_id, subs)) + "</b> 以账号 <b>" + E(ex.account) + "</b> 的免审窗口？撤销后再次连接需要重新审批。", "撤销", function () {
+          return xs().post("/bastion/acl-exemptions/" + ex.id + "/revoke").then(function () { toast("已撤销免审窗口"); reload(); });
+        });
+      });
       [].forEach.call(el.querySelectorAll("[data-toggle]"), function (b) {
         b.onchange = function () {
           var x = byId(acls, b.getAttribute("data-toggle"));
@@ -540,9 +552,20 @@
       });
     }).catch(function (e) { el.querySelector(".xb-body").innerHTML = U.failBox(e); });
   }
+  function userName(id, subs) { var o = (subs.user || []).filter(function (u) { return u.v === String(id); })[0]; return o ? o.t : "用户 #" + id; }
+  function exemptHTML(exs, assets, subs, acls) {
+    var rows = exs.map(function (x) {
+      var a = byId(assets, x.asset_id), rule = x.acl_id ? byId(acls, x.acl_id) : null, left = Math.max(0, Math.round((new Date(x.expires_at).getTime() - Date.now()) / 60000));
+      return [E(userName(x.user_id, subs)), E(a ? a.name : "#" + x.asset_id), '<span class="x-mono">' + E(x.account) + "</span>", rule ? E(rule.name) : '<span class="x-frac">—</span>',
+        E(new Date(x.expires_at).toLocaleString("zh-CN")) + '<div class="x-frac">剩余约 ' + (left >= 60 ? Math.floor(left / 60) + " 小时 " + (left % 60) + " 分钟" : left + " 分钟") + "</div>",
+        '<span class="xb-ops"><button class="x-act x-act--danger" data-revoke="' + x.id + '">撤销</button></span>'];
+    });
+    return '<section class="xb-card" style="margin-top:16px"><h3>生效中的免审窗口 <span class="x-frac">' + exs.length + " 条</span></h3>" +
+      table(["用户", "资产", "账号", "来源规则", "到期时间", "操作"], rows, "当前没有生效中的免审窗口。「审批后登录」规则的申请被通过后会出现在这里。") + "</section>";
+  }
   function aclForm(x, assets, subs, done) {
     var editing = !!x;
-    var vals = editing ? { name: x.name, priority: x.priority, action: x.action, subject_type: x.subject_type, asset_ids: (x.asset_ids || []).map(String), ip_ranges: (x.ip_ranges || []).join("\n"),
+    var vals = editing ? { name: x.name, priority: x.priority, action: x.action, exempt_minutes: x.exempt_minutes || 0, subject_type: x.subject_type, asset_ids: (x.asset_ids || []).map(String), ip_ranges: (x.ip_ranges || []).join("\n"),
       weekdays: (x.weekdays || []).map(String), time_from: x.time_from, time_to: x.time_to, description: x.description, enabled: x.enabled } : {};
     if (editing && x.subject_type !== "all") vals["subject_" + x.subject_type] = x.subject;
     var clock = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -551,7 +574,9 @@
       sections: [{ fields: [
         { k: "name", label: "规则名称", required: true, placeholder: "仅允许办公网工作时间" },
         { k: "priority", label: "优先级", type: "number", required: true, def: 100, min: 1, max: 100000, help: "数字越小越先匹配" },
-        { k: "action", label: "动作", type: "radio", options: [{ v: "allow", t: "允许", d: "命中即放行" }, { v: "deny", t: "拒绝", d: "命中即拒绝连接" }], def: "deny" }
+        { k: "action", label: "动作", type: "radio", options: [{ v: "allow", t: "允许", d: "命中即放行" }, { v: "review", t: "审批后登录", d: "提交审批，通过后才能连接" }, { v: "deny", t: "拒绝", d: "命中即拒绝连接" }], def: "deny" },
+        { k: "exempt_minutes", label: "审批通过后免审时长（分钟）", type: "number", def: 0, min: 0, max: 10080, show: function (v) { return v.action === "review"; },
+          help: "通过后，同一用户以同一账号连接同一资产在该时长内不再审批；填 0 表示仅本次（10 分钟内可连接）。最长 7 天。" }
       ].concat(subjectFields(subs, true)).concat([
         { k: "asset_ids", label: "资产", type: "checks", options: assets.map(function (a) { return { v: String(a.id), t: U.assetLabel(a) }; }), help: "不选表示全部资产" },
         { k: "ip_ranges", label: "来源 IP", type: "textarea", rows: 3, placeholder: "每行一个：10.0.0.0/8、192.168.1.10、10.1.1.1-10.1.1.50 或 *", help: "留空表示任意来源" },
@@ -563,12 +588,13 @@
       ]) }],
       values: vals,
       toObject: function (v) {
-        return { name: (v.name || "").trim(), priority: Number(v.priority), action: v.action, subject_type: v.subject_type, subject: v.subject_type === "all" ? "" : String(v["subject_" + v.subject_type] || "").trim(),
+        return { name: (v.name || "").trim(), priority: Number(v.priority), action: v.action, exempt_minutes: v.action === "review" ? Math.max(0, Number(v.exempt_minutes) || 0) : 0, subject_type: v.subject_type, subject: v.subject_type === "all" ? "" : String(v["subject_" + v.subject_type] || "").trim(),
           asset_ids: (v.asset_ids || []).map(Number), ip_ranges: String(v.ip_ranges || "").split(/[\n,，;]+/).map(function (s) { return s.trim(); }).filter(Boolean),
           weekdays: (v.weekdays || []).map(Number), time_from: (v.time_from || "").trim(), time_to: (v.time_to || "").trim(), description: v.description || "", enabled: v.enabled !== false };
       },
       validate: function (v) {
         var p = Number(v.priority); if (!(p >= 1 && p <= 100000)) return "优先级需为 1–100000";
+        if (v.action === "review") { var em = Number(v.exempt_minutes || 0); if (!(em >= 0 && em <= 10080) || Math.floor(em) !== em) return "免审时长需为 0–10080 的整数"; }
         if (!!v.time_from !== !!v.time_to) return "开始与结束时间需同时填写";
         if (v.time_from && v.time_from === v.time_to) return "开始与结束时间不能相同";
         var bad = String(v.ip_ranges || "").split(/[\n,，;]+/).map(function (s) { return s.trim(); }).filter(Boolean).filter(function (s) {

@@ -46,7 +46,8 @@ type BackupConfig struct {
 	Dir string `yaml:"dir"`
 	// BeforeMigrate takes a snapshot when the migrator finds pending migrations on an existing database.
 	BeforeMigrate bool `yaml:"before_migrate"`
-	// PgDump is the pg_dump binary; when it is missing or incompatible a COPY-based logical export is used.
+	// PgDump is the pg_dump binary (its major version must be >= the server's; the official image ships
+	// postgresql-client-16). When it is missing, manual backups are refused and scheduled runs are recorded as failed.
 	PgDump string `yaml:"pg_dump"`
 	// PgRestore is the pg_restore binary used by `matrix-server restore` for pg_dump archives.
 	PgRestore string `yaml:"pg_restore"`

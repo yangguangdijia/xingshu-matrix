@@ -15,7 +15,14 @@ RUN cd server && CGO_ENABLED=0 go build -trimpath \
 # ---- runtime ----
 FROM python:3.12-slim-bookworm@sha256:623674a14ef93d052bb9b0de4dbf5f28eb578a35263838941cc8aa43213c1487
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates tzdata openssh-client && \
+      ca-certificates tzdata openssh-client curl gnupg && \
+    # 平台备份需要 pg_dump / pg_restore，主版本不能低于数据库（16）：从 PostgreSQL 官方源安装 16 客户端
+    install -d /usr/share/postgresql-common/pgdg && \
+    curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc && \
+    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list && \
+    apt-get update && apt-get install -y --no-install-recommends postgresql-client-16 && \
+    pg_dump --version && \
+    apt-get purge -y gnupg && apt-get autoremove -y && \
     pip install --no-cache-dir ansible-core==2.21.5 && \
     python3 --version && \
     ssh -V && \

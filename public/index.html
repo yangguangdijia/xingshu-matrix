@@ -4515,6 +4515,9 @@
             last: x.last_login_at ? new Date(x.last_login_at).toLocaleString("zh-CN") : "—",
             must: !!x.must_change_password,
           }));
+          if (window.XSIdentity) {
+            try { const f = await XSIdentity.userMfaBadges(IAM.users.map((u) => u.id)); IAM.users.forEach((u) => { u.mfa = !!f[u.id]; }); } catch (x) { console.warn(x); }
+          }
           // 部门归属：前端用名字匹配，后面接用户编辑时再补
           IAM._usersErr = "";
         } catch (e) { IAM._usersErr = e.message || "用户加载失败"; }
@@ -4525,7 +4528,7 @@
           const first = !IAM._usersLoaded; IAM._usersLoaded = true; IAM._deptsLoaded = true;
           Promise.all([first ? iamLoadUsers() : null, iamLoadDepts()]).then(() => iamRe());
         }
-        const key = "#/iam/users", L = IAM.users;
+        const key = "#/iam/users", L = IAM.users, live = !!(window.XS && XS.mode === "live" && window.XSIdentity);
         el.innerHTML = phead("用户管理", "平台账号、所属部门与角色；内置管理员 admin 不可删除、禁用或降级", demo ? '' : "") +
           bar(key, { q: "搜索用户名 / 姓名 / 部门", fl: "状态", fo: ["正常", "禁用", "锁定"], fc: 4, act: "+ 新建用户", id: "iamNew" }) +
           `<div class="x-panel">${tbl(["用户名", "姓名", "部门", "角色", "状态", "MFA", "最后登录", "操作"], L.map((x, i) => {
@@ -4533,7 +4536,7 @@
             return [`<b>${esc(x.u)}</b>${x.sys ? ' <span class="x-tag x-blue">内置</span>' : ""}${x.must ? ' <span class="x-tag x-orange">待改密</span>' : ""}`, esc(x.n), esc(x.dept),
               esc(x.roles.join("、")) + (via.length ? `<small class="x-frac" style="display:block">经用户组：${esc(via.join("、"))}</small>` : ""),
               iamTag(x.st), iamTag(x.mfa ? "已绑定" : "未绑定", { 已绑定: "x-green" }), `<span class="x-mono">${esc(lastLogin(x))}</span>`,
-              `<span class="x-kacts">${k8Act("uedit", i, "编辑")}${k8Act("utog", i, x.st === "禁用" ? "启用" : "禁用", !x.sys, "内置管理员不可禁用")}${k8Act("upw", i, "重置密码")}${k8Act("uunl", i, "解锁", x.st === "锁定", "账号未锁定")}${k8Act("udel", i, "删除", !x.sys, "内置管理员不可删除")}</span>`];
+              `<span class="x-kacts">${k8Act("uedit", i, "编辑")}${k8Act("utog", i, x.st === "禁用" ? "启用" : "禁用", !x.sys, "内置管理员不可禁用")}${k8Act("upw", i, "重置密码")}${live && x.id ? k8Act("umfa", i, "重置 MFA", x.mfa, "未绑定两步验证") : ""}${k8Act("uunl", i, "解锁", x.st === "锁定", "账号未锁定")}${k8Act("udel", i, "删除", !x.sys, "内置管理员不可删除")}</span>`];
           }))}</div>`;
         $("iamNew").onclick = () => userDlg(-1);
         on(el, "uedit", (i) => userDlg(i));
@@ -4546,6 +4549,10 @@
           x.st = x.st === "禁用" ? "正常" : "禁用"; iamRe();
           toast(`已${x.st === "禁用" ? "禁用" : "启用"}用户 ${x.u}`);
         });
+        on(el, "umfa", (i) => { const x = L[i]; k8Confirm("重置两步验证", `将清除 <b>${esc(x.u)}</b> 已绑定的身份验证器和恢复码。用户下次登录只需密码；若平台要求两步验证，登录时会引导重新绑定。`, "重置", async () => {
+          try { await XSIdentity.resetUserMFA(x.id); x.mfa = false; iamRe(); toast(`已重置 ${x.u} 的两步验证`); }
+          catch (e2) { toast("操作失败：" + (e2.message || "未知错误")); }
+        }); });
         on(el, "uunl", (i) => { L[i].st = "正常"; iamRe(); toast(`已解锁 ${L[i].u}`); });
         on(el, "upw", (i) => { const x = L[i]; k8Confirm("重置密码", `将为 <b>${esc(x.u)}</b> 生成临时密码，用户下次登录时必须修改。${x.sys ? "<br />admin 的当前密码会立即失效。" : ""}`, "重置", () => {
           const pw = genPw(); x.must = true; if (x.sys) { adminPw = pw; pwChanged = false; }
@@ -16723,6 +16730,15 @@ spec:
             dlg("个人设置", `<form class="x-form" id="pf" novalidate><label><span>姓名</span><input class="x-input" name="name" value="${esc(nav.me.name)}" /></label><label><span>邮箱</span><input class="x-input" name="mail" type="email" value="${esc(nav.me.mail)}" /></label><label><span>所属团队</span><input class="x-input" value="研发一部" disabled /></label></form>`,
               '<button class="x-btn" data-close>取消</button><button class="x-btn x-btn--pri" type="submit" form="pf">保存</button>');
             $("pf").onsubmit = (ev) => { ev.preventDefault(); const f = $("pf").elements; nav.me.name = f.name.value.trim() || nav.me.name; nav.me.mail = f.mail.value.trim() || nav.me.mail; closeAll(); toast("个人设置已保存"); };
+          
+            // 真实模式：账号安全（两步验证 + 个人访问令牌）
+            if (session && session.live && window.XSIdentity) {
+              const body = document.querySelector("#modal .x-wbody");
+              if (body) {
+                body.insertAdjacentHTML("beforeend", '<div id="pf-mfa" style="margin-top:20px"></div><div id="pf-tok" style="margin-top:20px"></div>');
+                try { XSIdentity.renderMFA($("pf-mfa")); XSIdentity.renderTokens($("pf-tok")); } catch (x) { console.warn(x); }
+              }
+            }
           },
         })[b.dataset.act]();
       };
@@ -16848,6 +16864,9 @@ spec:
     <script src="xs-notify-center.js"></script>
     <script src="xs-cluster-registries.js"></script>
     <script src="xs-kubectl.js"></script>
+    <script src="xs-identity.js"></script>
+    <script src="xs-bastion-aidraft.js"></script>
+    <script src="xs-apidoc.js"></script>
       <link rel="stylesheet" href="xs-clean.css" />
     <script src="xs-clean.js"></script>
 </body>

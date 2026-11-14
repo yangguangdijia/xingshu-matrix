@@ -304,7 +304,7 @@ WebSocket（gorilla/websocket）。
 ```
 按 `priority` 升序取第一条命中的启用规则；`deny` 拒绝连接（403，原因写入登录日志），`allow` 放行，`review` 需审批后登录（见下节）；没有命中时放行（授权仍是必要条件）。`weekdays` 1=周一…7=周日，空 = 每天；`time_from > time_to` 表示跨午夜。时段按 `MATRIX_TZ`（默认 `Asia/Shanghai`，二进制内置时区库）判断。作用于 SSH Web 终端与数据库控制台（`/db/connect`、`/db/query`）。校验错误：`invalid ip range`、`time must be HH:MM`、`weekdays must be 1 (Mon) - 7 (Sun)`、`subject is required unless subject_type is all`、`exempt_minutes must be 0-10080`。
 
-### 登录审批与免签窗口（v1.28，迁移 `0007_acl_exempt`，对齐 JumpServer 5.1）
+### 登录审批与免签窗口（v1.29，迁移 `0007_acl_exempt`，对齐 JumpServer 5.1）
 - `exempt_minutes`（0–10080，仅 `action=review` 时保存，其他动作强制为 0）：审批通过后的免签窗口。
 - 命中 `review` 规则时：先查有效免审记录（同一用户 + 资产 + 系统账号，未撤销、未过期）→ 命中直接放行，请求审计 `detail` 带 `{"via":"exemption","exemption_id","acl_id","acl","expires_at"}`；未命中则以连接用户身份（`CreateOwned`，需 `bastion:connect`）提交审批单 `bastion.login`，本次连接 403，原因形如「登录 ACL「x」要求审批，已提交审批单 #12；通过后 60 分钟内免审」并写入登录日志。`payload`：`{acl_id, acl, asset_id, asset, account}`。
 - 审批通过回调：规则仍存在且仍为 `review` 时写入 `bastion_acl_exemptions`，`expires_at = now() + exempt_minutes`；`exempt_minutes=0` 时给 10 分钟连接窗口（数据库控制台每条查询都校验 ACL，因此不做一次性消费）。审批单结果 `{exemption_id, expires_at, one_shot}`。

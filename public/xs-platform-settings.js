@@ -17,6 +17,7 @@
     { k: "retention", t: "审计与保留" },
     { k: "env", t: "环境与审批" },
     { k: "integrations", t: "通知与集成" },
+    { k: "openapi", t: "开放接口" },
     { k: "about", t: "关于平台" }
   ];
   var SEC_DEFAULT = { password_min_length: 8, password_min_classes: 3, max_login_failures: 5, lockout_minutes: 15, session_hours: 168 };
@@ -326,6 +327,10 @@
         };
         bindSave(f, function () { return api("/settings/ldap", { method: "PUT", body: collect() }); });
       }, fail);
+    } else if (tab === "openapi") {
+      body.innerHTML = '<section class="xs-cfg-card"><h3>开放接口</h3><p class="x-frac" style="margin:0 0 12px">第三方系统可用「个人设置 → 个人访问令牌」生成的令牌调用以下接口（请求头 Authorization: Bearer &lt;令牌&gt;），令牌权限不超过创建人本身。</p><div data-apidoc></div></section>';
+      if (root.XSApiDoc) root.XSApiDoc.render(body.querySelector("[data-apidoc]"));
+      else body.querySelector("[data-apidoc]").innerHTML = '<p class="xs-cfg-err">接口文档组件未加载，请刷新页面。</p>';
     } else if (tab === "about") {
       api("/version").then(function (v) {
         if (!active()) return;

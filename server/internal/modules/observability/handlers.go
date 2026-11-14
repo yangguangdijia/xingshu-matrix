@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
@@ -500,23 +501,78 @@ func (m *Module) ackAlert(c *gin.Context) {
 	respond(c, gin.H{"id": a.ID, "handle_status": "acked", "acked_by": user}, err)
 }
 
+// closeAlert 关闭告警。认领时若在 Alertmanager 创建了静默且仍未到期，先删除该静默：
+//   - 删除失败且未 force：返回 502，告警保持原状态，前端可提示「强制关闭」；
+//   - force=true：照常关闭，保留上游静默，并在关闭说明中记录删除失败（时间线可见），响应 silence_deleted=false。
+//
+// 响应中 silence_deleted 仅在存在需要清理的静默时出现。
 func (m *Module) closeAlert(c *gin.Context) {
-	a, ok := m.loadAlert(c)
+	a, ok := m.loadAlertByKey(c, 0)
 	if !ok {
 		return
 	}
 	var in struct {
 		Comment string `json:"comment"`
+		Force   bool   `json:"force"`
 	}
 	_ = c.ShouldBindJSON(&in)
+	in.Comment = strings.TrimSpace(in.Comment)
 	if a.HandleStatus == "closed" {
-		httpx.Fail(c, httpx.Conflict("alert already closed"))
+		httpx.Fail(c, httpx.Conflict("告警已关闭"))
 		return
 	}
 	user := rbac.PrincipalFrom(c).Username
-	_, err := m.d.DB.Exec(c, `UPDATE obs_alerts SET handle_status='closed',closed_by=$2,closed_at=now(),close_comment=$3 WHERE id=$1`, a.ID, user, in.Comment)
+	cs, err := m.loadClaimState(c, a.ID)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	resp := gin.H{"id": a.ID, "handle_status": "closed", "closed_by": user}
+	comment := in.Comment
+	if cs.SilenceID != "" && (cs.SilenceUntil == nil || cs.SilenceUntil.After(time.Now())) {
+		derr := m.deleteClaimSilence(c, a, cs.SilenceID)
+		if derr != nil && !in.Force {
+			httpx.Fail(c, httpx.NewError(http.StatusBadGateway, httpx.CodeUpstream, "删除认领时创建的 Alertmanager 静默失败："+closeErrText(derr)).Wrap(derr))
+			return
+		}
+		resp["silence_id"] = cs.SilenceID
+		resp["silence_deleted"] = derr == nil
+		if derr != nil {
+			note := "（强制关闭：静默 " + cs.SilenceID + " 删除失败，已保留至到期）"
+			comment = strings.TrimSpace(comment + " " + note)
+		} else if comment == "" {
+			comment = "（已删除认领静默 " + cs.SilenceID + "）"
+		}
+		audit.SetDetail(c, gin.H{"silence_id": cs.SilenceID, "silence_deleted": derr == nil, "force": in.Force})
+	}
+	tag, err := m.d.DB.Exec(c, `UPDATE obs_alerts SET handle_status='closed',closed_by=$2,closed_at=now(),close_comment=$3 WHERE id=$1 AND handle_status<>'closed'`, a.ID, user, comment)
 	audit.SetResource(c, "obs_alert", strconv.FormatInt(a.ID, 10))
-	respond(c, gin.H{"id": a.ID, "handle_status": "closed", "closed_by": user}, err)
+	if err == nil && tag.RowsAffected() == 0 {
+		err = httpx.Conflict("告警已关闭")
+	}
+	respond(c, resp, err)
+}
+
+// deleteClaimSilence 删除认领时创建的静默；静默已不存在（404）视为成功。
+func (m *Module) deleteClaimSilence(c *gin.Context, a *Alert, silenceID string) error {
+	cl, err := m.alertmanagerForAlert(c, a)
+	if err != nil {
+		return err
+	}
+	err = cl.DeleteSilence(c, silenceID)
+	var he *httpx.Error
+	if err != nil && errors.As(err, &he) && he.Status == http.StatusNotFound {
+		return nil
+	}
+	return err
+}
+
+func closeErrText(err error) string {
+	var he *httpx.Error
+	if errors.As(err, &he) && he.Message != "" {
+		return he.Message
+	}
+	return "Alertmanager 不可达或返回错误"
 }
 
 // ---------------------------------------------------------------------- AI tools

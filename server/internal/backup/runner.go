@@ -152,6 +152,11 @@ func (r *Runner) Trigger(ctx context.Context, kind string, userID int64) (int64,
 // INSERT ... ON CONFLICT (schedule_slot) DO NOTHING so that across replicas
 // exactly one instance runs it.
 func (r *Runner) Start(ctx context.Context) {
+	if n, err := r.ReapStale(ctx); err != nil {
+		r.log().Warn("reap stale platform backups", "err", err)
+	} else if n > 0 {
+		r.log().Warn("marked interrupted platform backups as failed", "count", n)
+	}
 	if r.Schedule == nil {
 		return
 	}
@@ -194,6 +199,27 @@ func (r *Runner) RunSlot(ctx context.Context, slot time.Time) (rec *Record, ran 
 	}
 	rec, err = r.execute(ctx, id, KindScheduled)
 	return rec, true, err
+}
+
+// ReapStale marks running rows older than the dump timeout (+10 min upload
+// grace) as failed: they were left behind by a process that crashed or was
+// killed mid-backup. Rows younger than that may belong to another replica
+// still working and are left alone.
+func (r *Runner) ReapStale(ctx context.Context) (int64, error) {
+	if r.DB == nil {
+		return 0, nil
+	}
+	age := r.Timeout
+	if age <= 0 {
+		age = 2 * time.Hour
+	}
+	age += 10 * time.Minute
+	tag, err := r.DB.Exec(ctx, `UPDATE platform_backups SET status='failed', error='备份进程中断（实例重启或崩溃），本次备份未完成', finished_at=now()
+		WHERE status='running' AND created_at < now() - make_interval(secs => $1)`, age.Seconds())
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // claim inserts the running row. With a slot it returns ok=false when the

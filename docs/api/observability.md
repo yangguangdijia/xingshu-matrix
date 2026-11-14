@@ -133,7 +133,13 @@ receivers:
 ### POST /observability/alerts/:id/ack　`alert:handle`
 认领：仅 `open` 可认领，已被他人认领/已关闭返回 409。响应 `{"id":10,"handle_status":"acked","acked_by":"alice"}`。
 ### POST /observability/alerts/:id/close　`alert:handle`
-请求体可选 `{"comment":"已扩容"}`，响应 `{"id":10,"handle_status":"closed","closed_by":"alice"}`。关闭后若 Alertmanager 再次发送 resolved→firing，会自动重新打开。
+`:id` 可为告警 id 或 fingerprint（同认领接口，需 `cluster_id`）。请求体可选 `{"comment":"已扩容","force":false}`。
+
+认领时若在 Alertmanager 创建了静默且未到期，关闭前先删除该静默（静默已不存在视为成功）：
+- 删除失败且 `force=false`：返回 502（code 50200），告警状态不变；
+- `force=true`：照常关闭，保留上游静默至到期，关闭说明追加失败记录（时间线可见）。
+
+响应 `{"id":10,"handle_status":"closed","closed_by":"alice","silence_id":"…","silence_deleted":true}`；`silence_id`/`silence_deleted` 仅在存在需清理的静默时返回。已关闭再关闭返回 409。关闭后若 Alertmanager 再次发送 resolved→firing，会自动重新打开。
 
 > 以下三个接口的 `:id` 可为告警数字 id 或 fingerprint；fingerprint 命中多个 Alertmanager 数据源时返回 409，需改用 id 或带 `datasource_id`（body）/`datasource`（query）。均按 `?cluster_id=` 校验集群归属（同 GET /alerts/:id）。
 
