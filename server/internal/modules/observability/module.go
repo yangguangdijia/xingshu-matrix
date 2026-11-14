@@ -107,6 +107,9 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	al.GET("/:id", rbac.RequirePerm(PermAlertRead), m.getAlert)
 	al.POST("/:id/ack", rbac.RequirePerm(PermAlertHandle), m.ackAlert)
 	al.POST("/:id/close", rbac.RequirePerm(PermAlertHandle), m.closeAlert)
+	al.POST("/:id/claim", rbac.RequirePerm(PermAlertHandle), m.claimAlert)
+	al.GET("/:id/timeline", rbac.RequirePerm(PermAlertRead), m.alertTimeline)
+	al.POST("/:id/incident", rbac.RequirePerm(PermAlertHandle), m.alertToIncident)
 
 	si := g.Group("/silences")
 	si.GET("", rbac.RequirePerm(PermAlertRead), m.listSilences)

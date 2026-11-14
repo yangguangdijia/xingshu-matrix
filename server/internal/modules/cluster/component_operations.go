@@ -830,11 +830,8 @@ func (m *Module) finalizeComponentSuccess(ctx context.Context, id string, cl *Cl
 	if err := tx.QueryRow(ctx, `SELECT created_by FROM cluster_component_operations WHERE id=$1 AND cluster_id=$2 AND environment=$3 AND status='running' FOR UPDATE`, id, cl.ID, cl.Env).Scan(&userID); err != nil {
 		return err
 	}
-	detail := string(componentJSON(map[string]string{"operation_id": id, "namespace": ns, "release": release}))
-	_, err = tx.Exec(ctx, `INSERT INTO audit_logs(user_id,username,ip,method,path,resource,resource_id,action,status_code,result,duration_ms,request_id,user_agent,detail,created_at)
-		VALUES ($1,'component-installer','', 'POST',$2,'cluster',$3,'component.install',200,'success',0,'','',$4::jsonb,now())`,
-		userID, "/api/v1/clusters/"+fmt.Sprint(cl.ID)+"/components/"+component+"/install", fmt.Sprint(cl.ID), detail)
-	if err != nil {
+	detail := componentJSON(map[string]string{"operation_id": id, "namespace": ns, "release": release})
+	if _, err = audit.WriteChained(ctx, tx, componentInstallAudit(userID, "component-installer", cl.ID, component, detail)); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE cluster_component_operations SET status='succeeded',helm_status=$2,config_encrypted='',error_message='',finished_at=now(),updated_at=now() WHERE id=$1 AND status='running'`, id, helmStatus); err != nil {
@@ -843,6 +840,17 @@ func (m *Module) finalizeComponentSuccess(ctx context.Context, id string, cl *Cl
 	return tx.Commit(ctx)
 }
 func componentJSON(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
+
+// componentInstallAudit builds the component.install audit entry; CreatedAt is
+// left zero so the row takes the transaction's now() as before.
+func componentInstallAudit(userID int64, username string, clusterID int64, component string, detail json.RawMessage) audit.Entry {
+	return audit.Entry{
+		UserID: &userID, Username: username, Method: "POST",
+		Path:     "/api/v1/clusters/" + fmt.Sprint(clusterID) + "/components/" + component + "/install",
+		Resource: "cluster", ResourceID: fmt.Sprint(clusterID), Action: "component.install",
+		StatusCode: 200, Result: audit.ResultSuccess, Detail: detail,
+	}
+}
 func safeComponentError(error) string {
 	return "Helm installation failed; inspect the sanitized operation status"
 }
@@ -977,10 +985,8 @@ func (m *Module) retryComponentAudit(ctx context.Context, o componentOperation, 
 	if helmStatus != "deployed" {
 		return errors.New("component Helm outcome is not confirmed")
 	}
-	detail := string(componentJSON(map[string]string{"operation_id": o.ID, "namespace": namespace, "release": releaseName}))
-	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs(user_id,username,ip,method,path,resource,resource_id,action,status_code,result,duration_ms,request_id,user_agent,detail,created_at)
-		VALUES ($1,$2,'', 'POST',$3,'cluster',$4,'component.install',200,'success',0,'','',$5::jsonb,now())`,
-		userID, fmt.Sprint(userID), "/api/v1/clusters/"+fmt.Sprint(cl.ID)+"/components/"+component+"/install", fmt.Sprint(cl.ID), detail); err != nil {
+	detail := componentJSON(map[string]string{"operation_id": o.ID, "namespace": namespace, "release": releaseName})
+	if _, err := audit.WriteChained(ctx, tx, componentInstallAudit(userID, fmt.Sprint(userID), cl.ID, component, detail)); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE cluster_component_operations SET status='succeeded',error_message='',config_encrypted='',finished_at=now(),updated_at=now() WHERE id=$1 AND status='audit_pending' AND helm_status='deployed'`, o.ID); err != nil {

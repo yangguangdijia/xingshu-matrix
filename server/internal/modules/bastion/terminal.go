@@ -19,18 +19,77 @@ type FilterRule struct {
 	Action string // deny | confirm | approve | allow
 }
 
-// Evaluate returns the first matching rule (rules are pre-sorted by priority) or nil.
+// filterSeverity 是过滤动作的严格程度：deny > approve > confirm > allow。
+func filterSeverity(action string) int {
+	switch action {
+	case "deny":
+		return 4
+	case "approve":
+		return 3
+	case "confirm":
+		return 2
+	case "allow":
+		return 1
+	}
+	return 0
+}
+
+// Evaluate 返回命令应适用的规则（rules 已按 priority 排序），没有命中时返回 nil。
+//
+// 防绕过：原始命令与 splitCommandSegments 拆出的每一段（`;`、`&&`、管道、子 shell、`$(...)` 等）
+// 分别匹配，任一段命中 deny / approve / confirm 都生效，多条命中时取最严格的动作（同级取优先级高的）。
+// allow 白名单只有在原始命令整体命中、且每一段也都被某条 allow 规则覆盖时才短路放行，
+// 因此 `ls; rm -rf /` 不会因为 `^ls` 白名单而绕过 deny 规则。
 func Evaluate(rules []FilterRule, cmd string) *FilterRule {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
 		return nil
 	}
-	for i := range rules {
-		if rules[i].Re.MatchString(cmd) {
-			return &rules[i]
+	segs := splitCommandSegments(cmd)
+	targets := make([]string, 0, len(segs)+1)
+	targets = append(targets, cmd)
+	for _, s := range segs {
+		if s != cmd {
+			targets = append(targets, s)
 		}
 	}
-	return nil
+	allowCovers := func(s string) bool {
+		for i := range rules {
+			if rules[i].Action == "allow" && rules[i].Re.MatchString(s) {
+				return true
+			}
+		}
+		return false
+	}
+	var best *FilterRule
+	for i := range rules {
+		r := &rules[i]
+		if r.Action == "allow" {
+			if best != nil || !r.Re.MatchString(cmd) {
+				continue
+			}
+			covered := true
+			for _, s := range segs {
+				if s != cmd && !r.Re.MatchString(s) && !allowCovers(s) {
+					covered = false
+					break
+				}
+			}
+			if covered {
+				return r
+			}
+			continue
+		}
+		for _, t := range targets {
+			if r.Re.MatchString(t) {
+				if best == nil || filterSeverity(r.Action) > filterSeverity(best.Action) {
+					best = r
+				}
+				break
+			}
+		}
+	}
+	return best
 }
 
 // CommandEvent is one submitted command line to audit.

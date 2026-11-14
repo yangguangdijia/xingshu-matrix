@@ -157,9 +157,10 @@ func alertTitle(a Alert) string {
 
 // declareFromAlert 为告警声明故障；告警已关联未解决故障时返回该故障 id 与 false。
 func (m *Module) declareFromAlert(ctx context.Context, a Alert, scheduleID int64, severity, by string, ruleID any) (int64, bool, error) {
+	const existingSQL = `SELECT l.incident_id FROM oncall_alert_links l JOIN oncall_incidents i ON i.id=l.incident_id
+		WHERE l.alert_id=$1 AND i.status<>'resolved' ORDER BY l.incident_id DESC LIMIT 1`
 	var existing int64
-	err := m.d.DB.QueryRow(ctx, `SELECT l.incident_id FROM oncall_alert_links l JOIN oncall_incidents i ON i.id=l.incident_id
-		WHERE l.alert_id=$1 AND i.status<>'resolved' ORDER BY l.incident_id DESC LIMIT 1`, a.ID).Scan(&existing)
+	err := m.d.DB.QueryRow(ctx, existingSQL, a.ID).Scan(&existing)
 	if err == nil {
 		return existing, false, nil
 	}
@@ -189,6 +190,13 @@ func (m *Module) declareFromAlert(ctx context.Context, a Alert, scheduleID int64
 		return 0, false, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	// 同一告警并发转故障（手动 + 升级规则）串行化，锁内复查保证幂等。
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('oncall_alert_link'), $1::int)`, int32(a.ID)); err != nil {
+		return 0, false, err
+	}
+	if err := tx.QueryRow(ctx, existingSQL, a.ID).Scan(&existing); err == nil {
+		return existing, false, nil
+	}
 	var id int64
 	if err := tx.QueryRow(ctx, `INSERT INTO oncall_incidents (title,description,severity,service,env,schedule_id,assigned_to,declared_by)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, alertTitle(a), desc, severity,

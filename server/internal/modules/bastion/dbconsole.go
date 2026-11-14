@@ -343,7 +343,7 @@ func (m *Module) dbAccess(c *gin.Context, assetID, accountID int64, database str
 		httpx.Fail(c, httpx.Forbidden("no active authorization rule for this asset/account"))
 		return nil
 	}
-	if reason, err := m.checkACL(c, p, t.asset.ID, c.ClientIP()); err != nil {
+	if reason, err := m.checkACL(c, p, t.asset.ID, t.acc.Username, c.ClientIP()); err != nil {
 		httpx.Fail(c, err)
 		return nil
 	} else if reason != "" {

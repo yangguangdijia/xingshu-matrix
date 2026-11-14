@@ -298,7 +298,45 @@
 - GitLab：在项目 Webhook 中填写 Secret Token = 应用的 `webhook_secret`，校验 `X-Gitlab-Token`（常量时间比较），事件 `X-Gitlab-Event: Push Hook`。
 - GitHub：Secret = `webhook_secret`，校验 `X-Hub-Signature-256`（HMAC-SHA256 原始请求体），事件 `X-GitHub-Event: push`（`ping` 等其他事件返回 `{"ignored":…}`）。
 - 只处理推送到应用 `branch` 的事件（忽略删除分支），对该应用所有 `on_push=true` 的流水线各创建一次运行（commit 取 `checkout_sha`/`after`，触发方式 `webhook:gitlab|github`，触发人 `webhook`）。
+- Gitee：校验 `X-Gitee-Token`，事件 `X-Gitee-Event: Push Hook`。两种模式：
+  - 密码模式（无 `X-Gitee-Timestamp`）：`X-Gitee-Token` 与 `webhook_secret` 常量时间比较。
+  - 签名模式（带 `X-Gitee-Timestamp`，毫秒）：`X-Gitee-Token = base64(HMAC-SHA256(webhook_secret, timestamp + "\n" + webhook_secret))`，可为 URL 编码；时间戳与服务器时钟相差超过 1 小时（过期或超前）即拒绝。带时间戳时不再接受明文密码。
+- Gitea / Gogs：按 GitHub 兼容的 `X-Hub-Signature-256` 校验。
 - 签名失败 401。成功：`{"runs":[89,90]}`。
+
+#### 投递去重
+- 签名校验通过后按提供方投递 id 去重：Gitee `X-Gitee-Delivery`、Gitea `X-Gitea-Delivery`（优先于其兼容 GitHub 头）、Gogs `X-Gogs-Delivery`、GitHub `X-GitHub-Delivery`、GitLab `Idempotency-Key`（GitLab 17.4+，重试不变）否则 `X-Gitlab-Event-UUID`。id 须为 1–128 个可见 ASCII 字符，否则视为无 id。
+- 每次投递写入 `cicd_webhook_deliveries`（唯一键 `app_id, provider, delivery_id`）。同一 id 再次到达（重试/重新投递）时不触发运行，`duplicates+1`、记录 `last_duplicate_at`，直接返回 200：`{"duplicate":true,"delivery_id":"…","runs":[]}`。
+- 例外：上一次处理结果为 `error`（且未启动任何运行）的投递会重新处理，`attempts+1`。没有 id 的投递不去重，每次都处理。
+- 投递状态：`processing | triggered | ignored | error`；记录保留 7 天。
+
+### GET /cicd/pipelines/:id/webhook-deliveries — `cicd:read`
+分页（`page`、`page_size`）列出该流水线所属应用的投递记录（新→旧）：
+```json
+{"items":[{"id":7,"app_id":3,"provider":"gitee","delivery_id":"abc-123","event":"Push Hook","ref":"refs/heads/main",
+  "commit":"3f2a9c1…","status":"triggered","detail":"","runs":[{"pipeline_id":5,"run_id":90}],"run_id":90,
+  "duplicates":1,"attempts":1,"received_at":"…","last_duplicate_at":"…"}],
+ "total":1,"page":1,"page_size":20,"retention_days":7,"on_push":true}
+```
+`run_id` 为本流水线由该投递启动的运行（无则 null）。
+
+## 镜像扫描门禁（阶段 `type: "scan"`）
+扫描前序构建阶段推送的镜像（阶段自身 `image` 优先，否则取最近的 build 阶段镜像或 `image_repo:image_tag`；镜像仓库凭证同理继承）。阶段字段 `scan`：
+
+| 字段 | 说明 |
+|---|---|
+| `source` | `trivy`（默认，在执行集群以 Job 运行 `aquasec/trivy:0.57.1`）或 `harbor`（读取 Harbor 已有报告） |
+| `block_severities` | 阻断级别，默认 `["CRITICAL","HIGH"]`；可选 CRITICAL/HIGH/MEDIUM/LOW/UNKNOWN |
+| `report_only` | 只记录，从不阻断 |
+| `ignore_cves` | 不计入门禁的漏洞 id（≤500 条，不区分大小写） |
+| `ignore_unfixed` | 无修复版本的漏洞不计入门禁 |
+| `top_n` | 保存的漏洞条数，默认 50，最大 200 |
+| `insecure` | HTTP / 自签名仓库 |
+| `harbor_trigger` | Harbor 无报告时触发扫描并等待 |
+
+- 门禁：漏洞按 id+包+版本去重后，属于阻断级别且未被忽略的计为 `blocking`；`blocking > 0`（即超过阈值 0）运行失败，消息如 `镜像扫描未通过：2 个阻断级别漏洞（CRITICAL 1，HIGH 1；…）`；`blocking = 0` 放行。
+- 扫描器不可用时阶段失败（不放行）：trivy 无可用执行集群、harbor 无仓库凭证（保存流水线时 400 `harbor scan needs a registry credential`）、Harbor 无报告且未开 `harbor_trigger`、扫描超时（默认 15 分钟）。如需容忍扫描失败，应在阶段层面处理，`report_only` 只影响门禁判定，不屏蔽扫描器错误。
+- 结果写入 `cicd_image_scans`（状态 `passed | blocked | error`），在 `GET /cicd/runs/:id` 的 `scans` 字段返回（含 `summary`、`policy`、`vulnerabilities`）。
 
 ## 执行过程
 
@@ -320,6 +358,7 @@
 
 ## 数据表
 
+- 迁移 0009 `delivery_safety`：`cicd_image_scans`、`cicd_webhook_deliveries`、`cicd_canaries`、`cicd_canary_events`；回滚脚本 `0009_delivery_safety.down.sql`（按逆序删除这四张表及索引，数据不可恢复；迁移器只执行 `.up.sql`，回滚需手动执行）。
 - 迁移 0008 `build_cache`：`cicd_pipelines.cache JSONB`（缓存配置，NULL = 未配置）、`cicd_runs.cache JSONB`（本次运行的缓存使用与观测）。
 - `cicd_credentials`（迁移 0007）：`name UNIQUE, type, username, secret_enc, host, description, created_by`；`cicd_applications.credential_id` 引用它（无级联）。
 
@@ -335,6 +374,6 @@
 - Kaniko 推送凭据需预先在 runner 命名空间创建 dockerconfigjson Secret，平台不托管镜像仓库凭据；SSH 方式克隆需自行在镜像中提供密钥（仅 https Token 由平台注入）。
 - Helm 回滚通过重新 `upgrade` 旧镜像实现，未调用 `helm rollback`；Helm 部署的 `previous_image` 取自平台发布记录而非集群实际状态。
 - 直接部署（非流水线）的过程日志只写服务端日志，接口通过发布记录的 `status/message` 反映结果。
-- Webhook 只处理 push 事件；不支持 Tag / Merge Request 事件、Gitee/Gitea 签名。
+- Webhook 只处理 push 事件；不支持 Tag / Merge Request 事件。
 - 运行日志无自动清理策略。
 - 本模块未在 `internal/modules/registry.go` 中注册（按规则由集成方添加 `cicd.New()`）。

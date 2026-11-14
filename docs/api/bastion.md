@@ -25,7 +25,7 @@
 | `MATRIX_BASTION_RECORDING_STORAGE_ID` | （空） | 录像卷标识，必须与录像目录下 `.matrix-bastion-storage-id` 文件内容一致；未配置时拒绝 SSH 连接（不录像就不允许连接） |
 | `MATRIX_BASTION_RECORDING_MODE` | （空） | 设为 `local` 时允许录像目录不在 NFS 上，**仅限单副本部署**；多副本必须使用共享 NFS，否则会话被其它副本接管后录像不完整。目录不能是组 / 全局可写 |
 
-## 数据表（迁移 `0001_init.up.sql` … `0006_jumpserver_layout.up.sql`）
+## 数据表（迁移 `0001_init.up.sql` … `0007_acl_exempt.up.sql`；`0007_acl_exempt.down.sql` 仅供人工回滚，迁移器不执行）
 
 `bastion_assets`（含 `options JSONB`）、`bastion_accounts`（`secret_enc`/`passphrase_enc` 用 `d.Crypto` AES-256-GCM 加密）、`bastion_rules`、`bastion_filters`、`bastion_sessions`、`bastion_commands`。
 
@@ -142,12 +142,14 @@ v1.27 起（资产授权，对应 JumpServer「资产授权」）请求体增加
 
 ## 命令过滤规则
 
-### GET /bastion/filters — `bastion:read`（按 priority 升序，首条命中生效）
+### GET /bastion/filters — `bastion:read`（按 priority 升序；逐段匹配，取最严格动作，见下）
 ### POST /bastion/filters — `bastion:manage`
 ```json
 {"name":"禁止删根","pattern":"rm\\s+-rf\\s+/","action":"deny","priority":10,"enabled":true}
 ```
 `action`：`deny` 直接拦截；`confirm` 需用户在终端输入 `yes` 确认后才执行；`approve` 命令暂存并提交审批单（见「命令复核」），审批通过后发送到主机；`allow` 白名单，命中即放行且不再匹配后续规则。正则用 Go RE2 语法，保存前校验，不能匹配空命令。
+
+**防绕过匹配（`Evaluate`）**：原始命令与 `splitCommandSegments` 拆出的每一段（`;`、`&&`、`||`、管道、`&`、子 shell、`$( … )`、反引号，去 `sudo`/`env` 等前缀、去命令路径后的变体）分别匹配。任一段命中 `deny` / `approve` / `confirm` 即生效，多条命中时取最严格的动作：`deny` > `approve` > `confirm` > `allow`（同级取 priority 小的）。`allow` 只有在**原始命令整体**命中、且每一段也都被某条 `allow` 规则覆盖时才短路放行——例如白名单 `^ls\b` 不会放过 `ls; rm -rf /`，该命令按 `deny` 规则拦截；只有某一段命中 `allow` 不会短路。
 
 可选字段：`group_name`（规则组，默认「默认规则组」，只用于归类，匹配顺序只看 `priority`）、`asset_ids`（作用资产，空 = 全部资产；会话建立时按资产加载规则）。`priority` 取值 1–100000。
 ### PUT /bastion/filters/:id、DELETE /bastion/filters/:id — `bastion:manage`
@@ -298,9 +300,21 @@ WebSocket（gorilla/websocket）。
 ### GET /bastion/login-acls — `bastion:read`；POST、PUT /:id、DELETE /:id — `bastion:manage`
 ```json
 {"name":"仅办公网","priority":10,"subject_type":"all|user|role|group","subject":"","asset_ids":[],"ip_ranges":["10.0.0.0/8","192.168.1.10","10.1.1.1-10.1.1.50","*"],
- "weekdays":[1,2,3,4,5],"time_from":"09:00","time_to":"18:00","action":"allow|deny","enabled":true,"description":""}
+ "weekdays":[1,2,3,4,5],"time_from":"09:00","time_to":"18:00","action":"allow|deny|review","exempt_minutes":0,"enabled":true,"description":""}
 ```
-按 `priority` 升序取第一条命中的启用规则；`deny` 拒绝连接（403，原因写入登录日志），`allow` 放行；没有命中时放行（授权仍是必要条件）。`weekdays` 1=周一…7=周日，空 = 每天；`time_from > time_to` 表示跨午夜。时段按 `MATRIX_TZ`（默认 `Asia/Shanghai`，二进制内置时区库）判断。作用于 SSH Web 终端与数据库控制台（`/db/connect`、`/db/query`）。校验错误：`invalid ip range`、`time must be HH:MM`、`weekdays must be 1 (Mon) - 7 (Sun)`、`subject is required unless subject_type is all`。
+按 `priority` 升序取第一条命中的启用规则；`deny` 拒绝连接（403，原因写入登录日志），`allow` 放行，`review` 需审批后登录（见下节）；没有命中时放行（授权仍是必要条件）。`weekdays` 1=周一…7=周日，空 = 每天；`time_from > time_to` 表示跨午夜。时段按 `MATRIX_TZ`（默认 `Asia/Shanghai`，二进制内置时区库）判断。作用于 SSH Web 终端与数据库控制台（`/db/connect`、`/db/query`）。校验错误：`invalid ip range`、`time must be HH:MM`、`weekdays must be 1 (Mon) - 7 (Sun)`、`subject is required unless subject_type is all`、`exempt_minutes must be 0-10080`。
+
+### 登录审批与免签窗口（v1.28，迁移 `0007_acl_exempt`，对齐 JumpServer 5.1）
+- `exempt_minutes`（0–10080，仅 `action=review` 时保存，其他动作强制为 0）：审批通过后的免签窗口。
+- 命中 `review` 规则时：先查有效免审记录（同一用户 + 资产 + 系统账号，未撤销、未过期）→ 命中直接放行，请求审计 `detail` 带 `{"via":"exemption","exemption_id","acl_id","acl","expires_at"}`；未命中则以连接用户身份（`CreateOwned`，需 `bastion:connect`）提交审批单 `bastion.login`，本次连接 403，原因形如「登录 ACL「x」要求审批，已提交审批单 #12；通过后 60 分钟内免审」并写入登录日志。`payload`：`{acl_id, acl, asset_id, asset, account}`。
+- 审批通过回调：规则仍存在且仍为 `review` 时写入 `bastion_acl_exemptions`，`expires_at = now() + exempt_minutes`；`exempt_minutes=0` 时给 10 分钟连接窗口（数据库控制台每条查询都校验 ACL，因此不做一次性消费）。审批单结果 `{exemption_id, expires_at, one_shot}`。
+- 审批服务不可用时 `review` 规则按拒绝处理。
+
+### GET /bastion/acl-exemptions — `bastion:read`
+当前有效（未撤销、未过期）的免审记录，按 `expires_at` 升序：`[{id,user_id,account,asset_id,acl_id,approval_id,expires_at,revoked_at,revoked_by,created_at}]`。
+
+### POST /bastion/acl-exemptions/:id/revoke — `bastion:manage`
+提前撤销，置 `revoked_at=now()`、`revoked_by=当前用户`，返回该记录；已撤销或不存在返回 404 `exemption not found or already revoked`。写审计（resource `bastion_acl_exemption`，action `revoke`，detail `{user_id, asset_id, account, expires_at}`）。
 
 ### GET /bastion/login-logs — `bastion:audit`
 分页；参数 `q`（用户/资产/IP/账号模糊）、`result`（`success|denied|failed`）、`protocol`、`from`、`to`（RFC3339）。项：`{id,user_id,username,asset_id,asset_name,account,protocol,client_ip,result,reason,session_id,created_at}`。
@@ -346,7 +360,7 @@ WebSocket（gorilla/websocket）。
 - 文件传输（SFTP / 上传下载）未实现，因此没有「文件传输记录」；授权里的 `upload` / `download` 动作仅登记。
 - MySQL 的 `max_execution_time` 只约束 SELECT；变更语句的超时依赖连接上下文取消（驱动断开连接），服务器端语句可能在断开后继续执行到结束。
 - 数据库控制台结果脱敏是对每个文本单元格做正则替换，不识别列语义；二进制列按字符串处理。
-- 登录 ACL 不支持「需要审核后登录」动作，只有允许 / 拒绝。
+- 登录审批不去重：免签窗口外每次连接（数据库控制台每条查询）命中 `review` 都会新建审批单。
 - 录像上传 S3/MinIO：当前只写本地目录。计划：会话结束后用 minio-go `PutObject` 上传到 `recordings/<id>.cast`，`recording_path` 改存对象键，下载接口改为预签名 URL 重定向；多实例部署时必须启用，否则录像只存在于产生它的实例上。
 - 强制断开、在线会话注册表为**单实例内存**；多实例需通过 Redis pub/sub 广播 kill。
 - 命令识别基于输入行缓冲 + 回显屏幕行启发式：`vim` 等全屏程序内的按键、`sudo` 密码输入等也可能被当作"命令"记录；多行粘贴、shell 别名/变量展开、`bash -c` 嵌套可能绕过正则——过滤规则是辅助控制，不能替代最小权限账号。

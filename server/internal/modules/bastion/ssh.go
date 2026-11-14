@@ -141,7 +141,7 @@ func (m *Module) sshWS(c *gin.Context) {
 		httpx.Fail(c, httpx.Forbidden("no active authorization rule for this asset/account"))
 		return
 	}
-	if reason, err := m.checkACL(c, p, asset.ID, c.ClientIP()); err != nil {
+	if reason, err := m.checkACL(c, p, asset.ID, acc.Username, c.ClientIP()); err != nil {
 		httpx.Fail(c, err)
 		return
 	} else if reason != "" {

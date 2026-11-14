@@ -17,21 +17,16 @@ import (
 // PgStore writes and queries audit_logs.
 type PgStore struct{ DB store.DB }
 
-// WriteBatch inserts entries with COPY-like batching.
+// WriteBatch appends entries to the live hash chain in one transaction (the
+// live segment is locked once per batch; see WriteChained).
 func (s *PgStore) WriteBatch(ctx context.Context, entries []Entry) error {
-	b := &pgx.Batch{}
-	for _, e := range entries {
-		var detail any
-		if len(e.Detail) > 0 {
-			detail = string(e.Detail)
-		}
-		b.Queue(`INSERT INTO audit_logs(user_id, username, ip, method, path, resource, resource_id, action,
-			status_code, result, duration_ms, request_id, user_agent, detail, created_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15)`,
-			e.UserID, e.Username, e.IP, e.Method, e.Path, e.Resource, e.ResourceID, e.Action,
-			e.StatusCode, e.Result, e.DurationMs, e.RequestID, e.UserAgent, detail, e.CreatedAt)
+	if len(entries) == 0 {
+		return nil
 	}
-	return s.DB.SendBatch(ctx, b).Close()
+	return store.InTx(ctx, s.DB, func(tx pgx.Tx) error {
+		_, err := writeChainedBatch(ctx, tx, entries)
+		return err
+	})
 }
 
 // Filter narrows an audit query. Zero values are ignored.
@@ -185,6 +180,7 @@ func (s *PgStore) RegisterRoutes(r *gin.RouterGroup) {
 		}
 		httpx.OK(c, httpx.NewPageResult(items, total, p))
 	})
+	r.GET("/audit/chain/verify", rbac.RequirePerm("audit:read"), s.handleChainVerify)
 	r.GET("/audit-logs/:id", rbac.RequirePerm("audit:read"), func(c *gin.Context) {
 		id, ok := httpx.ParamID(c, "id")
 		if !ok {

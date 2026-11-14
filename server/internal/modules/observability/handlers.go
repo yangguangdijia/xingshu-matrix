@@ -324,6 +324,9 @@ func (m *Module) alertWebhook(c *gin.Context) {
 			  fire_count = obs_alerts.fire_count + CASE WHEN obs_alerts.status='resolved' AND EXCLUDED.status='firing' THEN 1 ELSE 0 END,
 			  handle_status = CASE WHEN obs_alerts.status='resolved' AND EXCLUDED.status='firing' THEN 'open' ELSE obs_alerts.handle_status END,
 			  acked_by = CASE WHEN obs_alerts.status='resolved' AND EXCLUDED.status='firing' THEN '' ELSE obs_alerts.acked_by END,
+			  claim_comment = CASE WHEN obs_alerts.status='resolved' AND EXCLUDED.status='firing' THEN '' ELSE obs_alerts.claim_comment END,
+			  claim_silence_id = CASE WHEN obs_alerts.status='resolved' AND EXCLUDED.status='firing' THEN '' ELSE obs_alerts.claim_silence_id END,
+			  claim_silence_until = CASE WHEN obs_alerts.status='resolved' AND EXCLUDED.status='firing' THEN NULL ELSE obs_alerts.claim_silence_until END,
 			  status=EXCLUDED.status, last_received_at=now()
 			RETURNING id,fire_count)
 			SELECT up.id,up.fire_count, COALESCE((SELECT status FROM prev),'') FROM up`,

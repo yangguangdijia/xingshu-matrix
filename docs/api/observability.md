@@ -12,7 +12,7 @@
 | `metrics:read` | PromQL 查询、标签、序列 |
 | `logs:read` | 日志查询 |
 | `alert:read` | 告警列表、告警规则、静默列表 |
-| `alert:handle` | 认领 / 关闭告警 |
+| `alert:handle` | 认领 / 关闭告警、告警转故障（另需 `oncall:manage`） |
 | `alert:silence` | 创建 / 删除静默 |
 | `trace:read` | 链路查询 |
 | `notify:manage` | 通知中心：渠道、消息模板、订阅规则、发送记录与重发、通知安全策略（全部接口同一权限） |
@@ -22,7 +22,7 @@
 ## 数据表
 
 - `obs_datasources`：类型 `prometheus|loki|elasticsearch|alertmanager|jaeger|tempo`、url、env、`auth_type none|basic|bearer`、username、`secret_enc`（AES-GCM 加密的密码或 Token）、`options`（JSON，见下）、`webhook_token_hash`（SHA-256，仅 alertmanager）。
-- `obs_alerts`：按 `(datasource_id, fingerprint)` 唯一，`status firing|resolved`，`handle_status open|acked|closed`。
+- `obs_alerts`：按 `(datasource_id, fingerprint)` 唯一，`status firing|resolved`，`handle_status open|acked|closed`；`claim_comment`/`claim_silence_id`/`claim_silence_until`（迁移 0009，认领备注与认领静默）。
 - `obs_channels`：`type dingtalk|feishu|wecom|slack|webhook|email`（迁移 0004 放开 slack/webhook，0007 重申），`config_enc` 整体加密（含 Webhook、签名密钥、请求头、SMTP 密码），`severities`/`envs` 为渠道级告警兜底过滤（空=全部），`description`、`templates`（事件类型→模板 id）、`last_sent_at`/`last_status`（迁移 0007）。
 - `obs_notify_templates`、`obs_notify_subscriptions`、`obs_notify_records`、`obs_notify_cursors`：通知中心（迁移 0007，见第 6 节）。
 
@@ -134,6 +134,45 @@ receivers:
 认领：仅 `open` 可认领，已被他人认领/已关闭返回 409。响应 `{"id":10,"handle_status":"acked","acked_by":"alice"}`。
 ### POST /observability/alerts/:id/close　`alert:handle`
 请求体可选 `{"comment":"已扩容"}`，响应 `{"id":10,"handle_status":"closed","closed_by":"alice"}`。关闭后若 Alertmanager 再次发送 resolved→firing，会自动重新打开。
+
+> 以下三个接口的 `:id` 可为告警数字 id 或 fingerprint；fingerprint 命中多个 Alertmanager 数据源时返回 409，需改用 id 或带 `datasource_id`（body）/`datasource`（query）。均按 `?cluster_id=` 校验集群归属（同 GET /alerts/:id）。
+
+### POST /observability/alerts/:id/claim?cluster_id=1　`alert:handle`（`silence=true` 时另需 `alert:silence`）
+认领并（可选）在告警来源 Alertmanager 上创建静默。
+```json
+{"comment":"已介入处理","duration":"2h","datasource_id":3,"silence":true}
+```
+- `duration` 5m–72h，默认 `2h`；`silence` 省略视为 `true`。静默匹配器取告警的 alertname/cluster/namespace/pod… 前 4 个已有标签（同 `DefaultSilenceMatchers`），中心化数据源自动补集群标签。
+- 认领人/时间写入 `acked_by/acked_at`（响应同时给出 `claimed_by/claimed_at`），备注与静默写入 `claim_comment/claim_silence_id/claim_silence_until`（迁移 0009）；告警 resolved→firing 重新打开时一并清空。
+- 顺序：先建静默再认领；静默失败（上游 502）则不认领；认领因并发落空时撤销刚建的静默。
+```json
+{"id":10,"handle_status":"acked","claimed_by":"alice","claimed_at":"...","acked_by":"alice","acked_at":"...","silenced":true,"silence_id":"6f1c...","silence_until":"..."}
+```
+本人重复认领幂等返回当前状态（附 `"already_claimed":true`）。
+错误：已被他人认领 → 409「告警已被 bob 认领，如需接手请先与其确认」；已关闭 → 409「告警已关闭，无法认领」；无可用 Alertmanager 数据源 / 该环境静默需审批 / 告警无可用标签 → 412（前端据此提示「只认领」并以 `silence:false` 重试）；无 `alert:silence` → 403；上游失败 → 502。
+
+### GET /observability/alerts/:id/timeline?cluster_id=1　`alert:read`
+按时间升序（同一时刻按 触发→通知→认领→静默→转故障→恢复→故障解决→关闭）返回：
+```json
+{"alert_id":10,"items":[
+ {"created_at":"...","kind":"triggered","actor":"Alertmanager","message":"告警触发：HighCPU（级别 critical），CPU>90%"},
+ {"created_at":"...","kind":"notified","actor":"通知中心","message":"触发通知已发送至「值班群」","ref":"88"},
+ {"created_at":"...","kind":"claimed","actor":"alice","message":"认领告警：已介入处理"},
+ {"created_at":"...","kind":"silenced","actor":"alice","message":"认领时在 Alertmanager 创建静默 6f1c...，至 ...","ref":"6f1c..."},
+ {"created_at":"...","kind":"incident","actor":"alice","message":"手动转为故障 INC-5（P1）：[告警] CPU>90%","ref":"5"},
+ {"created_at":"...","kind":"resolved","actor":"Alertmanager","message":"告警已恢复"}]}
+```
+`kind`：`triggered|notified|notify_failed|notify_suppressed|claimed|silenced|incident|resolved|incident_resolved|closed`。数据来源：`obs_alerts`（触发取 `starts_at`，多次触发只保留最近一次并注明累计次数；恢复取 `ends_at`；认领/静默/关闭）、`obs_notify_records`（`event_kind='alert'` 且 `event_key` 含 `alert:<ds>:<fingerprint>:`，含聚合发送）、`oncall_alert_links`+`oncall_incidents`。
+
+### POST /observability/alerts/:id/incident?cluster_id=1　`alert:handle` + `oncall:manage`
+告警转故障，复用值班模块 `declareFromAlert`（同 `POST /oncall/incidents/from-alert/:alert_id`：写 `oncall_incidents`、`oncall_incident_events`、`oncall_alert_links`，按排班指派一线值班）。
+```json
+{"severity":"P1","schedule_id":2}
+```
+`severity` 省略时按告警级别推导（critical/P0/P1→P1，info→P3，其余 P2）。幂等：告警已关联**未解决**故障时直接返回该故障（`created:false`）；同一告警并发转故障以事务级 advisory lock 串行化。
+```json
+{"alert_id":10,"incident_id":5,"created":true}
+```
 
 ### 静默（代理 Alertmanager `/api/v2/silences`）
 - GET `/observability/silences?datasource=3&filter=alertname="HighCPU"`　`alert:read` → 返回 Alertmanager 原始静默数组。

@@ -111,6 +111,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.POST("/filters", rbac.RequirePerm(PermManage), m.createFilter)
 	g.PUT("/filters/:id", rbac.RequirePerm(PermManage), m.updateFilter)
 	g.DELETE("/filters/:id", rbac.RequirePerm(PermManage), m.deleteFilter)
+	g.POST("/command-filters/ai-draft", rbac.RequirePerm(PermManage), m.aiDraftFilter)
 
 	g.GET("/mask-rules", rbac.RequirePerm(PermRead), m.listMasks)
 	g.POST("/mask-rules", rbac.RequirePerm(PermManage), m.createMask)
@@ -151,6 +152,8 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.POST("/login-acls", rbac.RequirePerm(PermManage), m.saveACL)
 	g.PUT("/login-acls/:id", rbac.RequirePerm(PermManage), m.saveACL)
 	g.DELETE("/login-acls/:id", rbac.RequirePerm(PermManage), m.deleteACL)
+	g.GET("/acl-exemptions", rbac.RequirePerm(PermRead), m.listExemptions)
+	g.POST("/acl-exemptions/:id/revoke", rbac.RequirePerm(PermManage), m.revokeExemption)
 	g.GET("/login-logs", rbac.RequirePerm(PermAudit), m.listLoginLogs)
 	// 全局命令记录
 	g.GET("/commands", rbac.RequirePerm(PermAudit), m.listAllCommands)
@@ -175,6 +178,11 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 			Type: SQLApprovalType, Module: "bastion", Description: "堡垒机数据库变更审批（数据库控制台提交的写操作 / 高危 SQL）",
 			CreatePermission: PermConnect, ApproverPermission: "approval:approve", PolicyIndependent: true, Timeout: 6 * time.Minute,
 			Handler: sqlApprovalHandler{m: m}, SanitizePayload: sanitizeSQLPayload,
+		})
+		d.Approval.MustRegister(approval.TypeSpec{
+			Type: LoginApprovalType, Module: "bastion", Description: "堡垒机登录审批（命中需审批的登录 ACL，通过后在免审窗口内可直接连接）",
+			CreatePermission: PermConnect, ApproverPermission: "approval:approve", PolicyIndependent: true,
+			Handler: approval.HandlerFunc(m.approveLoginRequest),
 		})
 		g.GET("/requestable-assets", rbac.RequirePerm(PermRequest), m.listRequestableAssets)
 		g.POST("/access-requests", rbac.RequirePerm(PermRequest), m.createAccessRequest)

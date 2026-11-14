@@ -27,6 +27,8 @@ import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/approval"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/audit"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/auth"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/backup"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/backup/objstore"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/config"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/crypto"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
@@ -46,6 +48,9 @@ func main() {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		cmd, args = args[0], args[1:]
 	}
+	if cmd == "restore" {
+		os.Exit(restoreMain(args))
+	}
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	cfgPath := fs.String("config", os.Getenv("MATRIX_CONFIG"), "path to config.yaml (env MATRIX_CONFIG)")
 	_ = fs.Parse(args)
@@ -57,7 +62,7 @@ func main() {
 		return
 	case "serve", "migrate":
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q (serve|migrate|version)\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q (serve|migrate|restore|version)\n", cmd)
 		os.Exit(2)
 	}
 	if err := run(cmd, *cfgPath); err != nil {
@@ -196,6 +201,23 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 	}
 
 	m := metrics.New()
+	backupRunner := &backup.Runner{
+		DB: pool, DSN: cfg.Database.DSN, Dir: cfg.Backup.Dir, Keep: cfg.Backup.Keep,
+		PgDump: cfg.Backup.PgDump, Log: log.With("component", "backup"),
+	}
+	if oc := cfg.ObjectStore; oc.Enabled() {
+		backupRunner.Store = &objstore.S3{
+			Endpoint: oc.Endpoint, Region: oc.Region, Bucket: oc.Bucket,
+			AccessKey: oc.AccessKey, SecretKey: oc.SecretKey, Prefix: oc.Prefix, PathStyle: oc.PathStyle,
+		}
+	}
+	if cfg.Backup.Enabled {
+		sched, err := backup.ParseCron(cfg.Backup.Schedule)
+		if err != nil {
+			return fmt.Errorf("backup.schedule: %w", err)
+		}
+		backupRunner.Schedule = &sched
+	}
 	deps := &app.Deps{
 		DB: pool, Cfg: cfg, Crypto: cipher, Audit: recorder, Approval: approvalSvc,
 		AITools: tools, AI: aiSvc, Logger: log, RBAC: rbacSvc, Settings: settingsSvc,
@@ -204,7 +226,7 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 	engine := server.New(deps, server.Core{
 		Auth: authSvc, Limiter: auth.NewRateLimiter(cfg.Auth.LoginRatePerMinute), RBAC: rbacSvc,
 		Users: usersSvc, Settings: settingsSvc, AuditDB: auditStore, Audit: recorder,
-		Approval: approvalSvc, AI: aiSvc, Metrics: m,
+		Approval: approvalSvc, AI: aiSvc, Metrics: m, Backup: backupRunner,
 	}, withLoggers(mods, log))
 
 	// Background workers.
@@ -218,6 +240,7 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 		}
 	}
 	go purgeSessions(ctx, authRepo, log)
+	go backupRunner.Start(ctx)
 	go purgeByRetention(ctx, pool, settingsSvc, log.With("component", "retention"))
 
 	srv := &http.Server{
