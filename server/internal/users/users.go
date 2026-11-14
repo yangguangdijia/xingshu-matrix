@@ -270,7 +270,7 @@ func (s *Service) SetRoles(ctx context.Context, id int64, roleIDs []int64) (*Use
 func ensureAdminRemains(ctx context.Context, tx pgx.Tx) error {
 	var n int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM users u JOIN user_roles ur ON ur.user_id=u.id
-		JOIN roles r ON r.id=ur.role_id WHERE r.code='admin' AND u.status='active'`).Scan(&n); err != nil {
+		JOIN roles r ON r.id=ur.role_id WHERE r.code='admin' AND u.status='active' AND u.account_type='human'`).Scan(&n); err != nil {
 		return err
 	}
 	if n == 0 {
@@ -315,6 +315,13 @@ func (s *Service) ResetPassword(ctx context.Context, id int64, password string) 
 	u, err := s.Get(ctx, id)
 	if err != nil {
 		return "", err
+	}
+	var accountType string
+	if err := s.DB.QueryRow(ctx, `SELECT account_type FROM users WHERE id=$1`, id).Scan(&accountType); err != nil {
+		return "", err
+	}
+	if accountType == "service" {
+		return "", httpx.BadRequest("服务账号不能设置密码")
 	}
 	generated := ""
 	if password == "" {
@@ -403,6 +410,7 @@ func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 	read, manage := rbac.RequirePerm("user:read"), rbac.RequirePerm("user:manage")
 	s.registerDepartments(r, read, manage)
 	s.registerUserGroups(r, read, manage)
+	s.registerMFAAdmin(r, read, manage)
 
 	r.GET("/users", read, func(c *gin.Context) {
 		p := httpx.ParsePage(c)

@@ -67,10 +67,10 @@ type RedisConfig struct {
 }
 
 type AuthConfig struct {
-	JWTSecret            string        `yaml:"jwt_secret"`
+	JWTSecret string `yaml:"jwt_secret"`
 	// JWTPreviousSecrets 是轮换前的旧签名密钥：只用于验签（宽限期内的旧令牌仍有效），
 	// 新令牌始终用 JWTSecret 签发。环境变量 MATRIX_JWT_PREVIOUS_SECRETS，逗号分隔。
-	JWTPreviousSecrets []string `yaml:"jwt_previous_secrets"`
+	JWTPreviousSecrets   []string      `yaml:"jwt_previous_secrets"`
 	Issuer               string        `yaml:"issuer"`
 	AccessTTL            time.Duration `yaml:"access_ttl"`
 	RefreshTTL           time.Duration `yaml:"refresh_ttl"`

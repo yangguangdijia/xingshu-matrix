@@ -441,7 +441,7 @@ func (m *Module) expireLocalSilence(c *gin.Context) {
 		return
 	}
 	if (s.Env == "*" && !unrestricted(p)) || (s.Env != "*" && !p.CanEnv(s.Env)) {
-		httpx.Fail(c, httpx.Forbidden("无权操作该环境：" + s.Env))
+		httpx.Fail(c, httpx.Forbidden("无权操作该环境："+s.Env))
 		return
 	}
 	if s.Status != "active" && s.Status != "scheduled" && s.Status != "pending_approval" {

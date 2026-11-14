@@ -41,20 +41,20 @@ func redactCICDText(value string) string {
 
 // Run is one execution of a pipeline.
 type Run struct {
-	ID            int64       `json:"id"`
-	PipelineID    int64       `json:"pipeline_id"`
-	AppID         int64       `json:"app_id"`
-	Status        string      `json:"status"`
-	Trigger       string      `json:"trigger"`
-	TriggeredByID int64       `json:"triggered_by_id"`
-	TriggeredBy   string      `json:"triggered_by"`
-	Branch        string      `json:"branch"`
-	Commit        string      `json:"commit"`
-	ImageTag      string      `json:"image_tag"`
-	Error         string      `json:"error"`
-	CreatedAt     time.Time   `json:"created_at"`
-	StartedAt     *time.Time  `json:"started_at"`
-	FinishedAt    *time.Time  `json:"finished_at"`
+	ID            int64        `json:"id"`
+	PipelineID    int64        `json:"pipeline_id"`
+	AppID         int64        `json:"app_id"`
+	Status        string       `json:"status"`
+	Trigger       string       `json:"trigger"`
+	TriggeredByID int64        `json:"triggered_by_id"`
+	TriggeredBy   string       `json:"triggered_by"`
+	Branch        string       `json:"branch"`
+	Commit        string       `json:"commit"`
+	ImageTag      string       `json:"image_tag"`
+	Error         string       `json:"error"`
+	CreatedAt     time.Time    `json:"created_at"`
+	StartedAt     *time.Time   `json:"started_at"`
+	FinishedAt    *time.Time   `json:"finished_at"`
 	Cache         *RunCache    `json:"cache"` // build cache used by this run; null = not used
 	Stages        []*RunStage  `json:"stages,omitempty"`
 	Scans         []*ImageScan `json:"scans,omitempty"` // image scan results (detail only)

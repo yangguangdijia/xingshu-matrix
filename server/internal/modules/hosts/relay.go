@@ -76,10 +76,10 @@ func (o agentOwner) usable() bool { return o.Fresh && o.SessionID != "" }
 
 // ownerRegistry records which replica owns each host agent connection.
 type ownerRegistry interface {
-	claim(ctx context.Context, hostID int64, o agentOwner) error              // upsert; newest claim wins
-	renew(ctx context.Context, hostID int64, sessionID string) error          // errSuperseded when not current
+	claim(ctx context.Context, hostID int64, o agentOwner) error               // upsert; newest claim wins
+	renew(ctx context.Context, hostID int64, sessionID string) error           // errSuperseded when not current
 	release(ctx context.Context, hostID int64, sessionID string) (bool, error) // true when this session was current
-	lookup(ctx context.Context, hostID int64) (agentOwner, error)             // errOffline when none
+	lookup(ctx context.Context, hostID int64) (agentOwner, error)              // errOffline when none
 }
 
 // relayConfig enables cross-replica routing on a Hub.

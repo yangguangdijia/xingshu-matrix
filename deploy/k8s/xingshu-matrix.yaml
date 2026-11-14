@@ -20,12 +20,33 @@ spec:
       containers:
         - name: web
           image: ghcr.io/yangguangdijia/xingshu-matrix:latest
-          ports: [{ containerPort: 80 }]
+          # The image (root Dockerfile) runs matrix-server on :8080; /metrics on :9090.
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: metrics, containerPort: 9090 }
+          env:
+            - name: MATRIX_LISTEN
+              value: ":8080"
+            - name: MATRIX_METRICS_ADDR
+              value: ":9090"
+            # Lets replicas relay requests to the replica holding a cluster agent tunnel.
+            - name: MATRIX_POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { cpu: "1", memory: 768Mi }
-          readinessProbe: { httpGet: { path: /healthz, port: 80 }, periodSeconds: 10 }
-          livenessProbe: { httpGet: { path: /healthz, port: 80 }, periodSeconds: 20 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /livez, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service
@@ -34,7 +55,9 @@ metadata:
   namespace: xingshu-system
 spec:
   selector: { app: xingshu-matrix }
-  ports: [{ port: 80, targetPort: 80 }]
+  ports:
+    - { name: http, port: 80, targetPort: http }
+    - { name: metrics, port: 9090, targetPort: metrics }
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

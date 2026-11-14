@@ -68,7 +68,9 @@ func (s *Service) id() (*identity, error) {
 // API tokens
 
 // IsAPIToken reports whether tok looks like a platform API token.
-func IsAPIToken(tok string) bool { return strings.HasPrefix(tok, APITokenPrefix) && len(tok) > apiTokenDisplayLen }
+func IsAPIToken(tok string) bool {
+	return strings.HasPrefix(tok, APITokenPrefix) && len(tok) > apiTokenDisplayLen
+}
 
 // NewAPITokenSecret returns a new plaintext token and its digest.
 func NewAPITokenSecret() (token, hash string) {

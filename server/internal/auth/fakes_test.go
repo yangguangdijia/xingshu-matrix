@@ -137,8 +137,8 @@ func (r *fakeRepo) RevokeUserSessions(_ context.Context, uid int64, except strin
 }
 
 func (r *fakeRepo) ListUserSessions(context.Context, int64) ([]Session, error) { return nil, nil }
-func (r *fakeRepo) CountUsers(context.Context) (int64, error)                { return int64(len(r.users)), nil }
-func (r *fakeRepo) CreateBuiltinAdmin(context.Context, string) error         { return nil }
+func (r *fakeRepo) CountUsers(context.Context) (int64, error)                  { return int64(len(r.users)), nil }
+func (r *fakeRepo) CreateBuiltinAdmin(context.Context, string) error           { return nil }
 
 // ---- fake AccessResolver ----
 

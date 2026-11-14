@@ -194,7 +194,9 @@ spec:
           # Offline OCI image built from the current workspace for the 2026-10-28 rollout.
           image: docker.io/xingshu/matrix-server:v1.28
           imagePullPolicy: IfNotPresent
-          ports: [{ name: http, containerPort: 8080 }]
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: metrics, containerPort: 9090 }
           env:
             # 必须排在 MATRIX_DB_DSN 之前，$(POSTGRES_PASSWORD) 才会被展开
             - name: POSTGRES_PASSWORD
@@ -215,6 +217,10 @@ spec:
               value: "10.0.0.0/8,192.168.0.0/16,172.16.0.0/12"
             - name: MATRIX_LOG_LEVEL
               value: info
+            # /metrics on a separate port (not exposed via Ingress/NodePort).
+            # Optionally also set MATRIX_METRICS_TOKEN (Bearer) from a Secret.
+            - name: MATRIX_METRICS_ADDR
+              value: ":9090"
             - name: POD_NAMESPACE
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
             # Lets replicas relay requests to the replica holding a cluster agent tunnel.
@@ -232,15 +238,19 @@ spec:
               valueFrom: { secretKeyRef: { name: matrix-secrets, key: MATRIX_ENCRYPTION_KEY } }
             - name: MATRIX_ADMIN_INITIAL_PASSWORD
               valueFrom: { secretKeyRef: { name: matrix-secrets, key: MATRIX_ADMIN_INITIAL_PASSWORD } }
+          # /readyz returns 503 until dependencies (DB, ...) are ready -> pulled from Service.
           readinessProbe:
-            httpGet: { path: /healthz, port: http }
+            httpGet: { path: /readyz, port: http }
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 3
             failureThreshold: 6
+          # /livez only checks the process; never restart on dependency outages.
           livenessProbe:
-            httpGet: { path: /healthz, port: http }
+            httpGet: { path: /livez, port: http }
             initialDelaySeconds: 30
             periodSeconds: 20
+            timeoutSeconds: 3
             failureThreshold: 3
           resources:
             requests: { cpu: 100m, memory: 256Mi }
@@ -258,7 +268,9 @@ metadata:
   namespace: xingshu-system
 spec:
   selector: { app: xingshu-matrix }
-  ports: [{ name: http, port: 80, targetPort: http }]
+  ports:
+    - { name: http, port: 80, targetPort: http }
+    - { name: metrics, port: 9090, targetPort: metrics }
 ---
 apiVersion: v1
 kind: Service

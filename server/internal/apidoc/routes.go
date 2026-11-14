@@ -34,14 +34,14 @@ type Access struct {
 
 // Route is one documented endpoint.
 type Route struct {
-	Method      string `json:"method"`
-	GinPath     string `json:"gin_path"`
-	Path        string `json:"path"` // OpenAPI form: {id}
-	Tag         string `json:"tag"`
-	OperationID string `json:"operation_id"`
-	Handler     string `json:"handler"`
+	Method      string   `json:"method"`
+	GinPath     string   `json:"gin_path"`
+	Path        string   `json:"path"` // OpenAPI form: {id}
+	Tag         string   `json:"tag"`
+	OperationID string   `json:"operation_id"`
+	Handler     string   `json:"handler"`
 	Params      []string `json:"params,omitempty"`
-	Access      Access `json:"access"`
+	Access      Access   `json:"access"`
 }
 
 // publicWhitelist is used only when handler chains cannot be read (gin

@@ -49,9 +49,9 @@ type agentConn struct {
 	hostID    int64
 	sessionID string
 	ws        *websocket.Conn
-	send   chan []byte
-	done   chan struct{}
-	once   sync.Once
+	send      chan []byte
+	done      chan struct{}
+	once      sync.Once
 }
 
 func (c *agentConn) close() { c.once.Do(func() { close(c.done); _ = c.ws.Close() }) }

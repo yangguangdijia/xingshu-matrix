@@ -1115,10 +1115,10 @@ type SilenceInput struct {
 	Datasource int64             `json:"datasource" binding:"required"`
 	ClusterID  flexibleClusterID `json:"cluster_id,omitempty"`
 	Matchers   []SilenceMatcher  `json:"matchers" binding:"required,min=1"`
-	StartsAt string `json:"startsAt"`
-	EndsAt   string `json:"endsAt"`
-	Duration string `json:"duration"` // alternative to endsAt, e.g. "2h"
-	Comment  string `json:"comment" binding:"required"`
+	StartsAt   string            `json:"startsAt"`
+	EndsAt     string            `json:"endsAt"`
+	Duration   string            `json:"duration"` // alternative to endsAt, e.g. "2h"
+	Comment    string            `json:"comment" binding:"required"`
 }
 
 func (c *client) ListSilences(ctx context.Context, filter []string) (any, error) {

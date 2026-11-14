@@ -113,6 +113,15 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	si.POST("", rbac.RequirePerm(PermSilence), m.createSilence)
 	si.DELETE("/:sid", rbac.RequirePerm(PermSilence), m.deleteSilence)
 
+	// 平台本地静默（只作用于平台自身通知）与静默策略。
+	ls := g.Group("/local-silences")
+	ls.GET("", rbac.RequirePerm(PermAlertRead), m.listLocalSilences)
+	ls.POST("", rbac.RequirePerm(PermSilence), m.createLocalSilence)
+	ls.POST("/:id/expire", rbac.RequirePerm(PermSilence), m.expireLocalSilence)
+	g.GET("/silence-policy", rbac.RequirePerm(PermAlertRead), m.getSilencePolicy)
+	g.PUT("/silence-policy", rbac.RequirePerm(PermNotify), m.putSilencePolicy)
+	m.registerSilenceApproval() // 依赖 m.d（已在函数开头赋值）
+
 	tr := g.Group("/traces")
 	tr.GET("/services", rbac.RequirePerm(PermTraceRead), m.traceServices)
 	tr.GET("/search", rbac.RequirePerm(PermTraceRead), m.traceSearch)

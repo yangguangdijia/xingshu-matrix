@@ -418,6 +418,25 @@
     return socket;
   };
 
+  XS.wsTicket = function () {
+    return XS.api("/auth/ws-ticket", { method: "POST" }).then(function (data) {
+      var ticket = data && data.ticket;
+      if (!ticket) throw new ApiError("WebSocket 票据为空", 0, 0, data);
+      return ticket;
+    });
+  };
+
+  XS.wsConnect = function (path) {
+    return XS.wsTicket().then(function (ticket) {
+      var proto = location.protocol === "https:" ? "wss:" : "ws:";
+      var b = XS.base.replace(/^https?:/, proto);
+      var p = path.charAt(0) === "/" ? path : "/" + path;
+      return new WebSocket(b + p + (p.indexOf("?") >= 0 ? "&" : "?") + "ticket=" + encodeURIComponent(ticket));
+    }, function () {
+      return XS.ws(path);
+    });
+  };
+
   XS.online = function () { return navigator.onLine !== false; };
 
   // Session restoration belongs to the application bootstrap. Keeping ready to
