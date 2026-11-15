@@ -1130,6 +1130,72 @@
 }
 ```
 
+### 审计完整性
+
+审计记录写入时按 id 顺序串成哈希链：`hash = SHA-256("xsaudit/v1\n" + 规范化 JSON 数组[id, prev_hash, created_at, user_id, username, ip, method, path, resource, resource_id, action, status_code, result, duration_ms, request_id, user_agent, detail])`，规范化细节见 `server/internal/audit/chain.go` 的 `CanonicalHash`（detail 对象键排序、created_at 为 UTC 微秒 `2006-01-02T15:04:05.000000Z`）。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/audit/chain/verify` | `audit:read` | 在线校验链（`from_id`、`limit` 1–50000，默认 10000） |
+| GET | `/audit/export` | `audit:export` | 按时间段流式导出，含 `prev_hash`/`hash`，可离线校验 |
+| POST | `/audit/archive` | `audit:manage` | 把时间段导出为 `jsonl.gz` 写入对象存储（未配置时写本地归档目录） |
+
+`audit:export`、`audit:manage` 需登记在核心权限目录（`rbac.CorePermissions`）后才能授予普通角色；超级管理员（`*`）始终可用。
+
+#### GET /audit/chain/verify
+
+返回 `{checked, ok, break_at, kind, head_id, head_hash, last_id}`。`kind`：`hash_mismatch`（记录内容被改）、`prev_mismatch`（前一条缺失/被删/顺序被改）、`unchained`（记录尚未入链）。`checked == limit` 且 `last_id < head_id` 时，以 `from_id=last_id+1` 继续。只校验 live 段（`start_id` 之前的历史记录不校验）。
+
+#### GET /audit/export
+
+参数：
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `from` | 是 | 开始时间（含），RFC 3339 或 Unix 秒 |
+| `to` | 是 | 结束时间（不含），须晚于 `from`，跨度 ≤ 366 天 |
+| `format` | 否 | `jsonl`（默认）或 `csv` |
+
+- 范围语义：取 `created_at ∈ [from, to)` 的最小与最大 id，导出这两个 id 之间的**连续 id 区间**（按 id 升序），保证区间内链条不断开；因 `created_at` 取请求开始时间，区间可能带有少量时间略在边界外的记录。
+- 响应为文件流（非 JSON 信封）：`Content-Type: application/x-ndjson` 或 `text/csv`，`Content-Disposition: attachment; filename="audit-<from>-<to>.<format>"`，`Cache-Control: no-store`。区间内无记录时返回 200 与空内容（CSV 仅表头）。
+- JSONL 每行一条：`id, created_at, user_id, username, ip, method, path, resource, resource_id, action, status_code, result, duration_ms, request_id, user_agent, detail, prev_hash, hash`。字段值原样输出（不做 HTML 转义），可直接重算哈希。
+- CSV：UTF-8 带 BOM，表头同上；`detail` 为紧凑 JSON 文本；以 `= + - @ TAB CR` 开头的文本单元格前加 `'` 防止表格公式注入，因此**离线校验请使用 JSONL**。
+- 流式输出中途出错时（响应头已发出），JSONL 末尾追加一行 `{"error":"export interrupted"}`，CSV 末尾追加一行 `#export interrupted`；拿到这行即说明文件不完整。
+- 导出本身写一条审计（GET 不经中间件，由接口显式写入）：`resource=audit, resource_id=export, action=export`，`detail.data` 含 `from/to/format/rows/first_id/last_id/complete`，中断时 `result=failure`。
+- 错误：`40001` 参数缺失 / 时间格式错误 / `to` 不晚于 `from` / 跨度超 366 天 / `format` 非法；`40100`、`40300`。
+
+离线校验：逐行解析（Go 可用 `audit.ParseExportRow`），以第一行的 `prev_hash` 为锚点依次检查 `prev_hash == 上一行 hash` 且 `CanonicalHash(prev_hash, 行) == hash`（即 `audit.VerifyRows`）。区间内若含未入链（`hash` 为空）的历史记录，会在该行报 `unchained`。
+
+#### POST /audit/archive
+
+请求：`{"from": "2026-10-01T00:00:00+08:00", "to": "2026-11-01T00:00:00+08:00"}`（规则同导出）。
+
+响应 `data`：
+
+```json
+{
+  "file": "audit-20260930T160000Z-20261031T160000Z-1201-58830-1763100000.jsonl.gz",
+  "storage": "local",
+  "location": "/var/lib/matrix/archive/audit/audit-20260930T160000Z-20261031T160000Z-1201-58830-1763100000.jsonl.gz",
+  "rows": 57630,
+  "first_id": 1201,
+  "last_id": 58830,
+  "last_hash": "9f2c…",
+  "size": 1843321,
+  "sha256": "5be1…",
+  "from": "2026-09-30T16:00:00Z",
+  "to": "2026-10-31T16:00:00Z"
+}
+```
+
+- 内容与 JSONL 导出一致，gzip 压缩；`sha256`/`size` 针对 `.jsonl.gz` 文件本身。
+- 存放：配置了对象存储（`object_store`，与平台备份共用）时写入 `<prefix>/audit/<file>`，`storage=s3`；否则写入 `archive.dir`（默认 `/var/lib/matrix/archive`）下 `audit/<file>`，`storage=local`。
+- 归档**不删除**数据库中的记录。同一时刻只允许一个归档任务。
+- 审计：由审计中间件记录，`resource=audit, resource_id=archive, action=archive`，成功时 `detail.data` 为上面的结果。
+- 错误：`40001`（参数 / 时间段内无记录）、`40900`（已有归档在进行）、`50000`（读取或写入存储失败，未写入任何对象）。
+
+未验证项：大时间段（百万级记录）的导出/归档耗时与反向代理超时；对象存储真实写入（单测仅用内存与本地目录）；归档在请求内同步执行，客户端断开会中止归档。
+
 ---
 
 ## 8. 审批
@@ -1879,3 +1945,87 @@ matrix_build_info{commit="unknown",version="dev"} 1
 matrix_http_requests_total{method="DELETE",route="/api/v1/roles/:id",status="200"} 1
 matrix_http_request_duration_seconds_bucket{method="DELETE",route="/api/v1/ai/models/:id",le="0.005"} 1
 ```
+
+## 11. 平台备份
+
+实现：`server/internal/backup`（`api.go`、`runner.go`、`premigrate.go`、`policy.go`）。备份为 PostgreSQL `pg_dump --format=custom` 导出，记录在 `platform_backups` 表（迁移 `core/0011_audit_chain`）。前端：系统设置 →「平台备份」（`public/xs-platform-backup.js`，`window.XSPlatformBackup.render(el)`）。
+
+> 本节示例为按代码整理的字段说明，未对运行实例实测（见末尾「未验证项」）。
+
+### 备份记录字段
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int64 | 记录 ID |
+| `kind` | string | `manual`（手动）、`scheduled`（定时）、`pre_migrate`（升级前自动） |
+| `status` | string | `running`、`succeeded`、`failed` |
+| `file` | string | 备份文件名 `xs-<UTC 时间>.dump`，仅成功时有值 |
+| `size` | int64 | 字节数 |
+| `sha256` | string | 文件 SHA-256（十六进制） |
+| `schedule_slot` | string\|null | 定时备份的计划时刻（UTC 分钟），其余为 null |
+| `error` | string | 失败原因（≤2000 字，已脱敏数据库密码） |
+| `created_by` | int64\|null | 发起用户 ID；定时 / 升级前为 null |
+| `created_at` / `finished_at` | RFC 3339 | 开始 / 结束时间 |
+
+### GET /platform/backups
+
+权限 `setting:read`。分页参数 `page`、`page_size`，按 `created_at` 倒序。返回 `{items, total, page, page_size}`。
+
+### POST /platform/backups
+
+权限 `setting:manage`，无请求体。异步开始一次手动备份，HTTP **202**，`message: "备份已开始"`，`data` 为刚插入的 `running` 记录。写审计（resource `platform_backup`，action `create`）。
+
+| HTTP / code | 场景 |
+|---|---|
+| 409 / 40900 | 本实例已有备份在进行（`已有平台备份正在进行，请稍后再试`） |
+| 503 / 50300 | 服务器缺少 `pg_dump`、数据库连接串无效或登记记录失败（中文原因见 `message`） |
+
+### GET /platform/backups/:id/download
+
+权限 `setting:manage`。成功时直接返回文件流：`Content-Type: application/octet-stream`、`Content-Disposition: attachment; filename="<file>"`、`X-Content-SHA256`、`Cache-Control: no-store`。无论成败都写审计（action `download`，detail 含 file / sha256 / size / 实际发送字节数）。前端以 `Authorization` 头下载（不把令牌放进 URL），≤512 MiB 的文件在浏览器内复核 SHA-256。
+
+| HTTP / code | 场景 |
+|---|---|
+| 400 / 40000 | id 非法 |
+| 404 / 40400 | 记录不存在（`备份不存在`）或文件已被清理（`备份文件已不存在`） |
+| 409 / 40900 | 备份未成功完成 |
+
+### GET /platform/backup-policy
+
+权限 `setting:read`。只读返回当前生效的备份策略（来自部署配置 `backup.*` / `MATRIX_BACKUP_*`，运行时不可修改）：
+
+| 字段 | 说明 |
+|---|---|
+| `schedule_enabled` | 是否开启定时备份（`backup.enabled`） |
+| `schedule` | 5 段 cron（服务器时区），未开启时为空串 |
+| `keep` | 保留最近 N 份**成功的定时备份**；手动与升级前备份不自动清理 |
+| `before_migrate` | 是否在数据库迁移前自动备份 |
+| `before_migrate_on_failure` | `abort`（默认，备份失败中止迁移）或 `warn`（仅告警继续迁移） |
+| `storage` | `local`（服务器备份目录）或 `s3`（对象存储） |
+| `online_restore` | 是否支持在线恢复；当前恒为 `false` |
+
+### 恢复
+
+当前只支持离线恢复：停止平台服务后在服务器上执行 `matrix-server restore --file <备份文件> --yes`（会先打印 SHA-256 供核对，再以 `pg_restore --clean --if-exists --no-owner` 覆盖数据库）。控制台在 `online_restore=false` 时只显示离线恢复说明，不显示「恢复」按钮。
+
+前端已预留在线恢复流程（`online_restore=true` 时显示）：输入「恢复」二字二次确认后调用 `POST /platform/backups/:id/restore`，请求体 `{"confirm":"恢复"}`。**该接口后端尚未实现**。
+
+### 迁移前自动备份（pre_migrate）
+
+`store.MigrateWith(ctx, pool, log, store.MigrateOptions{BeforeApply: backup.PreMigrateHook(runner)}, sources...)`：迁移器在持有迁移锁、校验完全部已执行迁移的校验和之后，若存在待执行迁移，先调用一次 `BeforeApply(pending)`（`pending` 形如 `core/0012_jobs`），再逐个执行。`store.Migrate` 签名与行为不变（不带回调）。
+
+| 情况 | 行为 |
+|---|---|
+| `MATRIX_BACKUP_BEFORE_MIGRATE=false`（`backup.before_migrate: false`） | 跳过 |
+| 无待执行迁移 | 不调用回调，不备份 |
+| 全新数据库（`schema_migrations` 无记录） | 跳过 |
+| 已有 `platform_backups` 表 | `Runner.Run(pre_migrate)`，记录可在列表中看到 |
+| 升级自 0011 之前（表不存在） | 仍执行 pg_dump 并保存文件（本地目录 / 对象存储），但不登记记录 |
+| 备份失败（默认） | 中止迁移，返回中文错误：`迁移前自动备份失败，已中止数据库迁移（待执行 N 项迁移：…）：<原因>。…` |
+| 备份失败且 `MATRIX_BACKUP_BEFORE_MIGRATE_ON_FAILURE=warn` | 记录告警日志后继续迁移 |
+
+### 未验证项
+
+- 未在运行实例上实测上述接口（`/platform/backup-policy` 为本轮新增，需主代理按补丁接线后部署）。
+- 迁移前备份未在真实 PostgreSQL 上跑通（单测覆盖决策逻辑；`pg_dump` 调用沿用 Runner 已有实现）。
+- 浏览器下载大文件时整份读入内存（Blob）；超大备份建议在服务器上直接取文件。

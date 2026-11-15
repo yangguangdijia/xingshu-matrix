@@ -1,0 +1,306 @@
+# 星枢 Matrix 日志采集：Fluent Bit DaemonSet
+#
+# - 采集每个节点 /var/log/containers/*.log（CRI 与 Docker 两种格式均可解析）
+# - kubernetes 过滤器补充 namespace / pod / container / labels 元数据
+# - 默认输出到 Loki（http://loki.xingshu-logging:3100），与平台日志页默认选择器 {job="fluent-bit"} 匹配
+# - 每条日志带 cluster=<平台集群名> 标签/字段；多个集群共用一个 Loki/ES 时，平台按该标签区分集群
+#
+# 部署前必改：DaemonSet 环境变量 CLUSTER_NAME，填平台「集群」列表中该集群的名称。
+# 切换到 Elasticsearch：见 ConfigMap 中 fluent-bit.conf 末尾的 @INCLUDE 注释。
+# 部署说明：docs/deploy-logging.md
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xingshu-logging
+  labels:
+    app.kubernetes.io/part-of: xingshu-logging
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: xingshu-logging
+  labels:
+    app.kubernetes.io/name: fluent-bit
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: xingshu-fluent-bit
+  labels:
+    app.kubernetes.io/name: fluent-bit
+rules:
+  # kubernetes 过滤器只需读取 Pod 与命名空间元数据
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: xingshu-fluent-bit
+  labels:
+    app.kubernetes.io/name: fluent-bit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: xingshu-fluent-bit
+subjects:
+  - kind: ServiceAccount
+    name: fluent-bit
+    namespace: xingshu-logging
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: xingshu-logging
+  labels:
+    app.kubernetes.io/name: fluent-bit
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush                     2
+        Grace                     5
+        Log_Level                 info
+        Daemon                    off
+        Parsers_File              /fluent-bit/etc/parsers.conf
+        HTTP_Server               On
+        HTTP_Listen               0.0.0.0
+        HTTP_Port                 2020
+        Health_Check              On
+        HC_Errors_Count           5
+        HC_Retry_Failure_Count    5
+        HC_Period                 60
+        # 后端短暂不可用时把待发送数据缓存到节点磁盘（不是只读的状态目录）
+        storage.path              /var/fluent-bit/state/flb-storage/
+        storage.sync              normal
+        storage.backlog.mem_limit 16M
+        storage.max_chunks_up     64
+
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        # 不采集本采集器自身的日志，避免后端故障时日志自我放大
+        Exclude_Path      /var/log/containers/fluent-bit-*_xingshu-logging_*.log
+        multiline.parser  cri, docker
+        DB                /var/fluent-bit/state/tail-containers.db
+        DB.locking        true
+        Mem_Buf_Limit     32MB
+        Buffer_Max_Size   1MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+        Rotate_Wait       30
+        storage.type      filesystem
+
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           Off
+        Keep_Log            On
+        Labels              On
+        Annotations         Off
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude On
+        Buffer_Size         256k
+
+    # 给每条记录加上集群与节点（Elasticsearch 按 cluster 字段区分集群；Loki 输出改用标签并移除这两个字段）
+    [FILTER]
+        Name   modify
+        Match  kube.*
+        Add    cluster   ${CLUSTER_NAME}
+        Add    node_name ${NODE_NAME}
+
+    # ===== 输出：二选一 =====
+    # 默认 Loki。改用 Elasticsearch：注释掉下一行，取消注释再下一行，然后重启 DaemonSet。
+    @INCLUDE output-loki.conf
+    # @INCLUDE output-elasticsearch.conf
+
+  output-loki.conf: |
+    # Loki 输出（默认）。标签 job=fluent-bit 对应平台日志页默认选择器 {job="fluent-bit"}；
+    # cluster 对应平台中央数据源默认的集群标签名 cluster。
+    [OUTPUT]
+        Name                   loki
+        Match                  kube.*
+        Host                   ${LOKI_HOST}
+        Port                   ${LOKI_PORT}
+        Uri                    /loki/api/v1/push
+        labels                 job=fluent-bit, cluster=${CLUSTER_NAME}, node_name=${NODE_NAME}, namespace=$kubernetes['namespace_name'], pod=$kubernetes['pod_name'], container=$kubernetes['container_name']
+        # 标签已承载的字段从日志正文里去掉，正文只保留原始日志行
+        remove_keys            kubernetes, stream, _p, time, cluster, node_name
+        line_format            json
+        drop_single_key        raw
+        # 多租户 Loki 时取消注释并填写租户，同时在平台数据源中填写相同的「组织 ID」
+        # tenant_id            xingshu
+        # 需要认证时在 Secret 中提供并取消注释（不要把口令写进本文件）
+        # http_user            ${LOKI_USER}
+        # http_passwd          ${LOKI_PASSWORD}
+        Retry_Limit            10
+        storage.total_limit_size 512M
+
+  output-elasticsearch.conf: |
+    # Elasticsearch 输出（可选）。索引按天滚动：logs-YYYY.MM.DD，平台数据源索引填 logs-*，时间字段 @timestamp。
+    [OUTPUT]
+        Name                es
+        Match               kube.*
+        Host                ${ES_HOST}
+        Port                ${ES_PORT}
+        Logstash_Format     On
+        Logstash_Prefix     logs
+        Time_Key            @timestamp
+        Replace_Dots        On
+        Suppress_Type_Name  On
+        Trace_Error         On
+        # 需要认证时由 Secret xingshu-logging-es 注入环境变量，然后取消注释
+        # HTTP_User         ${ES_USER}
+        # HTTP_Passwd       ${ES_PASSWORD}
+        # 使用 HTTPS 时取消注释
+        # tls               On
+        # tls.verify        On
+        Retry_Limit         10
+        storage.total_limit_size 512M
+
+  parsers.conf: |
+    # 业务可通过 Pod 注解 fluentbit.io/parser: json 指定解析器
+    [PARSER]
+        Name        json
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+        Time_Keep   On
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: xingshu-logging
+  labels:
+    app.kubernetes.io/name: fluent-bit
+    app.kubernetes.io/part-of: xingshu-logging
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fluent-bit
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fluent-bit
+        app.kubernetes.io/part-of: xingshu-logging
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "2020"
+        prometheus.io/path: /api/v2/metrics/prometheus
+    spec:
+      serviceAccountName: fluent-bit
+      terminationGracePeriodSeconds: 30
+      # 容忍所有污点：控制面、专用节点等都要采集
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: fluent-bit
+          # 固定版本，升级时改这里并在测试集群先验证
+          image: fluent/fluent-bit:3.2.10
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config=/fluent-bit/etc/fluent-bit.conf
+          env:
+            - name: CLUSTER_NAME
+              # 必改：平台「集群」列表中的集群名称
+              value: "change-me"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LOKI_HOST
+              value: loki.xingshu-logging
+            - name: LOKI_PORT
+              value: "3100"
+            - name: ES_HOST
+              value: elasticsearch.xingshu-logging
+            - name: ES_PORT
+              value: "9200"
+            # 后端认证（可选）：先创建 Secret（见部署文档），Secret 不存在时这些变量为空、不影响启动
+            - name: LOKI_USER
+              valueFrom:
+                secretKeyRef: { name: xingshu-logging-loki, key: username, optional: true }
+            - name: LOKI_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: xingshu-logging-loki, key: password, optional: true }
+            - name: ES_USER
+              valueFrom:
+                secretKeyRef: { name: xingshu-logging-es, key: username, optional: true }
+            - name: ES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: xingshu-logging-es, key: password, optional: true }
+          ports:
+            - name: http
+              containerPort: 2020
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /api/v1/health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            # 读取节点上 root 所有的日志文件需要 root 用户；不提权、不加能力、根文件系统只读
+            runAsUser: 0
+            runAsNonRoot: false
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc/
+              readOnly: true
+            # 节点日志只读挂载：/var/log/containers 是指向 /var/log/pods 的软链接，整体挂 /var/log
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            # Docker 运行时下软链接最终指向这里（containerd/k3s 节点上该目录为空也无妨）
+            - name: dockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            # 唯一可写目录：读取位置记录与磁盘缓冲，重建 Pod 后不重复采集
+            - name: state
+              mountPath: /var/fluent-bit/state
+      volumes:
+        - name: config
+          configMap:
+            name: fluent-bit-config
+        - name: varlog
+          hostPath:
+            path: /var/log
+            type: Directory
+        - name: dockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+            type: DirectoryOrCreate
+        - name: state
+          hostPath:
+            path: /var/lib/xingshu-fluent-bit
+            type: DirectoryOrCreate

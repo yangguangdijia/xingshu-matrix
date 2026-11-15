@@ -90,6 +90,15 @@ type Runner struct {
 	// Now is the clock (tests); default time.Now.
 	Now func() time.Time
 
+	// ScheduleSpec is the cron text behind Schedule (shown by the policy API).
+	ScheduleSpec string
+	// BeforeMigrate enables the pre_migrate snapshot (config backup.before_migrate,
+	// MATRIX_BACKUP_BEFORE_MIGRATE); see PreMigrateHook.
+	BeforeMigrate bool
+	// PreMigrateWarnOnly makes a failed pre_migrate snapshot a warning instead
+	// of aborting the migration (MATRIX_BACKUP_BEFORE_MIGRATE_ON_FAILURE=warn).
+	PreMigrateWarnOnly bool
+
 	mu sync.Mutex
 }
 

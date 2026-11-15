@@ -37,7 +37,12 @@ type APIDeps struct {
 //	GET  /platform/backups               list (paginated)
 //	POST /platform/backups               start a manual backup (202 + row)
 //	GET  /platform/backups/:id/download  stream the dump (audited)
+//	GET  /platform/backup-policy         effective schedule / retention (read-only, from deployment config)
 func RegisterRoutes(r gin.IRoutes, d APIDeps) {
+	r.GET("/platform/backup-policy", rbac.RequirePerm(PermRead), func(c *gin.Context) {
+		httpx.OK(c, d.Runner.Policy())
+	})
+
 	r.GET("/platform/backups", rbac.RequirePerm(PermRead), func(c *gin.Context) {
 		p := httpx.ParsePage(c)
 		items, total, err := d.Runner.List(c.Request.Context(), p.Limit(), p.Offset())

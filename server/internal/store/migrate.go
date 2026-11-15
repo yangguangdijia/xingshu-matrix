@@ -107,10 +107,62 @@ func migrationChecksumMatches(stored string, sql []byte) bool {
 	return false
 }
 
+// MigrateOptions are optional hooks for MigrateWith.
+type MigrateOptions struct {
+	// BeforeApply, when set, is called once with every pending migration
+	// ("module/0007_name") after all sources were checked and before the first
+	// one is applied, while the migration lock is held. It is not called when
+	// nothing is pending. A non-nil error aborts the run without applying anything.
+	BeforeApply func(ctx context.Context, pending []string) error
+}
+
 // Migrate applies pending migrations of all sources in order, each migration in
 // its own transaction, under a PostgreSQL advisory lock so several replicas can
 // start concurrently. Already-applied migrations whose content changed are an error.
 func Migrate(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, sources ...MigrationSource) error {
+	return MigrateWith(ctx, pool, log, MigrateOptions{}, sources...)
+}
+
+// pendingSource is the not-yet-applied part of one source.
+type pendingSource struct {
+	module string
+	migs   []Migration
+}
+
+// planPending returns the migrations of one module that are not in applied
+// (version -> stored checksum), failing when an applied one was modified.
+func planPending(module string, migs []Migration, applied map[int]string) ([]Migration, error) {
+	var out []Migration
+	for _, m := range migs {
+		if sum, ok := applied[m.Version]; ok {
+			if !migrationChecksumMatches(sum, []byte(m.SQL)) {
+				return nil, fmt.Errorf("module %s migration %04d_%s was modified after being applied (checksum mismatch); add a new migration instead", module, m.Version, m.Name)
+			}
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// pendingNames renders the plan as "module/0007_name" in apply order.
+func pendingNames(plan []pendingSource) []string {
+	var names []string
+	for _, p := range plan {
+		for _, m := range p.migs {
+			names = append(names, fmt.Sprintf("%s/%04d_%s", p.module, m.Version, m.Name))
+		}
+	}
+	return names
+}
+
+// MigrateWith is Migrate with optional hooks (see MigrateOptions). All
+// sources are checked first, so a checksum mismatch aborts before BeforeApply
+// runs and before anything is applied.
+func MigrateWith(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, opts MigrateOptions, sources ...MigrationSource) error {
+	if log == nil {
+		log = slog.Default()
+	}
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		return err
@@ -134,6 +186,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, sources 
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
+	var plan []pendingSource
 	for _, src := range sources {
 		migs, err := ParseMigrations(src.FS)
 		if err != nil {
@@ -160,25 +213,37 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, sources 
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		for _, m := range migs {
-			if sum, ok := applied[m.Version]; ok {
-				if !migrationChecksumMatches(sum, []byte(m.SQL)) {
-					return fmt.Errorf("module %s migration %04d_%s was modified after being applied (checksum mismatch); add a new migration instead", src.Module, m.Version, m.Name)
-				}
-				continue
-			}
+		pending, err := planPending(src.Module, migs, applied)
+		if err != nil {
+			return err
+		}
+		if len(pending) > 0 {
+			plan = append(plan, pendingSource{module: src.Module, migs: pending})
+		}
+	}
+	if len(plan) == 0 {
+		return nil
+	}
+	if opts.BeforeApply != nil {
+		if err := opts.BeforeApply(ctx, pendingNames(plan)); err != nil {
+			return err
+		}
+	}
+
+	for _, p := range plan {
+		for _, m := range p.migs {
 			err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 				if _, err := tx.Exec(ctx, m.SQL); err != nil {
 					return err
 				}
 				_, err := tx.Exec(ctx, `INSERT INTO schema_migrations(module, version, name, checksum) VALUES ($1,$2,$3,$4)`,
-					src.Module, m.Version, m.Name, m.Checksum)
+					p.module, m.Version, m.Name, m.Checksum)
 				return err
 			})
 			if err != nil {
-				return fmt.Errorf("module %s migration %04d_%s: %w", src.Module, m.Version, m.Name, err)
+				return fmt.Errorf("module %s migration %04d_%s: %w", p.module, m.Version, m.Name, err)
 			}
-			log.Info("migration applied", "module", src.Module, "version", m.Version, "name", m.Name)
+			log.Info("migration applied", "module", p.module, "version", m.Version, "name", m.Name)
 		}
 	}
 	return nil

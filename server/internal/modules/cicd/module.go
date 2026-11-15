@@ -151,6 +151,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.GET("/applications/:id/releases", read, m.listReleases)
 	g.POST("/applications/:id/deploy", deploy, m.deployHTTP)
 	g.POST("/applications/:id/rollback", deploy, m.rollbackHTTP)
+	m.registerCanary(g, read, deploy)
 
 	g.GET("/pipelines", read, m.listPipelines)
 	g.POST("/pipelines", manage, m.createPipeline)
@@ -189,6 +190,8 @@ func (m *Module) Start(ctx context.Context, d *app.Deps) error {
 	go func() { defer m.wg.Done(); m.dispatch(ctx) }()
 	m.wg.Add(1)
 	go func() { defer m.wg.Done(); m.pruneDeliveriesLoop(ctx) }()
+	m.wg.Add(1)
+	go func() { defer m.wg.Done(); m.canaryLoop(ctx) }()
 	return nil
 }
 

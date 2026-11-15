@@ -9,13 +9,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/backup/objstore"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/rbac"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/store"
 )
 
 // PgStore writes and queries audit_logs.
-type PgStore struct{ DB store.DB }
+type PgStore struct {
+	DB store.DB
+	// Archive receives POST /audit/archive files; nil writes them under
+	// ArchiveDir (DefaultArchiveDir when empty) on the local filesystem.
+	Archive    objstore.Store
+	ArchiveDir string
+}
 
 // WriteBatch appends entries to the live hash chain in one transaction (the
 // live segment is locked once per batch; see WriteChained).
@@ -181,6 +188,7 @@ func (s *PgStore) RegisterRoutes(r *gin.RouterGroup) {
 		httpx.OK(c, httpx.NewPageResult(items, total, p))
 	})
 	r.GET("/audit/chain/verify", rbac.RequirePerm("audit:read"), s.handleChainVerify)
+	newExporter(s).register(r)
 	r.GET("/audit-logs/:id", rbac.RequirePerm("audit:read"), func(c *gin.Context) {
 		id, ok := httpx.ParamID(c, "id")
 		if !ok {

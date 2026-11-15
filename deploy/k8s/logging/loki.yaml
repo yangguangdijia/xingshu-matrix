@@ -1,0 +1,209 @@
+# 星枢 Matrix 日志存储：Loki 单副本（单体模式 -target=all，本地文件系统存储）
+#
+# 适用于单集群或小规模场景；数据保存在 PVC，默认保留 7 天。
+# 集群内访问地址：http://loki.xingshu-logging:3100（Fluent Bit 默认输出与平台数据源都填它）。
+# 依赖 fluent-bit.yaml 中创建的命名空间 xingshu-logging（先 apply fluent-bit.yaml，或一起 apply 整个目录）。
+# 未开启认证（auth_enabled: false），不要通过 Ingress/NodePort 暴露到集群外。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+  namespace: xingshu-logging
+  labels:
+    app.kubernetes.io/name: loki
+data:
+  loki.yaml: |
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9095
+      log_level: info
+
+    common:
+      instance_addr: 127.0.0.1
+      path_prefix: /loki
+      replication_factor: 1
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+      ring:
+        kvstore:
+          store: inmemory
+
+    schema_config:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+    limits_config:
+      retention_period: 168h
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+      ingestion_rate_mb: 8
+      ingestion_burst_size_mb: 16
+      max_query_series: 5000
+      allow_structured_metadata: true
+      volume_enabled: true
+
+    compactor:
+      working_directory: /loki/compactor
+      compaction_interval: 10m
+      retention_enabled: true
+      retention_delete_delay: 2h
+      delete_request_store: filesystem
+
+    query_range:
+      results_cache:
+        cache:
+          embedded_cache:
+            enabled: true
+            max_size_mb: 64
+
+    analytics:
+      reporting_enabled: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  namespace: xingshu-logging
+  labels:
+    app.kubernetes.io/name: loki
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: loki
+  ports:
+    - name: http
+      port: 3100
+      targetPort: http
+      protocol: TCP
+    - name: grpc
+      port: 9095
+      targetPort: grpc
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki-headless
+  namespace: xingshu-logging
+  labels:
+    app.kubernetes.io/name: loki
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: loki
+  ports:
+    - name: http
+      port: 3100
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: loki
+  namespace: xingshu-logging
+  labels:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/part-of: xingshu-logging
+spec:
+  replicas: 1
+  serviceName: loki-headless
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loki
+        app.kubernetes.io/part-of: xingshu-logging
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3100"
+        prometheus.io/path: /metrics
+    spec:
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: loki
+          # 固定版本，升级时改这里并在测试集群先验证（注意 Loki 大版本的配置兼容性）
+          image: grafana/loki:3.4.2
+          imagePullPolicy: IfNotPresent
+          args:
+            - -config.file=/etc/loki/loki.yaml
+            - -target=all
+          ports:
+            - name: http
+              containerPort: 3100
+              protocol: TCP
+            - name: grpc
+              containerPort: 9095
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /ready, port: http }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+              readOnly: true
+            - name: data
+              mountPath: /loki
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: loki-config
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: loki
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # 留空使用集群默认 StorageClass；需要指定时取消注释
+        # storageClassName: local-path
+        resources:
+          requests:
+            storage: 20Gi
