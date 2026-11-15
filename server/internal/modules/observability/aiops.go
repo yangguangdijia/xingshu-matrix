@@ -514,7 +514,8 @@ func (m *Module) setDiagnosisFailed(id int64, message, from string) {
 }
 
 func (m *Module) Start(ctx context.Context, _ *app.Deps) error {
-	m.startNotify(ctx) // 通知中心：故障 / 流水线 / 审批事件采集与发送记录清理
+	m.startNotify(ctx)    // 通知中心：故障 / 流水线 / 审批事件采集与发送记录清理
+	m.startCertWatch(ctx) // 证书到期定时扫描
 	m.wg.Add(2)
 	go func() {
 		defer m.wg.Done()

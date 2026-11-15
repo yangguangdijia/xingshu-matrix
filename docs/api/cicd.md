@@ -174,6 +174,89 @@
 ```
 审批与执行方式同 deploy，发布记录 `kind: rollback`。
 
+## 金丝雀发布
+
+在 Deployment 方式部署的应用环境上，把新镜像先以独立的金丝雀实例上线，通过 ingress-nginx 的 canary 注解按步骤放量，确认后全量替换主版本。实现见 `server/internal/modules/cicd/canary.go`、`canary_store.go`，迁移 `0009_delivery_safety`（建表）与 `0010_canary`（执行字段）。前端：`public/xs-release-canary.js`（`window.XSReleaseCanary.render(el,{appId,env})`、`openCreate(appId,env)`）。
+
+工作方式：发起后平台在主工作负载所在命名空间创建 `<deployment>-canary`（克隆主 Deployment，只换镜像，选择器标签加 `-canary` 后缀避免被主服务选中）、`<service>-canary`（只选金丝雀实例）、`<ingress>-canary`（复制主 Ingress 中指向该服务的规则，注解 `nginx.ingress.kubernetes.io/canary: "true"` 与 `canary-weight`）。全量时把主 Deployment 镜像切到新镜像并等待滚动完成，再删除三个金丝雀资源；回滚时先把权重置 0 再删除资源。平台只操作自己创建（带 `app.kubernetes.io/managed-by=matrix-cicd` 与 `matrix.cicd/canary-id` 标签）的同名对象，同名的外部对象会返回 409。
+
+### GET /cicd/applications/:id/canaries?env=prod — `cicd:read`
+按 id 倒序最多 100 条；`env` 可选。返回 `Canary` 数组（不含 `events`）。
+
+### POST /cicd/applications/:id/canaries — `cicd:deploy`
+```json
+{"env":"prod","image":"harbor.example.com/team/web:v2","service":"web","ingress":"web",
+ "steps":[{"weight":10,"pause_sec":300,"manual":false},{"weight":30,"pause_sec":300,"manual":false},
+          {"weight":50,"pause_sec":0,"manual":true},{"weight":100,"pause_sec":0,"manual":true}],
+ "replicas":1,"auto_promote":false,"reason":"新版本灰度"}
+```
+| 字段 | 说明 |
+|---|---|
+| `env` | 必填，应用已配置的环境；须在调用者的环境范围内（否则 403） |
+| `image` | 必填，≤512 字符，不含空白 |
+| `service` | 必填，主服务名（DNS-1035，≤56 字符，以便生成 `-canary` 名称） |
+| `ingress` | 必填，主路由名（DNS-1123 子域名）；不能本身是金丝雀路由 |
+| `steps` | 可省略（默认 10/30/50/100，前两步各观察 300 秒，后两步人工确认）；最多 20 步；`weight` 1–100 且严格递增；`pause_sec` 0–86400；`manual=true` 的步骤生效后停在 `awaiting_confirm` |
+| `replicas` | 金丝雀实例数，默认 1，范围 1–50 |
+| `auto_promote` | 最后一步（非人工）观察结束后自动全量；为 false 时进入 `awaiting_confirm` 等待全量 |
+| `reason` | ≤2000 字符，写入审批单与时间线 |
+
+- 不需审批：200，返回 `Canary`（`status: starting`），后台创建资源、等待实例就绪后进入第 1 步。
+- 需审批：HTTP 202（`code: 40304`，`data: {"approval_required":true,"ticket":{...}}`），金丝雀记录为 `awaiting_approval`，审批通过后自动启动；审批拒绝 → `rejected`。
+
+### GET /cicd/canaries/:id — `cicd:read`
+返回 `Canary`，附 `events` 时间线：`[{"id":1,"kind":"operator","message":"发起金丝雀发布","data":{...},"actor":"alice","ts":"…"}]`，`kind` 取 `info | step | operator | error`。
+
+`Canary` 字段：`id, app_id, env, target_id, release_id, image, stable_image（启动时读取的主版本镜像）, namespace, deployment, container, service, ingress, canary_deployment, canary_service, canary_ingress, plan{steps,replicas,auto_promote}, status, current_step（从 0 计，未开始为 -1）, weight（当前金丝雀流量百分比）, step_started_at, next_at（progressing 时为自动进入下一阶段的时间）, attempts, message, approval_id, pending_action（start|advance|promote，等待审批中的动作）, reason, created_by, created_at, updated_at, finished_at`。
+
+### POST /cicd/canaries/:id/{advance|promote|pause|resume|rollback} — `cicd:deploy`
+请求体可选 `{"reason":"…"}`（≤2000 字符）。
+
+| 动作 | 允许的状态 | 说明 |
+|---|---|---|
+| `advance` | progressing / awaiting_confirm / paused | 进入下一步并调整权重；已是最后一步返回 409「请执行全量发布」；走审批 |
+| `promote` | progressing / awaiting_confirm / paused | 主版本切到新镜像并清理金丝雀资源，异步执行（`promoting`），生成一条 `kind: canary` 的发布记录；走审批；失败时回到 `awaiting_confirm` 可重试或回滚 |
+| `pause` | progressing / awaiting_confirm | 停止自动推进，权重保持不变；不走审批 |
+| `resume` | paused | 重新进入当前步骤（重新计时）；不走审批 |
+| `rollback` | pending / awaiting_approval / progressing / awaiting_confirm / paused / rolling_back | 权重置 0 并删除金丝雀资源（异步，`rolling_back`，失败自动重试，5 次后 `failed`）；尚未创建资源（pending / awaiting_approval）时直接 `cancelled`；不走审批 |
+
+已有待审批动作时，除 `pause`、`rollback` 外的动作返回 409。审批类型 `cicd.canary`（发起 / 推进 / 全量），审批单超时 30 分钟，审批通过时会重新校验金丝雀状态、步骤与部署目标，不一致则审批单失效。
+
+### 状态
+| 值 | 含义（界面文字） |
+|---|---|
+| `pending` | 待启动 |
+| `awaiting_approval` | 等待审批（仅发起阶段） |
+| `starting` | 启动中：创建金丝雀实例并等待就绪 |
+| `progressing` | 观察中：当前步骤计时，到 `next_at` 自动进入下一步 |
+| `awaiting_confirm` | 等待确认：人工确认步骤已生效，或全部步骤结束且未开启自动全量，或全量失败待重试 |
+| `paused` | 已暂停 |
+| `promoting` | 全量发布中 |
+| `rolling_back` | 回滚中 |
+| `succeeded` | 已全量（结束） |
+| `rolled_back` | 已回滚（结束） |
+| `failed` | 失败（结束；启动失败会尝试清理金丝雀资源） |
+| `rejected` | 审批未通过（结束） |
+| `cancelled` | 已取消（结束） |
+
+服务重启时，`starting` 中的金丝雀会被清理并标记 `failed`（需重新发起）；`promoting` / `rolling_back` 会由后台任务继续执行。
+
+### 错误码
+| HTTP | code | 场景 |
+|---|---|---|
+| 400 | 40001 | 字段缺失或不合法；步骤权重不在 1–100 或未严格递增；观察时长越界；副本数越界；名称过长无法生成 `-canary` 名称；环境不存在 |
+| 403 | 40300 | 缺少 `cicd:deploy` / `cicd:read`，或环境不在调用者的环境范围内 |
+| 404 | 40400 | 应用或金丝雀不存在 |
+| 409 | 40900 | **Helm 部署的环境不支持金丝雀发布**；环境未配置工作负载/容器/命名空间；当前状态不允许该操作；已有待审批动作；已是最后一步；正在执行其他操作；部署目标已变更；同名资源已存在且非本平台创建；所选路由本身是金丝雀路由或没有指向该服务的规则；主服务没有标签选择器 |
+| 202 | 40304 | 需要审批，已创建审批单（不是错误，前端提示「已提交审批」） |
+| 503 | — | 审批服务不可用，金丝雀操作被拒绝 |
+
+### 未验证项
+- **未在真实 ingress-nginx 上验证**：canary 注解（`canary` / `canary-weight`）的实际分流比例、`kubernetes.io/ingress.class` 注解与 `ingressClassName` 的兼容、同一主机多个金丝雀路由的行为，均只有单元测试（fake clientset）。其他 Ingress 控制器（Traefik、APISIX 等）不识别这些注解，金丝雀路由会被当作普通路由，**不能使用**。
+- 金丝雀实例只复制主 Deployment 的 Pod 模板；HPA、PDB、ServiceMonitor 等附属对象不会复制。
+- 未接入指标自动判定（错误率 / 延迟），步骤推进只按时间或人工确认。
+- 前端（`xs-release-canary.js`）只在测试替身上运行过（`tests/frontend/xs-release-canary.test.mjs`），未在浏览器中对接真实后端验证。
+
 ## 流水线
 
 ### POST /cicd/pipelines — `cicd:manage`

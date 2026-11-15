@@ -130,7 +130,8 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	tr.GET("/search", rbac.RequirePerm(PermTraceRead), m.traceSearch)
 	tr.GET("/:traceId", rbac.RequirePerm(PermTraceRead), m.traceGet)
 
-	m.registerNotify(g) // 通知中心：渠道、模板、订阅、发送记录、通知安全
+	m.registerNotify(g)    // 通知中心：渠道、模板、订阅、发送记录、通知安全
+	m.registerCertWatch(g) // 证书到期提醒
 
 	// Unauthenticated Alertmanager receiver, authenticated by ?token=.
 	if d.Public != nil {

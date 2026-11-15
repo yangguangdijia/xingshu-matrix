@@ -12450,6 +12450,7 @@
         { k: "rules", t: "告警规则", i: "flag", sub: "PromQL 告警规则的级别、持续时间与通知渠道，可启停与静默" },
         { k: "events", t: "告警事件", i: "bell", sub: "告警中与已恢复的事件，可确认、指派与静默" },
         { k: "channels", t: "通知渠道", i: "flow", sub: "钉钉、飞书、企业微信、邮件、Slack 与 Webhook，按订阅规则发送告警、故障、流水线结果与审批待办" },
+        { k: "certificates", t: "证书到期", i: "shield", sub: "集群 TLS 证书与外部域名证书的到期时间，按阈值提前提醒" },
       ];
       const obHash = (p) => (p.k === "metrics" ? "#/observe" : p.k === "logs" ? "#/logs" : "#/observe/" + p.k);
       const obCur = () => OB_PAGES.find((p) => p.k === (location.hash.split("/")[2] === "alerts" ? "events" : location.hash.split("/")[2])) || OB_PAGES[0];
@@ -13334,6 +13335,7 @@
           })) : `<p class="x-empty">暂无${ob.evf === "全部" ? "" : ob.evf}的告警事件</p>`}</section>`;
       };
       OB_AFTER.events = (el) => bindBar(el, "#/observe/events");
+      OB_BODY.certificates = () => '<section class="x-panel"><p class="x-empty">证书到期页面加载失败，请刷新页面后重试</p></section>';
 
       // 链路追踪只展示实际检索到的 OpenTelemetry 数据。
       const TR_C = {};
@@ -13605,6 +13607,7 @@
         const renderContext = nav.env + ":" + (contextState && contextState.kind === "cluster" ? contextState.cluster_id : "");
         if (!demo && pg.k === "rules" && window.XSLiveOpsRules) return window.XSLiveOpsRules(el);
         if (!demo && pg.k === "channels" && window.XSNotifyCenter) return window.XSNotifyCenter.render(el);
+        if (!demo && pg.k === "certificates" && window.XSCertWatch) return window.XSCertWatch.render(el);
         let loadError = "";
         if (!demo) {
           try {
@@ -16852,13 +16855,17 @@ spec:
     <script src="xs-live-core.js"></script>
     <script src="xs-monitoring.js"></script>
     <script src="xs-topo-cards.js"></script>
+    <script src="xs-cert-watch.js"></script>
     <script src="xs-live-ops.js"></script>
+    <script src="xs-audit-chain.js"></script>
     <script src="xs-cicd-build.js"></script>
     <script src="xs-cicd-forms.js"></script>
     <script src="xs-bastion.js"></script>
     <script src="xs-branding.js"></script>
     <script src="xs-devcenter.js"></script>
     <script src="xs-cicd-pipeline.js"></script>
+    <script src="xs-release-canary.js"></script>
+    <script src="xs-platform-backup.js"></script>
     <script src="xs-platform-settings.js"></script>
     <script src="xs-channel-form.js"></script>
     <script src="xs-notify-center.js"></script>

@@ -32,6 +32,7 @@ import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/config"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/crypto"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/jobs"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/metrics"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/rbac"
@@ -106,8 +107,12 @@ func run(cmd, cfgPath string) error {
 	}
 	defer pool.Close()
 
+	backupRunner, err := newBackupRunner(cfg, pool, log)
+	if err != nil {
+		return err
+	}
 	if cmd == "migrate" || cfg.Database.AutoMigrate {
-		if err := migrate(ctx, pool, log, mods); err != nil {
+		if err := migrate(ctx, pool, log, mods, backup.PreMigrateHook(backupRunner)); err != nil {
 			return err
 		}
 		if cmd == "migrate" {
@@ -115,20 +120,49 @@ func run(cmd, cfgPath string) error {
 			return nil
 		}
 	}
-	return serve(ctx, cfg, log, pool, mods)
+	return serve(ctx, cfg, log, pool, mods, backupRunner)
 }
 
-func migrate(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, mods []app.Module) error {
+// newBackupRunner builds the platform backup runner from config. It is shared
+// by the pre-migrate hook (before serve) and the HTTP API / scheduler.
+func newBackupRunner(cfg *config.Config, pool *pgxpool.Pool, log *slog.Logger) (*backup.Runner, error) {
+	warnOnly, err := backup.ParseFailureMode(os.Getenv("MATRIX_BACKUP_BEFORE_MIGRATE_ON_FAILURE"))
+	if err != nil {
+		return nil, err
+	}
+	r := &backup.Runner{
+		DB: pool, DSN: cfg.Database.DSN, Dir: cfg.Backup.Dir, Keep: cfg.Backup.Keep,
+		PgDump: cfg.Backup.PgDump, Log: log.With("component", "backup"),
+		BeforeMigrate: cfg.Backup.BeforeMigrate, PreMigrateWarnOnly: warnOnly,
+	}
+	if oc := cfg.ObjectStore; oc.Enabled() {
+		r.Store = &objstore.S3{
+			Endpoint: oc.Endpoint, Region: oc.Region, Bucket: oc.Bucket,
+			AccessKey: oc.AccessKey, SecretKey: oc.SecretKey, Prefix: oc.Prefix, PathStyle: oc.PathStyle,
+		}
+	}
+	if cfg.Backup.Enabled {
+		sched, err := backup.ParseCron(cfg.Backup.Schedule)
+		if err != nil {
+			return nil, fmt.Errorf("backup.schedule: %w", err)
+		}
+		r.Schedule = &sched
+		r.ScheduleSpec = cfg.Backup.Schedule
+	}
+	return r, nil
+}
+
+func migrate(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, mods []app.Module, before func(context.Context, []string) error) error {
 	srcs := []store.MigrationSource{{Module: "core", FS: store.CoreMigrations()}}
 	for _, m := range mods {
 		if f := m.Migrations(); f != nil {
 			srcs = append(srcs, store.MigrationSource{Module: m.Name(), FS: f})
 		}
 	}
-	return store.Migrate(ctx, pool, log, srcs...)
+	return store.MigrateWith(ctx, pool, log, store.MigrateOptions{BeforeApply: before}, srcs...)
 }
 
-func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, mods []app.Module) error {
+func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, mods []app.Module, backupRunner *backup.Runner) error {
 	key, err := cfg.EncryptionKeyBytes()
 	if err != nil {
 		return err
@@ -177,7 +211,7 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 		log.Warn("built-in admin created; password must be changed at first login", "username", "admin")
 	}
 
-	auditStore := &audit.PgStore{DB: pool}
+	auditStore := &audit.PgStore{DB: pool, ArchiveDir: cfg.Archive.Dir}
 	recorder := audit.NewRecorder(auditStore, log.With("component", "audit"))
 	defer recorder.Close()
 
@@ -201,23 +235,12 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 	}
 
 	m := metrics.New()
-	backupRunner := &backup.Runner{
-		DB: pool, DSN: cfg.Database.DSN, Dir: cfg.Backup.Dir, Keep: cfg.Backup.Keep,
-		PgDump: cfg.Backup.PgDump, Log: log.With("component", "backup"),
+	if backupRunner.Store != nil {
+		auditStore.Archive = backupRunner.Store
 	}
-	if oc := cfg.ObjectStore; oc.Enabled() {
-		backupRunner.Store = &objstore.S3{
-			Endpoint: oc.Endpoint, Region: oc.Region, Bucket: oc.Bucket,
-			AccessKey: oc.AccessKey, SecretKey: oc.SecretKey, Prefix: oc.Prefix, PathStyle: oc.PathStyle,
-		}
-	}
-	if cfg.Backup.Enabled {
-		sched, err := backup.ParseCron(cfg.Backup.Schedule)
-		if err != nil {
-			return fmt.Errorf("backup.schedule: %w", err)
-		}
-		backupRunner.Schedule = &sched
-	}
+	jobReg := jobs.NewRegistry()
+	jobStore := &jobs.PgStore{DB: pool, Registry: jobReg}
+	jobWorker := &jobs.Worker{Store: jobStore, Registry: jobReg, Log: log.With("component", "jobs"), Metrics: jobs.NewMetrics(m.Registry)}
 	deps := &app.Deps{
 		DB: pool, Cfg: cfg, Crypto: cipher, Audit: recorder, Approval: approvalSvc,
 		AITools: tools, AI: aiSvc, Logger: log, RBAC: rbacSvc, Settings: settingsSvc,
@@ -226,7 +249,7 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 	engine := server.New(deps, server.Core{
 		Auth: authSvc, Limiter: auth.NewRateLimiter(cfg.Auth.LoginRatePerMinute), RBAC: rbacSvc,
 		Users: usersSvc, Settings: settingsSvc, AuditDB: auditStore, Audit: recorder,
-		Approval: approvalSvc, AI: aiSvc, Metrics: m, Backup: backupRunner,
+		Approval: approvalSvc, AI: aiSvc, Metrics: m, Backup: backupRunner, Jobs: jobStore, JobWorker: jobWorker,
 	}, withLoggers(mods, log))
 
 	// Background workers.
@@ -241,6 +264,7 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 	}
 	go purgeSessions(ctx, authRepo, log)
 	go backupRunner.Start(ctx)
+	go jobWorker.Start(ctx)
 	go purgeByRetention(ctx, pool, settingsSvc, log.With("component", "retention"))
 
 	srv := &http.Server{

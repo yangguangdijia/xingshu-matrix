@@ -13,14 +13,16 @@
     { k: "records", t: "发送记录" },
     { k: "security", t: "通知安全" }
   ];
-  var KIND = { alert: "告警", incident: "故障", pipeline: "流水线", approval: "审批待办", test: "测试" };
+  var KIND = { alert: "告警", incident: "故障", pipeline: "流水线", approval: "审批待办", certificate: "证书", test: "测试" };
   var STATUS = {
     firing: "触发", resolved: "已恢复", declared: "已声明", assigned: "已指派", acknowledged: "已认领",
-    succeeded: "成功", failed: "失败", cancelled: "已取消", pending: "待审批", test: "测试", aggregated: "汇总"
+    succeeded: "成功", failed: "失败", cancelled: "已取消", pending: "待审批", test: "测试", aggregated: "汇总",
+    expiring: "即将到期", expired: "已过期"
   };
   var STATUS_OPTS = [
     ["alert", "firing"], ["alert", "resolved"], ["incident", "declared"], ["incident", "assigned"], ["incident", "acknowledged"], ["incident", "resolved"],
-    ["pipeline", "succeeded"], ["pipeline", "failed"], ["pipeline", "cancelled"], ["approval", "pending"]
+    ["pipeline", "succeeded"], ["pipeline", "failed"], ["pipeline", "cancelled"], ["approval", "pending"],
+    ["certificate", "expiring"], ["certificate", "expired"]
   ];
   var SEV = { critical: "严重", warning: "警告", info: "提示" };
   var TYPE_NAME = { feishu: "飞书", dingtalk: "钉钉", wecom: "企业微信", email: "邮件", slack: "Slack", webhook: "通用 Webhook" };
@@ -311,7 +313,7 @@
           { k: "description", label: "说明", full: true, placeholder: "可选" }
         ] },
         { title: "匹配条件", desc: "各条件之间为「且」关系；不选表示不限。", fields: [
-          { k: "event_kinds", label: "事件类型", type: "checks", required: true, options: [{ v: "alert", t: "告警" }, { v: "incident", t: "故障（声明/指派/认领/解决）" }, { v: "pipeline", t: "流水线结果" }, { v: "approval", t: "审批待办" }] },
+          { k: "event_kinds", label: "事件类型", type: "checks", required: true, options: [{ v: "alert", t: "告警" }, { v: "incident", t: "故障（声明/指派/认领/解决）" }, { v: "pipeline", t: "流水线结果" }, { v: "approval", t: "审批待办" }, { v: "certificate", t: "证书到期" }] },
           { k: "statuses", label: "事件状态", type: "checks", options: STATUS_OPTS.map(function (o) { return { v: o[1], t: KIND[o[0]] + "·" + STATUS[o[1]] }; }), help: "只保留与所选事件类型对应的状态；不选表示全部状态" },
           { k: "severities", label: "级别", type: "checks", options: [{ v: "critical", t: "严重（含 P1/P2 故障）" }, { v: "warning", t: "警告（含 P3、失败的流水线）" }, { v: "info", t: "提示" }] },
           { k: "envs", label: "环境", type: "checks", options: [], load: loadEnvOptions },

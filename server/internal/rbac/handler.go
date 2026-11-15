@@ -16,6 +16,8 @@ func CorePermissions() []Permission {
 		P("core", "setting", ActionRead, "查看系统设置"),
 		P("core", "setting", ActionManage, "修改系统设置"),
 		P("core", "audit", ActionRead, "查看审计日志"),
+		P("core", "audit", "export", "导出审计日志"),
+		P("core", "audit", ActionManage, "归档审计日志"),
 		P("core", "approval", ActionRead, "查看全部审批单"),
 		P("core", "approval", "create", "发起审批"),
 		P("core", "approval", "approve", "审批（通过/驳回）"),

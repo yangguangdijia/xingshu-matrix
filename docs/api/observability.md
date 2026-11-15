@@ -359,3 +359,82 @@ Go `text/template`。变量：`.AlertName` `.Severity`（critical/warning/info�
 - Tempo 搜索摘要不含 span 数和错误标记；未支持 Zipkin、SkyWalking。
 - 数据源无“保存前测试”接口（需先创建再 `/test`）。
 - 数据库相关（webhook upsert、CRUD）无集成测试；单元测试覆盖 Prometheus 校验/代理、Loki/ES 归一化与 KQL 转换、Tempo OTLP 解析、钉钉加签与错误码。
+
+---
+
+## 8. 证书到期提醒（v1.29 g-cert / h-cert-fe）
+
+后端：`server/internal/modules/observability/cert_watch.go`；迁移 `0010_cert_watch`（`obs_cert_domains`、`obs_cert_status`、`obs_cert_watch_config`），提醒去重表 `obs_cert_notices` 来自 `0008_alerting_logs`。
+前端：`public/xs-cert-watch.js`（`window.XSCertWatch.render(el)`），页面入口「可观测 → 证书到期」（`#/observe/certificates`，与通知里的「查看」链接一致）。
+
+扫描对象：
+- 所有已登记集群中 `type=kubernetes.io/tls` 的 Secret，只解析 `tls.crt` 的叶子证书；`tls.key` 不读取、不落库、不出现在接口和日志中。单集群最多 5000 个，单集群超时 45 秒；某集群读取失败时保留该集群上次快照，并在 `last_result.cluster_errors` 记录原因。
+- 用户配置的域名：TLS 握手读取对端证书（跳过校验，以便读取已过期/自签证书），握手后立即断开，不发送应用数据；单个探测超时 8 秒，并发 8，最多 500 个域名。
+
+### 接口（均在 `/api/v1/observability` 下）
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/certificates?source=&status=&q=` | `alert:read` | 证书列表；返回 `{items, counts, settings}` |
+| POST | `/certificates/scan` | `notify:manage` | 立即同步扫描（最长约 2 分钟），返回扫描结果；有扫描进行中返回 409 |
+| GET | `/certificates/settings` | `alert:read` | 扫描开关、周期、阈值、上次扫描结果 |
+| PUT | `/certificates/settings` | `notify:manage` + 全部环境权限 | 修改设置；受限环境用户返回 403 |
+| GET | `/certificates/domains` | `alert:read` | 监测域名列表（按环境范围过滤，未指定环境的域名所有人可见） |
+| POST | `/certificates/domains` | `notify:manage` | 添加域名并立即探测一次；返回 `{domain, probe}`（201） |
+| DELETE | `/certificates/domains/:id` | `notify:manage` | 删除域名，同时删除该域名的证书快照 |
+
+查询参数（列表）：`source`=`secret`|`domain`；`status`=`ok`|`warning`|`critical`|`expired`|`error`；`q` 不区分大小写匹配 名称/命名空间/集群名/域名。`counts` 在关键字与来源过滤之后、状态过滤之前统计（用于状态计数标签）。列表按环境范围过滤（`env` 为空的域名证书对所有有读权限的人可见），最多 20000 行，按到期时间升序（未知到期时间在前）。
+
+证书条目字段（`items[]`）：
+
+| 字段 | 说明 |
+|---|---|
+| `source` | `secret`（集群 TLS Secret）/ `domain`（域名探测） |
+| `cluster_id` / `cluster_name` / `env` | 集群信息；域名来源 `cluster_id=0`、`cluster_name` 为空，`env` 为域名配置的环境 |
+| `namespace` / `name` | Secret 的命名空间与名称；域名来源 `namespace` 为空，`name` 为 `host:port` |
+| `subject` / `issuer` / `dns_names` | 证书主题、签发者、SAN 域名（逗号分隔，最多 20 个） |
+| `not_after` | 到期时间（UTC，RFC3339）；读取失败时为 null |
+| `days_left` | 剩余整天数（向下取整，过期为负数）；读取失败时为 null |
+| `status` | `expired`（<0 天）、`critical`（≤7 天）、`warning`（≤最大阈值）、`ok`、`error`（读取/探测失败） |
+| `error` | 失败原因（中文，如「域名无法解析」「连接超时」「TLS 握手失败」「未找到 PEM 格式证书」） |
+| `scanned_at` | 本条快照写入时间 |
+
+设置字段：`enabled`（bool，默认 true）、`interval_hours`（1–168，默认 6）、`thresholds`（1–10 个，每个 1–365 天，去重后降序，默认 `[30,14,7,1]`）、`last_scan_at`、`last_result`（`trigger` schedule|manual、`started_at`、`duration_ms`、`clusters`、`cluster_errors`、`secrets`、`domains`、`domain_errors`、`notices`、`notice_error`）、`updated_by`、`updated_at`。PUT 只接收 `enabled`、`interval_hours`、`thresholds`。
+
+域名输入：`host`（必填；去掉 `http(s)://`、路径、末尾点，转小写；可写成 `host:port`；支持 IP；不支持通配符 `*.`）、`port`（默认 443，1–65535，与 host 中端口不一致时报错）、`env`（≤32 字符；为空需要全部环境权限，否则需有该环境权限）、`remark`（≤128 字符）。`(host, port)` 唯一。
+
+手动扫描结果仅对全部环境权限用户返回 `cluster_errors`（受限用户看不到无权集群的错误）。
+
+### 定时扫描与提醒规则
+
+- 每分钟检查一次；`enabled=true` 且距上次扫描超过 `interval_hours` 时，通过对 `last_scan_at` 的条件更新抢占，多副本只有一个执行；同一进程内扫描互斥。
+- 每张证书以（集群、来源、命名空间、名称、`not_after`）为身份。扫描后取证书已跨过的**最小**阈值作为本次提醒阈值（已过期为 0），在 `obs_cert_notices` 插入成功才发送；同时把已跨过的较大阈值一并记为已发送，因此每张证书每个阈值最多提醒一次，且不会在跨过 7 天后再补发 30 天提醒。证书续期后 `not_after` 变化，重新计数。
+- 提醒通过通知中心发送，事件类型 `certificate`，状态 `expiring` / `expired`；剩余 ≤7 天或已过期为 `critical`，否则 `warning`。默认模板「默认证书到期模板」，标签含 `source`、`days_left`、`not_after`、`threshold`、`dns_names`。配置了平台访问地址时附带链接 `<平台地址>/#/observe/certificates`。需要在订阅规则中勾选「证书」事件才会投递到渠道。
+- 修改阈值不会删除已有去重记录：例如原阈值 30 已发送，新增 20 后，对同一证书仍会在跨过 20 天时再提醒一次（20 < 30 的新最小阈值）。
+
+### 审计
+
+`POST /scan`（资源 `obs_cert_watch/scan`，记录集群/证书/域名/提醒数）、`PUT /settings`（`obs_cert_watch/settings`）、`POST /domains`、`DELETE /domains/:id`（`obs_cert_domain/<id>`）。
+
+### 错误码
+
+| HTTP | code | 场景 |
+|---|---|---|
+| 400 | 40001 | 域名/端口/环境/备注校验失败；扫描周期或阈值越界 |
+| 403 | 40300 | 无 `alert:read` / `notify:manage`；受限环境用户修改设置、添加未指定环境的域名、操作无权环境的域名 |
+| 404 | 40400 | 删除的域名不存在 |
+| 409 | 40900 | 已有扫描进行中；域名重复；超过 500 个域名 |
+
+### 前端（`xs-cert-watch.js`）
+
+- 证书列表：名称（来源、证书主题）、命名空间 / 域名（含 SAN）、集群（域名显示「外部域名」，含环境）、到期时间（含签发方）、剩余天数、状态中文标签（已过期 / 紧急 / 即将到期 / 正常 / 读取失败）；按来源、状态、关键字筛选；状态计数标签可点击筛选；显示上次扫描摘要与失败集群。
+- 「立即扫描」（`notify:manage`，请求超时放宽到 150 秒）；添加域名表单就地校验（与后端规则一致）；删除域名需输入域名二次确认；提醒设置（开关、周期、阈值）就地校验。只读用户只看列表、域名与设置。
+- 测试：`node --test tests/frontend/xs-cert-watch.test.mjs`。
+
+### 未验证 / 限制
+
+- 未在真实 PostgreSQL 与真实集群上联调（前端只用桩接口测试；本次未连到运行中的实例）。
+- 手动扫描为同步请求，集群多、域名多时可能接近 2 分钟上限；网关/反向代理超时需大于 150 秒，否则前端会看到超时但扫描仍在后台完成。
+- 只读取 Secret 中的叶子证书，不检查中间证书到期；不扫描 cert-manager `Certificate` 资源状态；不支持 SNI 与连接地址不同的探测；通配符域名不能直接探测（需填写具体子域名）。
+- 列表过滤在服务端内存中完成（最多 20000 行），无分页。
+- 删除集群后，该集群证书快照在下次扫描时清理；去重记录 `obs_cert_notices` 不自动清理。

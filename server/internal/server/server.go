@@ -19,6 +19,7 @@ import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/auth"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/backup"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/jobs"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/metrics"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/platform"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/rbac"
@@ -41,7 +42,9 @@ type Core struct {
 	AI       *ai.Service
 	Metrics  *metrics.Metrics
 	// Backup is the platform backup runner; nil disables /platform/backups.
-	Backup *backup.Runner
+	Backup    *backup.Runner
+	Jobs      *jobs.PgStore
+	JobWorker *jobs.Worker
 }
 
 // New builds the gin engine. mods are mounted on the authenticated group.
@@ -104,6 +107,9 @@ func New(d *app.Deps, c Core, mods []app.Module) *gin.Engine {
 	c.AI.RegisterRoutes(authed)
 	if c.Backup != nil {
 		backup.RegisterRoutes(authed, backup.APIDeps{Runner: c.Backup, Audit: c.Audit})
+	}
+	if c.Jobs != nil {
+		jobs.RegisterRoutes(authed, jobs.APIDeps{Store: c.Jobs, Worker: c.JobWorker})
 	}
 	for _, m := range mods {
 		m.Register(authed.Group(""), d)

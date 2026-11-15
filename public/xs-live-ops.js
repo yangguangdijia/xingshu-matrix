@@ -909,7 +909,7 @@
     var seg = (location.hash || "").split("/")[2] || "metrics";
     if (seg === "alerts") return "events";
     if (seg === "datasource" || seg === "data-sources") return "datasources";
-    return ["metrics", "rules", "events", "channels", "datasources"].indexOf(seg) >= 0 ? seg : "metrics";
+    return ["metrics", "rules", "events", "channels", "datasources", "certificates"].indexOf(seg) >= 0 ? seg : "metrics";
   }
   function alertDeepLink() {
     var parts = (location.hash || "").split("?")[0].split("/");
@@ -930,6 +930,7 @@
     if (pg === "rules") return obsRules(el);
     if (pg === "events") return obsEvents(el, alertDeepLink());
     if (pg === "channels") return window.XSNotifyCenter ? window.XSNotifyCenter.render(el) : obsChannels(el);
+    if (pg === "certificates" && window.XSCertWatch) return window.XSCertWatch.render(el);
     return obsMetrics(el);
   }
 
@@ -3335,7 +3336,7 @@
   }
   function isProd(env) { return /prod|生产/i.test(String(env || "")); }
 
-  var DELIVERY_MENU = ["导览", "服务列表", "实例列表", "部署编排", "监控告警", "应用成员", "操作记录", "流程中心"];
+  var DELIVERY_MENU = ["导览", "服务列表", "实例列表", "部署编排", "金丝雀发布", "监控告警", "应用成员", "操作记录", "流程中心"];
   function deliveryWorkspace(el, name, initialPane) {
     var pane = DELIVERY_MENU.indexOf(initialPane) >= 0 ? initialPane : "导览";
     var app = null, selectedEnv = "", inventory = null, alerts = [], appClusters = [], appDatasources = [], auditRows = [], releases = [], runs = [], pipes = [];
@@ -3445,7 +3446,7 @@
       if (pane === "部署编排") {
         if (!env) return emptyHTML("该应用没有环境配置。");
         var configRows = (app.envs || []).map(function (item) { return [E(item.name), E(item.namespace || "—"), E(item.deployment || (item.helm && item.helm.release) || "—"), E("#" + item.target_id),
-          '<span class="ops-nowrap"><button class="x-btn" type="button" data-app-deploy="' + E(item.name) + '">部署</button><button class="x-btn" type="button" data-app-rollback="' + E(item.name) + '">回滚</button></span>']; });
+          '<span class="ops-nowrap"><button class="x-btn" type="button" data-app-deploy="' + E(item.name) + '">部署</button>' + (item.helm || !window.XSReleaseCanary ? "" : '<button class="x-btn" type="button" data-app-canary="' + E(item.name) + '">金丝雀</button>') + '<button class="x-btn" type="button" data-app-rollback="' + E(item.name) + '">回滚</button></span>']; });
         var releaseRows = releases.map(function (r) { return [mono("#" + r.id), E(r.env), tag(r.kind || "deploy", r.kind === "rollback" ? "x-orange" : "x-blue"), code(r.image || "—", 42),
           stTag(r.status), fmtMin(r.created_at), '<button class="x-btn" type="button" data-app-relrb="' + E(r.id) + '" data-app-relenv="' + E(r.env) + '">回滚到此</button>']; });
         return envBar() + '<div class="x-sethead"><h2 class="x-h2">部署目标</h2></div>' + tbl(["环境", "命名空间", "工作负载", "执行集群", "操作"], configRows) +
@@ -3460,6 +3461,10 @@
           E(lb.namespace || env.namespace), E(lb.pod || lb.deployment || lb.service || lb.app || "—"), stTag(a.status || "未知"), fmtMin(a.starts_at), E(an.summary || an.description || "—")]; });
         return envBar() + '<p class="x-frac">仅显示与当前应用清单中的 Pod、工作负载或 Service 标签匹配的告警。</p>' +
           (appAlertRows.length ? tbl(["级别", "告警", "命名空间", "对象", "状态", "开始时间", "摘要"], appAlertRows) : emptyHTML("当前环境没有可确认属于此应用的告警。"));
+      }
+      if (pane === "金丝雀发布") {
+        if (!env) return emptyHTML("该应用没有环境配置。");
+        return envBar() + (window.XSReleaseCanary ? '<div data-app-canary-host></div>' : emptyHTML("金丝雀发布模块未加载，请刷新页面。"));
       }
       if (pane === "应用成员") return '<div class="x-sethead"><h2 class="x-h2">应用成员</h2></div><p class="x-empty">当前后端没有应用级成员关系数据，无法准确列出负责人或授权成员。平台账号与角色请在系统设置中管理。</p>';
       if (pane === "操作记录") {
@@ -3509,6 +3514,11 @@
       [].slice.call(p.box.querySelectorAll("[data-app-pipeline]")).forEach(function (button) { button.onclick = function () { var pl = pipes.filter(function (x) { return String(x.id) === button.getAttribute("data-app-pipeline"); })[0]; if (pl) infoModal("流水线   " + (pl.name || pl.id), preBlock(pl)); }; });
       [].slice.call(p.box.querySelectorAll("[data-app-runpipe]")).forEach(function (button) { button.onclick = function () { var pl = pipes.filter(function (x) { return String(x.id) === button.getAttribute("data-app-runpipe"); })[0]; if (pl) runPipelineModal(load, [pl]); }; });
       var newRun = p.box.querySelector("[data-app-newrun]"); if (newRun) newRun.onclick = function () { runPipelineModal(load, pipes); };
+      var canaryHost = p.box.querySelector("[data-app-canary-host]");
+      if (canaryHost && window.XSReleaseCanary) window.XSReleaseCanary.render(canaryHost, { appId: app.id, env: (envConfig() || {}).name || "" });
+      [].slice.call(p.box.querySelectorAll("[data-app-canary]")).forEach(function (button) {
+        button.onclick = function () { if (window.XSReleaseCanary) window.XSReleaseCanary.openCreate(app.id, button.getAttribute("data-app-canary")); };
+      });
       [].slice.call(p.box.querySelectorAll("[data-app-rund]")).forEach(function (button) { button.onclick = function () { runDetailModal(button.getAttribute("data-app-rund")); }; });
       [].slice.call(p.box.querySelectorAll("[data-app-runlog]")).forEach(function (button) { button.onclick = function () { openRunLog(button.getAttribute("data-app-runlog")); }; });
     }
@@ -5112,7 +5122,7 @@
     if (typeof ST.clusterConfigRefresh === "function") {
       try { ST.clusterConfigRefresh(); } catch (e) {}
     }
-    if (opsHash() === "observe" && obPage() !== "datasources" && obPage() !== "channels") repaint();
+    if (opsHash() === "observe" && obPage() !== "datasources" && obPage() !== "channels" && obPage() !== "certificates") repaint();
   }
   function setMode(m) { MODE = m; updateBadge(); }
 

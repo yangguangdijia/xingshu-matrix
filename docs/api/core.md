@@ -1939,6 +1939,9 @@ Prometheus 文本格式，包含 Go/进程默认指标与平台指标：
 | `matrix_http_requests_total` | counter | `method`、`route`、`status` |
 | `matrix_http_request_duration_seconds` | histogram | `method`、`route` |
 | `matrix_http_requests_in_flight` | gauge | — |
+| `matrix_jobs_processed_total` | counter | `type`、`result`（见第 12 节） |
+| `matrix_jobs_duration_seconds` | histogram | `type` |
+| `matrix_jobs_by_status` | gauge | `status` |
 
 ```text
 matrix_build_info{commit="unknown",version="dev"} 1
@@ -2029,3 +2032,108 @@ matrix_http_request_duration_seconds_bucket{method="DELETE",route="/api/v1/ai/mo
 - 未在运行实例上实测上述接口（`/platform/backup-policy` 为本轮新增，需主代理按补丁接线后部署）。
 - 迁移前备份未在真实 PostgreSQL 上跑通（单测覆盖决策逻辑；`pg_dump` 调用沿用 Runner 已有实现）。
 - 浏览器下载大文件时整份读入内存（Blob）；超大备份建议在服务器上直接取文件。
+
+## 12. 后台任务
+
+实现：`server/internal/jobs`（`jobs.go` 状态机与退避、`store.go` PostgreSQL 存储、`worker.go` 执行器与回收器、`api.go` 管理接口、`metrics.go` 指标）。任务存放在 `platform_jobs` 表（迁移 `core/0012_jobs`）。管理接口挂在 `/api/v1` 认证分组下；写操作由审计中间件记录（resource `platform_job`）。
+
+> 本节为按代码整理的说明，未对运行实例实测（见末尾「未验证项」）。当前**没有前端页面**，仅提供接口。
+
+### 权限
+
+与平台备份一致，核心权限目录中没有独立的 `platform:*` 权限，沿用系统设置权限：
+
+| 操作 | 权限 |
+|---|---|
+| 列表、详情 | `setting:read` |
+| 重试、删除 | `setting:manage` |
+
+### 任务字段
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int64 | 任务 ID |
+| `type` | string | 任务类型（≤128 字符，对应注册的处理器） |
+| `payload` | object | 任务参数。**接口返回前脱敏**：键名含 `password`、`passwd`、`secret`、`token`、`private_key`、`access_key`、`api_key`、`credential`、`kubeconfig` 等（不区分大小写、任意层级）的值替换为 `"***"`；无法解析时整体返回 `"***"` |
+| `status` | string | `queued`、`running`、`succeeded`、`failed`、`dead`（见状态机） |
+| `priority` | int | 优先级，越大越先被认领 |
+| `attempts` / `max_attempts` | int | 已执行次数（认领时 +1）/ 最大执行次数（默认 5，上限 100） |
+| `run_at` | RFC 3339 | 最早可执行时间（失败重试时为下次执行时间） |
+| `locked_by` | string | 持有租约的执行节点标识，未执行时为空串 |
+| `locked_until` | RFC 3339\|null | 租约到期时间 |
+| `last_error` | string | 最近一次失败原因（≤4000 字节，超出截断并加 `…`） |
+| `dedupe_key` | string\|null | 去重键：同一去重键同时只能存在一个未完成任务 |
+| `created_by` | int64\|null | 创建者用户 ID；系统任务为 null |
+| `created_at` / `updated_at` | RFC 3339 | 创建 / 更新时间 |
+| `started_at` / `finished_at` | RFC 3339\|null | 最近一次开始 / 结束（成功或死信）时间 |
+
+### GET /jobs
+
+权限 `setting:read`。按 `id` 倒序分页，返回 `{items, total, page, page_size}`。
+
+| 参数 | 说明 |
+|---|---|
+| `status` | 可选，逗号分隔的多个状态，如 `status=failed,dead`；空项与重复项忽略；出现未知状态返回 400 |
+| `type` | 可选，按任务类型精确匹配（去首尾空白，≤128 字符） |
+| `page` / `page_size` | 同 1.4（默认 1 / 20，`page_size` 最大 200） |
+
+未知状态的错误响应：`code=40001`，`message: "任务状态无效：<值>"`，`details.allowed` 为 `["queued","running","failed","dead","succeeded"]`。
+
+### GET /jobs/:id
+
+权限 `setting:read`。返回单个任务（payload 已脱敏）。
+
+### POST /jobs/:id/retry
+
+权限 `setting:manage`，无请求体。**仅 `failed` 或 `dead` 任务可重试**：状态改为 `queued`、`run_at=now()`，清空租约与 `finished_at`；`dead` 任务的 `attempts` 重置为 0（重新获得完整次数），`failed` 任务保留已执行次数、仅跳过剩余退避等待。`last_error` 保留到下次执行。成功后唤醒本实例执行器立即认领。返回更新后的任务（payload 已脱敏）。审计 action `retry`，detail 含 `type`、`max_attempts`。
+
+### DELETE /jobs/:id
+
+权限 `setting:manage`。**仅 `dead` 或 `succeeded` 任务可删除**（排队、执行中、等待重试的任务不可删）。返回 `{"id": <id>, "deleted": true}`。审计 action `delete`，detail 含 `type`、`status`、`attempts`。
+
+### 错误码
+
+| HTTP / code | 场景 | message |
+|---|---|---|
+| 400 / 40000 | `:id` 不是正整数 | `任务编号无效` |
+| 400 / 40001 | `status` 含未知状态；`type` 过长 | `任务状态无效：…` / `任务类型过长` |
+| 403 / 40300 | 缺少 `setting:read` / `setting:manage` | — |
+| 404 / 40400 | 任务不存在 | `任务不存在` |
+| 409 / 40900 | 重试非 failed/dead 任务、删除非 dead/succeeded 任务 | `当前状态不允许该操作：仅失败或死信任务可重试，仅死信或已完成任务可删除` |
+| 409 / 40900 | 重试时已有相同去重键的未完成任务 | `已有相同去重键的未完成任务，无法重试` |
+
+### 状态机
+
+```text
+queued  --认领-->                         running
+failed  --认领（run_at 已到）-->           running
+running --成功-->                         succeeded
+running --失败，attempts < max_attempts--> failed（run_at = now + 退避）
+running --失败且次数用尽 / 永久错误-->      dead（死信）
+running --租约过期（回收器）-->            failed | dead
+failed | dead --手动重试-->                queued
+succeeded | dead --删除-->                 （移除）
+```
+
+- **认领**：执行节点以 `FOR UPDATE SKIP LOCKED` 按 `priority DESC, run_at, id` 认领一条 `queued`/`failed` 且 `run_at <= now()` 且类型已注册的任务，`attempts+1`，写入 `locked_by` 与租约 `locked_until`（默认 1 分钟，最小 3 秒）；处理期间每 1/3 租约心跳续期。只有仍持有租约时才记录结果，租约已丢失的结果被丢弃。
+- **指数退避**：第 n 次失败后等待 `base × 2^(n-1)`（默认 base 10 秒，上限 1 小时），带随机抖动，结果不超过上限、不低于 base/2。处理器可按类型配置 base / 上限 / 超时（默认超时 10 分钟）。
+- **最大次数**：`attempts >= max_attempts` 或处理器返回永久错误（`jobs.Permanent`，如参数非法、目标已删除）时直接进入 `dead`；未注册的任务类型按永久错误处理。处理器 panic 视为普通失败，会重试。
+- **租约回收**：回收器默认每 30 秒把租约过期的 `running` 任务（执行节点崩溃）改为 `failed`（次数用尽则 `dead`），`last_error` 为 `执行租约超时（执行节点可能已退出），已由回收器回收`，`run_at=now()`，**立即可被再次认领**（过期租约本身已起到延迟作用）。
+- **停机中断**：执行节点停止时被中断的任务（非永久错误）释放为 `failed`，`last_error` 为 `执行节点停止，任务已释放等待重新执行`，按正常退避等待其他节点重新执行，不会因停机直接进死信。
+
+### 指标
+
+后台任务指标随 `/metrics` 输出（见第 10 节指标表）：
+
+| 指标 | 类型 | 标签 | 说明 |
+|---|---|---|---|
+| `matrix_jobs_processed_total` | counter | `type`、`result` | 每次执行的结果：`succeeded`、`failed`（将重试）、`dead`（进入死信）、`reaped`（租约过期被回收；回收后次数用尽时另计一次 `dead`） |
+| `matrix_jobs_duration_seconds` | histogram | `type` | 单次执行耗时（桶 0.05s～3600s；回收的任务不计） |
+| `matrix_jobs_by_status` | gauge | `status` | 各状态当前任务数，随回收器周期（默认 30 秒）刷新；`dead` 即死信积压 |
+
+### 未验证项
+
+- 未在真实 PostgreSQL 上实测接口与认领/回收 SQL（`store_pg_test.go` 需数据库环境变量开启，本轮未运行）。
+- 多副本并发认领（`SKIP LOCKED`）、租约丢失与回收器竞争未在多实例环境验证。
+- 未运行 `go test -race`。
+- 暂无前端页面，控制台不可见；接口未在运行实例上调用。
