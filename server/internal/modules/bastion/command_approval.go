@@ -2,7 +2,8 @@ package bastion
 
 // 命令审批：命令过滤规则的动作为 approve 时，命令在堡垒机侧暂存，
 // 以会话用户的身份提交审批单（类型 bastion.command），审批人在「审批中心」通过后命令才发往主机。
-// 审批被拒绝、申请人撤回（Ctrl+C）或超时（CommandApprovalTimeout）都会取消该命令；全过程写入命令审计。
+// 审批被拒绝、申请人撤回（Ctrl+C）或超时都会取消该命令；全过程写入命令审计。
+// 超时取值：规则 approval_timeout_minutes > 堡垒机设置 command_approval_timeout_minutes > 10 分钟（见 approval_settings.go）。
 
 import (
 	"context"
@@ -17,7 +18,7 @@ import (
 // CommandApprovalType 是命令审批的审批单类型。
 const CommandApprovalType = "bastion.command"
 
-// CommandApprovalTimeout 是等待审批的最长时间。
+// CommandApprovalTimeout 是规则与堡垒机设置都未配置时的默认等待时间。
 var CommandApprovalTimeout = 10 * time.Minute
 
 type commandApprovalPayload struct {
@@ -38,6 +39,8 @@ type approvalNotice struct {
 	Rule     string `json:"rule,omitempty"`
 	Note     string `json:"note,omitempty"`
 	Deadline string `json:"deadline,omitempty"` // RFC3339，等待截止时间
+	// TimeoutMinutes 本次审批实际等待的分钟数（pending 时给出）。
+	TimeoutMinutes int `json:"timeout_minutes,omitempty"`
 }
 
 func (m *Module) awaitCommandApproval(ctx context.Context, p *rbac.Principal, asset *Asset, sessionID int64, req *CommandEvent,
@@ -70,10 +73,11 @@ func (m *Module) awaitCommandApproval(ctx context.Context, p *rbac.Principal, as
 	mu.Lock()
 	*current = t.ID
 	mu.Unlock()
-	say(fmt.Sprintf("\r\n\x1b[33m[bastion] 已提交审批单 #%d，等待审批人处理（最长 %d 分钟，Ctrl+C 放弃）…\x1b[0m", t.ID, int(CommandApprovalTimeout.Minutes())))
+	wait := m.commandApprovalTimeout(ctx, req)
+	say(fmt.Sprintf("\r\n\x1b[33m[bastion] 已提交审批单 #%d，等待审批人处理（最长 %d 分钟，Ctrl+C 放弃）…\x1b[0m", t.ID, int(wait/time.Minute)))
 	notify(approvalNotice{State: "pending", TicketID: t.ID, Command: req.Command, Rule: req.Action,
-		Deadline: time.Now().Add(CommandApprovalTimeout).UTC().Format(time.RFC3339)})
-	deadline := time.NewTimer(CommandApprovalTimeout)
+		Deadline: time.Now().Add(wait).UTC().Format(time.RFC3339), TimeoutMinutes: int(wait / time.Minute)})
+	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
@@ -98,7 +102,7 @@ func (m *Module) awaitCommandApproval(ctx context.Context, p *rbac.Principal, as
 		case <-deadline.C:
 			_, _ = m.d.Approval.Cancel(context.Background(), p, t.ID)
 			finish()
-			done(false, "timeout", t.ID, fmt.Sprintf("审批单 #%d 超时未处理，已撤回，命令已取消", t.ID))
+			done(false, "timeout", t.ID, fmt.Sprintf("审批单 #%d 在 %d 分钟内未处理，已撤回，命令已取消", t.ID, int(wait/time.Minute)))
 			return
 		case <-tick.C:
 			if !stillMine() { // 用户按了 Ctrl+C，审批单已撤回

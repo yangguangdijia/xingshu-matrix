@@ -4405,7 +4405,7 @@
         T("数据脱敏规则", "字段 类型 示例", []),
       ];
       // 用户与权限 pages in 运维中心 (#/iam/<k>)
-      const IAM_PAGES = [{ k: "users", t: "用户管理", i: "user" }, { k: "groups", t: "部门与用户组", i: "users" }, { k: "roles", t: "角色权限", i: "lock" }, { k: "logs", t: "登录日志", i: "doc" }];
+      const IAM_PAGES = [{ k: "users", t: "用户管理", i: "user" }, { k: "groups", t: "部门与用户组", i: "users" }, { k: "roles", t: "角色权限", i: "lock" }, { k: "workspaces", t: "企业空间", i: "box" }, { k: "logs", t: "登录日志", i: "doc" }];
       const iamHash = (p) => "#/iam/" + p.k;
       const iamCur = () => IAM_PAGES.find((p) => p.k === location.hash.split("/")[2]) || IAM_PAGES[0];
       // The retired 管控端 (#/admin/<n>, in its old menu order) and #/ops redirect to their pages in 运维中心
@@ -4499,7 +4499,7 @@
       function renderIam(el) {
         iamSync();
         const p = iamCur();
-        ({ users: iamUsers, groups: iamGroups, roles: iamRoles, logs: iamLogs })[p.k](el, p);
+        ({ users: iamUsers, groups: iamGroups, roles: iamRoles, logs: iamLogs, workspaces: (v) => { if (window.XSWorkspace) XSWorkspace.render(v); else v.innerHTML = '<p class="x-frac">企业空间模块未加载</p>'; } })[p.k](el, p);
       }
 
       // 用户：真实后端 /users（列表 + 启用/禁用），字段映射到页面既有结构
@@ -16865,7 +16865,10 @@ spec:
     <script src="xs-devcenter.js"></script>
     <script src="xs-cicd-pipeline.js"></script>
     <script src="xs-release-canary.js"></script>
+    <script src="xs-image-scan.js"></script>
     <script src="xs-platform-backup.js"></script>
+    <script src="xs-workspace.js"></script>
+    <script src="xs-jobs.js"></script>
     <script src="xs-platform-settings.js"></script>
     <script src="xs-channel-form.js"></script>
     <script src="xs-notify-center.js"></script>

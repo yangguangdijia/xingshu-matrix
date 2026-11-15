@@ -2037,7 +2037,7 @@ matrix_http_request_duration_seconds_bucket{method="DELETE",route="/api/v1/ai/mo
 
 实现：`server/internal/jobs`（`jobs.go` 状态机与退避、`store.go` PostgreSQL 存储、`worker.go` 执行器与回收器、`api.go` 管理接口、`metrics.go` 指标）。任务存放在 `platform_jobs` 表（迁移 `core/0012_jobs`）。管理接口挂在 `/api/v1` 认证分组下；写操作由审计中间件记录（resource `platform_job`）。
 
-> 本节为按代码整理的说明，未对运行实例实测（见末尾「未验证项」）。当前**没有前端页面**，仅提供接口。
+> 本节为按代码整理的说明，未对运行实例实测（见末尾「未验证项」）。控制台入口：系统设置 → 后台任务。
 
 ### 权限
 
@@ -2136,4 +2136,149 @@ succeeded | dead --删除-->                 （移除）
 - 未在真实 PostgreSQL 上实测接口与认领/回收 SQL（`store_pg_test.go` 需数据库环境变量开启，本轮未运行）。
 - 多副本并发认领（`SKIP LOCKED`）、租约丢失与回收器竞争未在多实例环境验证。
 - 未运行 `go test -race`。
-- 暂无前端页面，控制台不可见；接口未在运行实例上调用。
+- 控制台页面（系统设置 → 后台任务）只在模拟环境测试；接口未在运行实例上调用。
+
+## 13. 企业空间
+
+实现：`server/internal/workspace`（`service.go` 校验与业务规则、`store.go` PostgreSQL 存储、`api.go` 路由）。表来自迁移 `core/0009_workspace_scope`（`workspaces`、`workspace_members`、`workspace_projects`、`role_bindings`），本节不新增迁移。数据范围解析（`rbac.Principal.Scopes`）读同一组表；成员、项目、角色绑定的增删改以及删除空间后，本实例的范围缓存立即失效（`rbac.Service.InvalidateScopes`），其他副本最长 15 秒后生效。
+
+> 本节为按代码整理的说明，未对运行实例实测（见末尾「未验证项」）。
+
+### 权限
+
+| 操作 | 权限 |
+|---|---|
+| 列表、详情、成员列表、项目列表、角色绑定列表 | `workspace:read` |
+| 新建/修改/删除空间；增改删成员；增删项目；新建/删除角色绑定 | `workspace:manage` |
+| 新建/删除 `global` 或 `env` 范围的角色绑定 | 另需 `user:manage`（这类绑定扩大平台级权限，等同分配全局角色） |
+
+- 数据范围：持有 `workspace:manage`，或持有 `workspace:read` 且不受范围限制（有任何全局角色）的用户可见全部空间；仅靠空间成员/范围化绑定获得权限的用户（受限用户）只看到自己所属的空间，访问其他空间的详情/成员/项目返回 403 `该企业空间不在你的数据范围内`。受限用户的 `GET /role-bindings` 只返回其所属空间的 `workspace` 绑定与其可见项目的 `project` 绑定。
+- 空间成员角色本身授予的权限见 `rbac.WorkspaceRolePermissions`（viewer/member/admin/owner 都含 `workspace:read`，都不含 `workspace:manage`）；本轮空间 owner/admin **不能**通过本接口管理成员，写操作统一要求平台权限 `workspace:manage`。
+- 防越权：新建角色绑定时，角色的每个权限都必须为操作者自身所持有（`*` 需操作者持有 `*`），否则 403 `不能授予超出你自身权限的角色`，`details.missing` 列出缺少的权限。
+- 这些路由在 `principal.Scopes` 为空时自行解析数据范围，因此不依赖全局挂载 `ScopeMiddleware`。
+
+### 字段
+
+空间（Workspace）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int64 | 空间 ID |
+| `name` | string | 名称，去首尾空白后 1–63 个字符（按字符计，可中文），不含控制字符；不区分大小写唯一 |
+| `description` | string | 描述，≤512 字符 |
+| `manager_id` | int64\|null | 空间管理员用户 ID（展示用；管理权限以成员角色为准） |
+| `manager_name` | string | 管理员用户名，无则空串 |
+| `cpu_limit_milli` | int64 | CPU 总配额（毫核），0 表示不限制，不能为负 |
+| `memory_limit_bytes` | int64 | 内存总配额（字节），0 表示不限制，不能为负 |
+| `member_count` / `project_count` | int64 | 成员数 / 项目数 |
+| `created_by` | string | 创建者用户名 |
+| `created_at` / `updated_at` | RFC 3339 | 创建 / 更新时间 |
+
+成员（Member）：`id`、`workspace_id`、`kind`（`user`|`group`）、`user_id`|`group_id`（另一个为 null）、`name`（用户名或组名）、`display_name`（用户显示名，组为空串）、`username`（用户成员才有）、`group_name`（组成员才有）、`role`（`owner`|`admin`|`member`|`viewer`）、`created_by`、`created_at`。列表按 owner→admin→member→viewer、再按 id 排序。
+
+项目（Project）：`id`、`workspace_id`、`cluster_id`、`cluster_name`、`cluster_env`、`cluster_exists`（集群已删除或集群模块未安装时为 false，名称为空串，前端显示「集群不存在」）、`namespace`、`created_by`、`created_at`。
+
+角色绑定（RoleBinding）：`id`、`role_id`、`role_code`、`role_name`、`kind`（`user`|`group`）、`user_id`|`group_id`、`subject_name`（用户名或组名）、`scope`、`scope_value`、`created_by`、`created_at`。
+
+`scope` / `scope_value` 规则（与表 CHECK 及 rbac 解析一致）：
+
+| scope | scope_value |
+|---|---|
+| `global`（默认） | 必须为空串 |
+| `env` | 环境编码，`^[a-z0-9][a-z0-9_-]{0,63}$`（如 `prod`） |
+| `cluster` | 集群 ID（正整数，无前导 0）；集群模块已安装时须存在 |
+| `workspace` | 空间 ID（正整数）；须存在 |
+| `project` | `<集群ID>/<命名空间>`，命名空间为 DNS-1123 标签；集群须存在 |
+
+请求中 `scope_value` 可传字符串或数字（如 `"scope_value": 5`）；`scope` 不区分大小写。
+
+### GET /workspaces
+
+权限 `workspace:read`。参数 `keyword`（按名称/描述模糊匹配，≤64 字符）、`page`、`page_size`（同 1.4）。按名称排序，返回 `{items, total, page, page_size}`。
+
+### POST /workspaces
+
+权限 `workspace:manage`。请求体：
+
+```json
+{ "name": "研发中心", "description": "研发部门", "manager_id": 12, "cpu_limit_milli": 8000, "memory_limit_bytes": 17179869184 }
+```
+
+`manager_id` 可省略或为 null/0。创建与首个 owner 成员在同一事务：指定了 `manager_id` 时该用户成为 owner，否则创建者成为 owner。返回 201 与空间对象。审计 resource `workspace`，action `create`，detail 含 `name`、`manager_id`、配额。
+
+### GET /workspaces/:id
+
+权限 `workspace:read`，且空间在调用者数据范围内。返回空间对象。
+
+### PUT /workspaces/:id
+
+权限 `workspace:manage`。请求体字段同创建，**均可省略**（省略即不变）；`manager_id: 0` 清除管理员。返回更新后的空间。审计 action `update`，detail 含 `name` 与 `changed`（修改的字段名列表）。
+
+### DELETE /workspaces/:id
+
+权限 `workspace:manage`。请求体 `{"confirm_name": "<空间名称>"}`，必须与名称完全一致（去首尾空白后，区分大小写），缺失或不一致返回 400。删除会级联删除成员、项目（只解除归属，不删除集群中的命名空间资源）以及 `scope=workspace` 指向该空间的角色绑定。返回 `{"id": <id>, "deleted": true}`。审计 action `delete`，detail 含 `name`、`member_count`、`project_count`。
+
+### GET /workspaces/:id/members
+
+权限 `workspace:read` + 数据范围。返回 `{items, total}`（不分页）。
+
+### POST /workspaces/:id/members
+
+权限 `workspace:manage`。请求体 `{"user_id": 3, "role": "member"}` 或 `{"group_id": 2, "role": "viewer"}`（二者必须且只能给一个；`role` 不区分大小写，白名单 `owner|admin|member|viewer`）。返回 201 与成员对象。审计 resource `workspace_member`（resource_id 为空间 ID），action `create`，detail 含 `member_id`、`kind`、`user_id`/`group_id`、`name`、`role`。
+
+### PUT /workspaces/:id/members/:mid
+
+权限 `workspace:manage`。请求体 `{"role": "admin"}`。把最后一个 owner 改成其他角色返回 409。审计 action `update`。
+
+### DELETE /workspaces/:id/members/:mid
+
+权限 `workspace:manage`。删除最后一个 owner 返回 409。返回 `{"id": <mid>, "deleted": true}`。审计 action `delete`。
+
+「最后一个 owner」按该空间 `role=owner` 的成员行计数（用户组成员也计入），检查与修改在同一事务内并锁定空间行，避免并发把 owner 全部移除。没有任何 owner 的空间（如由无用户 ID 的调用方创建）不受此限制。
+
+### GET /workspaces/:id/projects
+
+权限 `workspace:read` + 数据范围。返回 `{items, total}`（不分页），按集群、命名空间排序。
+
+### POST /workspaces/:id/projects
+
+权限 `workspace:manage`。请求体 `{"cluster_id": 1, "namespace": "team-a"}`。命名空间须为 DNS-1123 标签（小写字母、数字、连字符，首尾为字母或数字，≤63）。集群模块已安装时集群须存在（否则 404）。同一集群命名空间只能归属一个空间：已归属任何空间（包括本空间）返回 409 `该命名空间已归属企业空间「<名称>」`，`details.workspace` 为该空间名称。本接口不检查命名空间在集群中是否真实存在。返回 201 与项目对象。审计 resource `workspace_project`，detail 含 `project_id`、`cluster_id`、`namespace`。
+
+### DELETE /workspaces/:id/projects/:pid
+
+权限 `workspace:manage`。只解除归属，不删除命名空间。返回 `{"id": <pid>, "deleted": true}`。
+
+### GET /role-bindings
+
+权限 `workspace:read`。可选过滤参数：`scope`、`scope_value`、`role_id`、`user_id`、`group_id`；`page` / `page_size`（默认 20，最大 200）。按 `id` 倒序，返回 `{items, total, page, page_size}`。前端查看某空间的绑定时建议传 `scope=workspace&scope_value=<空间ID>`（项目绑定传 `scope=project`），避免只拿到第一页。
+
+### POST /role-bindings
+
+权限 `workspace:manage`（`global`/`env` 另需 `user:manage`）。请求体：
+
+```json
+{ "role_id": 4, "user_id": 3, "scope": "project", "scope_value": "1/team-a" }
+```
+
+返回 201 与绑定对象。审计 resource `role_binding`，action `create`，detail 含角色、对象与范围。
+
+### DELETE /role-bindings/:id
+
+权限 `workspace:manage`（删除 `global`/`env` 绑定另需 `user:manage`）。返回 `{"id": <id>, "deleted": true}`。
+
+### 错误码
+
+| HTTP / code | 场景 | message 示例 |
+|---|---|---|
+| 400 / 40000 | 路径 ID 非正整数 | `企业空间编号无效` / `成员编号无效` / `项目编号无效` / `角色绑定编号无效` |
+| 400 / 40001 | 请求体无法解析；名称为空或超过 63 字符；描述超长；配额为负；成员同时/都未给 user_id、group_id；角色不在白名单；命名空间不合法；scope/scope_value 不合法；删除确认名称缺失或不一致；过滤参数非法 | `请填写企业空间名称`、`空间角色无效，可选：owner、admin、member、viewer`、`输入的名称与企业空间名称不一致` 等 |
+| 403 / 40300 | 缺少 `workspace:read` / `workspace:manage`；空间不在数据范围；global/env 绑定缺 `user:manage`；授予超出自身权限的角色 | `该企业空间不在你的数据范围内`、`不能授予超出你自身权限的角色` |
+| 404 / 40400 | 空间、成员、项目、绑定、用户、用户组、角色、集群不存在 | `企业空间不存在`、`用户不存在`、`集群不存在` 等 |
+| 409 / 40900 | 名称重复（不区分大小写）；成员已存在；命名空间已归属其他空间；相同绑定已存在；移除/降级最后一个 owner | `企业空间名称已存在`、`该命名空间已归属企业空间「研发中心」`、`不能移除或降级企业空间的最后一个所有者` |
+
+### 未验证项
+
+- 存储层 SQL 在本地临时 PostgreSQL（应用核心迁移 + 集群模块 0001）上通过 `TestPgStore`；未在运行实例上调用这些接口。
+- 未在多副本下验证范围缓存失效时延（其他副本依赖 15 秒 TTL）。
+- 空间配额（`cpu_limit_milli`、`memory_limit_bytes`）只存储，不对项目 ResourceQuota 做汇总校验或下发。
+- 堡垒机资产节点绑定（`workspace_asset_nodes`）无接口。

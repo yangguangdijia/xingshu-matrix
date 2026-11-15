@@ -24,6 +24,8 @@ func CorePermissions() []Permission {
 		P("core", "ai", ActionRead, "查看 AI 模型与提示词模板"),
 		P("core", "ai", ActionManage, "管理 AI 模型与提示词模板"),
 		P("core", "ai", "chat", "使用 AI 助手"),
+		P("core", "workspace", ActionRead, "查看企业空间、成员、项目与范围化角色绑定"),
+		P("core", "workspace", ActionManage, "管理企业空间、成员、项目与范围化角色绑定"),
 	}
 }
 

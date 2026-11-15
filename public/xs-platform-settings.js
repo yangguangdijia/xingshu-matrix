@@ -18,6 +18,7 @@
     { k: "env", t: "环境与审批" },
     { k: "integrations", t: "通知与集成" },
     { k: "backup", t: "平台备份" },
+    { k: "jobs", t: "后台任务" },
     { k: "openapi", t: "开放接口" },
     { k: "about", t: "关于平台" }
   ];
@@ -331,6 +332,9 @@
     } else if (tab === "backup") {
       if (root.XSPlatformBackup) root.XSPlatformBackup.render(body);
       else body.innerHTML = '<section class="xs-cfg-card"><p class="xs-cfg-err">平台备份组件未加载，请刷新页面。</p></section>';
+    } else if (tab === "jobs") {
+      if (root.XSJobs) root.XSJobs.render(body);
+      else body.innerHTML = '<section class="xs-cfg-card"><p class="xs-cfg-err">后台任务组件未加载，请刷新页面。</p></section>';
     } else if (tab === "openapi") {
       body.innerHTML = '<section class="xs-cfg-card"><h3>开放接口</h3><p class="x-frac" style="margin:0 0 12px">第三方系统可用「个人设置 → 个人访问令牌」生成的令牌调用以下接口（请求头 Authorization: Bearer &lt;令牌&gt;），令牌权限不超过创建人本身。</p><div data-apidoc></div></section>';
       if (root.XSApiDoc) root.XSApiDoc.render(body.querySelector("[data-apidoc]"));

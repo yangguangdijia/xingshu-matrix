@@ -27,6 +27,7 @@ import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/users"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/version"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/web"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/workspace"
 )
 
 // Core bundles the core services mounted by the router.
@@ -45,6 +46,8 @@ type Core struct {
 	Backup    *backup.Runner
 	Jobs      *jobs.PgStore
 	JobWorker *jobs.Worker
+	// Workspace is the 企业空间 store; nil disables /workspaces and /role-bindings.
+	Workspace *workspace.PgStore
 }
 
 // New builds the gin engine. mods are mounted on the authenticated group.
@@ -110,6 +113,9 @@ func New(d *app.Deps, c Core, mods []app.Module) *gin.Engine {
 	}
 	if c.Jobs != nil {
 		jobs.RegisterRoutes(authed, jobs.APIDeps{Store: c.Jobs, Worker: c.JobWorker})
+	}
+	if c.Workspace != nil {
+		workspace.RegisterRoutes(authed, workspace.Deps{Store: c.Workspace, Scopes: c.RBAC})
 	}
 	for _, m := range mods {
 		m.Register(authed.Group(""), d)

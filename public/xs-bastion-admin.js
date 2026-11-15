@@ -431,10 +431,13 @@
   };
   function renderCmd(el) {
     el.innerHTML = head("命令过滤", "SSH 会话中的每条命令按优先级从小到大匹配规则；用 ; | && $() 拼接的命令会拆开逐段检查，取最严格的动作。",
-      (window.XSBastionAIDraft ? '<button class="x-btn" data-ai>AI 起草</button>' : "") + '<button class="x-btn" data-test>测试命令</button><button class="x-btn x-btn--pri" data-new>+ 新建规则</button>') + '<div class="xb-body"><p class="x-frac">正在读取…</p></div>';
+      (window.XSBastionAIDraft ? '<button class="x-btn" data-ai>AI 起草</button>' : "") + '<button class="x-btn" data-apvset hidden>审批超时设置</button><button class="x-btn" data-test>测试命令</button><button class="x-btn x-btn--pri" data-new>+ 新建规则</button>') + '<div class="xb-body"><p class="x-frac">正在读取…</p></div>';
     var reload = function () { renderCmd(el); };
-    Promise.all([list("/bastion/filters"), list("/bastion/assets", { size: 200 })]).then(function (r) {
-      var fs = r[0], assets = r[1], groups = {};
+    Promise.all([list("/bastion/filters"), list("/bastion/assets", { size: 200 }), xs().get("/bastion/settings").catch(function () { return null; })]).then(function (r) {
+      var fs = r[0], assets = r[1], groups = {}, bset = r[2];
+      var defMin = bset && bset.effective_command_approval_timeout_minutes || 10;
+      var setBtn = el.querySelector("[data-apvset]");
+      if (bset) { setBtn.hidden = false; setBtn.onclick = function () { approvalSettingsForm(bset, reload); }; }
       fs.forEach(function (f) { (groups[f.group_name || "默认规则组"] = groups[f.group_name || "默认规则组"] || []).push(f); });
       el.querySelector("[data-new]").onclick = function () { filterForm(null, assets, Object.keys(groups), reload); };
       var aiBtn = el.querySelector("[data-ai]");
@@ -448,7 +451,7 @@
       var html = names.map(function (g) {
         return '<section class="xb-card"><h3>' + E(g) + ' <span class="x-frac">' + groups[g].length + " 条规则</span></h3>" + table(["优先级", "规则", "表达式", "动作", "作用资产", "状态", "操作"], groups[g].map(function (f) {
           var a = FACT[f.action] || [f.action, "x-grey"];
-          return [E(f.priority), "<b>" + E(f.name) + "</b>", '<code class="x-mono xb-ellipsis" title="' + E(f.pattern) + '">' + E(f.pattern) + "</code>", tag(a[0], a[1]),
+          return [E(f.priority), "<b>" + E(f.name) + "</b>", '<code class="x-mono xb-ellipsis" title="' + E(f.pattern) + '">' + E(f.pattern) + "</code>", tag(a[0], a[1]) + (f.action === "approve" ? ' <span class="x-frac">' + (f.approval_timeout_minutes > 0 ? E(f.approval_timeout_minutes) + " 分钟超时" : "默认 " + E(defMin) + " 分钟超时") + "</span>" : ""),
             (f.asset_ids || []).length ? f.asset_ids.map(function (id) { var x = byId(assets, id); return E(x ? x.name : "#" + id); }).join("、") : '<span class="x-frac">全部资产</span>',
             '<label class="xb-switch"><input type="checkbox" data-toggle="' + f.id + '"' + (f.enabled ? " checked" : "") + "><span></span>" + (f.enabled ? "启用" : "停用") + "</label>",
             '<span class="xb-ops"><button class="x-act" data-edit="' + f.id + '">编辑</button><button class="x-act x-act--danger" data-del="' + f.id + '">删除</button></span>'];
@@ -456,7 +459,7 @@
       }).join("");
       el.querySelector(".xb-body").innerHTML = (html || '<div class="xb-guide"><h3>还没有命令过滤规则</h3><p class="x-frac">建议至少拦截 rm -rf /、mkfs、dd 写盘等危险命令；重启、停服务类命令可设为「审批后执行」。</p></div>') +
         '<div class="xb-legend">' + Object.keys(FACT).map(function (k) { return tag(FACT[k][0], FACT[k][1]) + ' <span class="x-frac">' + FACT[k][2] + "</span>"; }).join("") + "</div>" +
-        '<p class="x-frac xb-note">规则在新建立的会话中生效。表达式由后端 Go RE2 引擎执行（不支持回溯与前瞻）。规则组用于归类，匹配顺序只看优先级。</p>';
+        '<p class="x-frac xb-note">规则在新建立的会话中生效。表达式由后端 Go RE2 引擎执行（不支持回溯与前瞻）。规则组用于归类，匹配顺序只看优先级。「审批后执行」的命令在超时（规则单独设置，否则使用默认 ' + E(defMin) + ' 分钟）内无人处理会自动撤回。</p>';
       [].forEach.call(el.querySelectorAll("[data-toggle]"), function (b) {
         b.onchange = function () {
           var f = byId(fs, b.getAttribute("data-toggle"));
@@ -496,16 +499,42 @@
         { k: "name", label: "规则名称", required: true, placeholder: "禁止删除根目录" },
         { k: "pattern", label: "匹配表达式（RE2 正则）", required: true, mono: true, placeholder: "^\\s*rm\\s+-rf\\s+/(\\s|$)", check: function (v) { return jsRe(v) ? "" : "正则语法错误"; } },
         { k: "action", label: "动作", type: "radio", options: Object.keys(FACT).map(function (k) { return { v: k, t: FACT[k][0], d: FACT[k][2] }; }), def: "deny" },
+        { k: "approval_timeout_minutes", label: "审批超时（分钟）", type: "number", min: 0, max: 1440, placeholder: "留空使用默认", show: function (v) { return v.action === "approve"; },
+          help: "审批人在该时长内未处理，审批单自动撤回、命令取消。1–1440 分钟，留空或 0 使用堡垒机默认超时。", check: apvMinutesErr },
         { k: "priority", label: "优先级", type: "number", required: true, def: 100, min: 1, max: 100000, help: "数字越小越先匹配" },
         { k: "asset_ids", label: "作用资产", type: "checks", options: assets.filter(function (a) { return a.protocol === "ssh"; }).map(function (a) { return { v: String(a.id), t: U.assetLabel(a) }; }), help: "不选表示全部资产" },
         { k: "enabled", label: "启用", type: "switch", def: true }
       ] }],
-      values: editing ? { group_name: f.group_name, name: f.name, pattern: f.pattern, action: f.action, priority: f.priority, asset_ids: (f.asset_ids || []).map(String), enabled: f.enabled } : (prefill || {}),
-      toObject: function (v) { return { group_name: (v.group_name || "").trim() || "默认规则组", name: (v.name || "").trim(), pattern: v.pattern, action: v.action, priority: Number(v.priority), asset_ids: (v.asset_ids || []).map(Number), enabled: v.enabled !== false }; },
-      validate: function (v) { var p = Number(v.priority); if (!(p >= 1 && p <= 100000)) return "优先级需为 1–100000"; var re = jsRe(v.pattern || ""); return re && re.test("") ? "表达式不能匹配空命令" : ""; },
+      values: editing ? { group_name: f.group_name, name: f.name, pattern: f.pattern, action: f.action, approval_timeout_minutes: f.approval_timeout_minutes > 0 ? f.approval_timeout_minutes : "", priority: f.priority, asset_ids: (f.asset_ids || []).map(String), enabled: f.enabled } : (prefill || {}),
+      toObject: function (v) { return { group_name: (v.group_name || "").trim() || "默认规则组", name: (v.name || "").trim(), pattern: v.pattern, action: v.action, approval_timeout_minutes: v.action === "approve" ? (Number(v.approval_timeout_minutes) || 0) : 0, priority: Number(v.priority), asset_ids: (v.asset_ids || []).map(Number), enabled: v.enabled !== false }; },
+      validate: function (v) { var p = Number(v.priority); if (!(p >= 1 && p <= 100000)) return "优先级需为 1–100000"; if (v.action === "approve") { var am = apvMinutesErr(v.approval_timeout_minutes); if (am) return "审批超时：" + am; } var re = jsRe(v.pattern || ""); return re && re.test("") ? "表达式不能匹配空命令" : ""; },
       submit: function (v, obj, ctx) {
         var r = editing ? xs().put("/bastion/filters/" + f.id, obj) : xs().post("/bastion/filters", obj);
         return r.then(function () { ctx.close(); toast("命令规则已保存，新会话生效"); done(); }).catch(rethrow);
+      }
+    });
+  }
+
+  // 审批超时校验：留空或 0 表示使用默认；否则需为 1–1440 的整数。
+  function apvMinutesErr(v) {
+    if (v == null || String(v).trim() === "") return "";
+    var n = Number(v);
+    if (!(n >= 0 && n <= 1440) || Math.floor(n) !== n) return "需为 1–1440 的整数，留空使用默认";
+    return "";
+  }
+  function approvalSettingsForm(bset, done) {
+    var cur = bset.command_approval_timeout_minutes > 0 ? bset.command_approval_timeout_minutes : "";
+    U.form({
+      title: "命令审批超时设置", okText: "保存", scene: "bastion.settings", width: "md",
+      sections: [{ fields: [
+        { k: "command_approval_timeout_minutes", label: "默认审批超时（分钟）", type: "number", min: 1, max: 1440, placeholder: "10",
+          help: "「审批后执行」规则未单独设置超时时使用。1–1440 分钟，留空恢复为 10 分钟。新提交的审批生效。", check: apvMinutesErr }
+      ] }],
+      values: { command_approval_timeout_minutes: cur },
+      toObject: function (v) { return { command_approval_timeout_minutes: Number(v.command_approval_timeout_minutes) || 0 }; },
+      validate: function (v) { var m = apvMinutesErr(v.command_approval_timeout_minutes); return m ? "默认审批超时：" + m : ""; },
+      submit: function (v, obj, ctx) {
+        return xs().put("/bastion/settings", obj).then(function (r) { ctx.close(); toast("默认审批超时已设为 " + ((r && r.effective_command_approval_timeout_minutes) || obj.command_approval_timeout_minutes || 10) + " 分钟"); done(); }).catch(rethrow);
       }
     });
   }

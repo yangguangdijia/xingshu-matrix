@@ -17,6 +17,8 @@ type FilterRule struct {
 	Name   string
 	Re     *regexp.Regexp
 	Action string // deny | confirm | approve | allow
+	// ApprovalTimeoutMinutes 仅 approve 使用：0 表示使用堡垒机全局默认。
+	ApprovalTimeoutMinutes int
 }
 
 // filterSeverity 是过滤动作的严格程度：deny > approve > confirm > allow。
@@ -97,6 +99,8 @@ type CommandEvent struct {
 	Command string
 	Action  string // allow | deny | confirmed | cancelled | approved | rejected
 	RuleID  int64
+	// ApprovalTimeoutMinutes 仅在审批请求（TakeApprovalRequest）上携带命中规则的超时设置，不参与审计。
+	ApprovalTimeoutMinutes int
 }
 
 // InputProcessor line-buffers terminal keystrokes and applies filter rules
@@ -250,7 +254,7 @@ func (p *InputProcessor) Input(data []byte) (toRemote, toClient []byte, events [
 					continue
 				}
 				p.awaiting = &CommandEvent{Command: cmd, RuleID: r.ID}
-				p.approvalReq = &CommandEvent{Command: cmd, RuleID: r.ID, Action: r.Name}
+				p.approvalReq = &CommandEvent{Command: cmd, RuleID: r.ID, Action: r.Name, ApprovalTimeoutMinutes: r.ApprovalTimeoutMinutes}
 				toClient = append(toClient, fmt.Sprintf("\r\n%s[bastion] 命令命中规则「%s」，需要审批，正在提交…（Ctrl+C 放弃）%s", colorYellow, r.Name, colorReset)...)
 			case r.Action == "confirm":
 				// Erase the line remotely; resubmit the exact buffered text if confirmed.

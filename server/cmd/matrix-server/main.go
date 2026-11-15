@@ -41,6 +41,7 @@ import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/store"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/users"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/version"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/workspace"
 )
 
 func main() {
@@ -250,6 +251,7 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 		Auth: authSvc, Limiter: auth.NewRateLimiter(cfg.Auth.LoginRatePerMinute), RBAC: rbacSvc,
 		Users: usersSvc, Settings: settingsSvc, AuditDB: auditStore, Audit: recorder,
 		Approval: approvalSvc, AI: aiSvc, Metrics: m, Backup: backupRunner, Jobs: jobStore, JobWorker: jobWorker,
+		Workspace: &workspace.PgStore{DB: pool},
 	}, withLoggers(mods, log))
 
 	// Background workers.

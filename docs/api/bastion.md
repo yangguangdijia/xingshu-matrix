@@ -25,13 +25,15 @@
 | `MATRIX_BASTION_RECORDING_STORAGE_ID` | （空） | 录像卷标识，必须与录像目录下 `.matrix-bastion-storage-id` 文件内容一致；未配置时拒绝 SSH 连接（不录像就不允许连接） |
 | `MATRIX_BASTION_RECORDING_MODE` | （空） | 设为 `local` 时允许录像目录不在 NFS 上，**仅限单副本部署**；多副本必须使用共享 NFS，否则会话被其它副本接管后录像不完整。目录不能是组 / 全局可写 |
 
-## 数据表（迁移 `0001_init.up.sql` … `0007_acl_exempt.up.sql`；`0007_acl_exempt.down.sql` 仅供人工回滚，迁移器不执行）
+## 数据表（迁移 `0001_init.up.sql` … `0008_approval_timeout.up.sql`；`*.down.sql` 仅供人工回滚，迁移器不执行）
 
 `bastion_assets`（含 `options JSONB`）、`bastion_accounts`（`secret_enc`/`passphrase_enc` 用 `d.Crypto` AES-256-GCM 加密）、`bastion_rules`、`bastion_filters`、`bastion_sessions`、`bastion_commands`。
 
 `0005_approve_and_rotation.up.sql`：命令过滤动作增加 `approve`；`bastion_accounts.pending_secret_enc / password_changed_at`；`bastion_rotation_plans`、`bastion_rotation_runs`。
 
 `0006_jumpserver_layout.up.sql`（全部增量）：`bastion_nodes`（资产树）、`bastion_platforms`（内置 Linux / Unix / Windows / MySQL / PostgreSQL）、`bastion_assets.node_id / platform_id`（已有 SSH 资产回填为 Linux 平台）、`bastion_accounts.verify_status / verify_message / verified_at`、`bastion_rules.node_ids / actions / starts_at` 与主体类型 `group`、`bastion_filters.group_name / asset_ids` 与动作 `allow`、`bastion_login_acls`、`bastion_login_logs`、`bastion_db_queries`。
+
+`0008_approval_timeout.up.sql`（v1.30）：`bastion_filters.approval_timeout_minutes INT NOT NULL DEFAULT 0`，约束 0–1440（0 = 使用全局默认）；回滚见 `0008_approval_timeout.down.sql`。
 
 `0002_asset_options.up.sql` 用 `ADD COLUMN IF NOT EXISTS` 增加 `options JSONB NOT NULL DEFAULT '{}'::jsonb`，对已有数据向后兼容：老行读出 `{}`，写回时整对象覆盖。
 
@@ -152,7 +154,33 @@ v1.27 起（资产授权，对应 JumpServer「资产授权」）请求体增加
 **防绕过匹配（`Evaluate`）**：原始命令与 `splitCommandSegments` 拆出的每一段（`;`、`&&`、`||`、管道、`&`、子 shell、`$( … )`、反引号，去 `sudo`/`env` 等前缀、去命令路径后的变体）分别匹配。任一段命中 `deny` / `approve` / `confirm` 即生效，多条命中时取最严格的动作：`deny` > `approve` > `confirm` > `allow`（同级取 priority 小的）。`allow` 只有在**原始命令整体**命中、且每一段也都被某条 `allow` 规则覆盖时才短路放行——例如白名单 `^ls\b` 不会放过 `ls; rm -rf /`，该命令按 `deny` 规则拦截；只有某一段命中 `allow` 不会短路。
 
 可选字段：`group_name`（规则组，默认「默认规则组」，只用于归类，匹配顺序只看 `priority`）、`asset_ids`（作用资产，空 = 全部资产；会话建立时按资产加载规则）。`priority` 取值 1–100000。
+
+`approval_timeout_minutes`（v1.30，整数，默认 0）：仅 `action=approve` 时保存，表示该规则命中的命令等待审批的最长时间，1–1440 分钟；0 或缺省表示使用堡垒机全局默认（见下「堡垒机设置」）。超出 0–1440 返回 400（`CodeValidation`，「审批超时需为 1–1440 分钟（0 表示使用全局默认）」）；其它动作提交该字段时一律存为 0。列表 / 创建 / 更新响应都返回该字段。
 ### PUT /bastion/filters/:id、DELETE /bastion/filters/:id — `bastion:manage`
+PUT 为全量更新（请求体同 POST）；未带 `approval_timeout_minutes` 时存为 0（使用全局默认）。
+
+## 堡垒机设置（v1.30）
+
+存放在平台设置服务的键 `bastion.settings`（非加密 JSON）。平台通用设置接口 `PUT /settings/bastion.settings` 写入时同样做取值校验。
+
+### GET /bastion/settings — `bastion:read`
+```json
+{"command_approval_timeout_minutes":0,"effective_command_approval_timeout_minutes":10}
+```
+`command_approval_timeout_minutes`：命令审批全局默认超时（分钟），0 = 未设置；`effective_command_approval_timeout_minutes`：规则未单独设置时实际使用的分钟数（未设置为 10）。
+
+### PUT /bastion/settings — `bastion:manage`
+```json
+{"command_approval_timeout_minutes":30}
+```
+取值 1–1440，0 表示恢复系统默认 10 分钟；越界 400（`CodeValidation`）；设置服务不可用 503。写审计（资源 `bastion_settings` / `bastion.settings`，明细含新值）。响应同 GET。
+
+**命令审批超时取值优先级**（`resolveApprovalTimeout`，提交审批时计算，对新提交的审批生效）：
+1. 命中规则的 `approval_timeout_minutes`（1–1440）；
+2. 规则为 0 时取 `bastion.settings.command_approval_timeout_minutes`（1–1440）；
+3. 都未设置、设置读取失败或值越界时为 10 分钟（`CommandApprovalTimeout`）。
+
+注意：规则在会话建立时加载，会话期间修改规则的超时不影响已打开的会话；全局默认在每次提交审批时读取。
 
 ## 数据脱敏规则（v1.26）
 
@@ -196,7 +224,7 @@ WebSocket（gorilla/websocket）。
 {"type":"closed","data":"session ended | killed | <错误>"}
 ```
 
-`approval` 消息（v1.27）：命令命中 `approve` 规则时推送审批状态，`state` ∈ `submitting|pending|approved|rejected|cancelled|timeout|error`，同时以终端黄/红字输出同样的提示（旧前端也能看到）。等待期间终端只接受 Ctrl+C（放弃并撤回审批单）；超时（默认 10 分钟）自动撤回。
+`approval` 消息（v1.27）：命令命中 `approve` 规则时推送审批状态，`state` ∈ `submitting|pending|approved|rejected|cancelled|timeout|error`，同时以终端黄/红字输出同样的提示（旧前端也能看到）。等待期间终端只接受 Ctrl+C（放弃并撤回审批单）；超时自动撤回。超时按「规则 > 堡垒机设置 > 10 分钟」取值（见「堡垒机设置」），终端提示「最长 N 分钟」显示实际分钟数；`pending` 消息带 `deadline`（RFC3339）与 `timeout_minutes`（v1.30）。
 
 建立连接前还会校验登录 ACL；授权缺失、ACL 拒绝、凭据不可用、网络或 SSH 握手失败、成功连接都写入 `bastion_login_logs`。
 

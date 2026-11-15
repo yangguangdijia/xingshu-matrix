@@ -1,4 +1,4 @@
-VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
+VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo v1.30)
 LDFLAGS := -s -w -X github.com/yangguangdijia/xingshu-matrix/server/internal/version.Version=$(VERSION)
 
 .PHONY: build test vet run docker package

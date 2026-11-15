@@ -4,7 +4,7 @@
 
 **企业级云原生研发运维一体化平台**
 
-![version](https://img.shields.io/badge/version-v1.28-2f6bff)
+![version](https://img.shields.io/badge/version-v1.30-2f6bff)
 ![go](https://img.shields.io/badge/Go-1.23-00add8)
 ![kubernetes](https://img.shields.io/badge/Kubernetes-1.26%2B-326ce5)
 ![deploy](https://img.shields.io/badge/deploy-Kubernetes%20%7C%20Docker%20%7C%20Linux-0b1a33)
@@ -110,8 +110,8 @@ flowchart LR
 
 ```bash
 # 1. 构建并推送镜像
-docker build --build-arg VERSION=v1.28 -t <镜像仓库>/matrix-server:v1.28 .
-docker push <镜像仓库>/matrix-server:v1.28
+docker build --build-arg VERSION=v1.30 -t <镜像仓库>/matrix-server:v1.30 .
+docker push <镜像仓库>/matrix-server:v1.30
 
 # 2. 修改 deploy/k8s/xingshu-matrix-dev.yaml 中的镜像地址、matrix-secrets 密钥与 Ingress 域名
 kubectl apply -f deploy/k8s/xingshu-matrix-dev.yaml
@@ -195,12 +195,12 @@ cd server && go build ./... && go vet ./... && go test ./...
 node --test tests/frontend/*.test.mjs
 
 # 平台镜像
-docker build --build-arg VERSION=v1.28 --build-arg COMMIT=$(git rev-parse --short HEAD) \
-  -t xingshu/matrix-server:v1.28 .
+docker build --build-arg VERSION=v1.30 --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  -t xingshu/matrix-server:v1.30 .
 
 # 集群 Agent 镜像
-docker build -f Dockerfile.cluster-agent --build-arg VERSION=v1.28 \
-  -t xingshu/matrix-cluster-agent:v1.28 .
+docker build -f Dockerfile.cluster-agent --build-arg VERSION=v1.30 \
+  -t xingshu/matrix-cluster-agent:v1.30 .
 ```
 
 版本号采用 `vMAJOR.MINOR`，构建时写入二进制，可通过 `GET /api/v1/version` 查询。

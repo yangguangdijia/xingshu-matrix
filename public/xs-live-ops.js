@@ -3336,7 +3336,7 @@
   }
   function isProd(env) { return /prod|生产/i.test(String(env || "")); }
 
-  var DELIVERY_MENU = ["导览", "服务列表", "实例列表", "部署编排", "金丝雀发布", "监控告警", "应用成员", "操作记录", "流程中心"];
+  var DELIVERY_MENU = ["导览", "服务列表", "实例列表", "部署编排", "金丝雀发布", "镜像扫描", "监控告警", "应用成员", "操作记录", "流程中心"];
   function deliveryWorkspace(el, name, initialPane) {
     var pane = DELIVERY_MENU.indexOf(initialPane) >= 0 ? initialPane : "导览";
     var app = null, selectedEnv = "", inventory = null, alerts = [], appClusters = [], appDatasources = [], auditRows = [], releases = [], runs = [], pipes = [];
@@ -3466,6 +3466,7 @@
         if (!env) return emptyHTML("该应用没有环境配置。");
         return envBar() + (window.XSReleaseCanary ? '<div data-app-canary-host></div>' : emptyHTML("金丝雀发布模块未加载，请刷新页面。"));
       }
+      if (pane === "镜像扫描") return window.XSImageScan ? '<div data-app-scan-host></div>' : emptyHTML("镜像扫描模块未加载，请刷新页面。");
       if (pane === "应用成员") return '<div class="x-sethead"><h2 class="x-h2">应用成员</h2></div><p class="x-empty">当前后端没有应用级成员关系数据，无法准确列出负责人或授权成员。平台账号与角色请在系统设置中管理。</p>';
       if (pane === "操作记录") {
         var filtered = auditRows.filter(function (r) { return String(r.resource_id || "") === String(app.id) || String(r.path || "").indexOf("/cicd/applications/" + app.id) >= 0; });
@@ -3516,6 +3517,8 @@
       var newRun = p.box.querySelector("[data-app-newrun]"); if (newRun) newRun.onclick = function () { runPipelineModal(load, pipes); };
       var canaryHost = p.box.querySelector("[data-app-canary-host]");
       if (canaryHost && window.XSReleaseCanary) window.XSReleaseCanary.render(canaryHost, { appId: app.id, env: (envConfig() || {}).name || "" });
+      var scanHost = p.box.querySelector("[data-app-scan-host]");
+      if (scanHost && window.XSImageScan) window.XSImageScan.render(scanHost, { appId: app.id });
       [].slice.call(p.box.querySelectorAll("[data-app-canary]")).forEach(function (button) {
         button.onclick = function () { if (window.XSReleaseCanary) window.XSReleaseCanary.openCreate(app.id, button.getAttribute("data-app-canary")); };
       });

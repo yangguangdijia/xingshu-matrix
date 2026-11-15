@@ -563,7 +563,7 @@
     var no = st.ticket_id ? "审批单 #" + E(st.ticket_id) : "";
     var map = {
       submitting: ["xb-apv--wait", "⏳", "命令命中「" + E(st.rule || "需审批") + "」规则，正在提交审批…"],
-      pending: ["xb-apv--wait", "⏳", "命令等待审批（" + no + (st.deadline ? "，" + E(fmtTime(st.deadline)) + " 前未处理将自动撤回" : "") + "）。审批人可在「工单 → 命令复核」处理，按 Ctrl+C 放弃。"],
+      pending: ["xb-apv--wait", "⏳", "命令等待审批（" + no + (st.timeout_minutes ? "，最长 " + E(st.timeout_minutes) + " 分钟" : "") + (st.deadline ? "，" + E(fmtTime(st.deadline)) + " 前未处理将自动撤回" : "") + "）。审批人可在「工单 → 命令复核」处理，按 Ctrl+C 放弃。"],
       approved: ["xb-apv--ok", "✓", E(st.note || "审批已通过，命令已发送到主机")],
       rejected: ["xb-apv--bad", "✕", E(st.note || "审批未通过，命令已取消")],
       timeout: ["xb-apv--bad", "✕", E(st.note || "审批超时，命令已取消")],

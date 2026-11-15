@@ -111,6 +111,8 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.POST("/filters", rbac.RequirePerm(PermManage), m.createFilter)
 	g.PUT("/filters/:id", rbac.RequirePerm(PermManage), m.updateFilter)
 	g.DELETE("/filters/:id", rbac.RequirePerm(PermManage), m.deleteFilter)
+	g.GET("/settings", rbac.RequirePerm(PermRead), m.getSettings)
+	g.PUT("/settings", rbac.RequirePerm(PermManage), m.putSettings)
 	g.POST("/command-filters/ai-draft", rbac.RequirePerm(PermManage), m.aiDraftFilter)
 
 	g.GET("/mask-rules", rbac.RequirePerm(PermRead), m.listMasks)

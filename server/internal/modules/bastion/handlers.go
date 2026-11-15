@@ -82,6 +82,8 @@ type Filter struct {
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 	GroupName string    `db:"group_name" json:"group_name"`
 	AssetIDs  []int64   `db:"asset_ids" json:"asset_ids"`
+	// ApprovalTimeoutMinutes 仅对 action=approve 生效：1–1440 分钟，0 表示使用堡垒机全局默认。
+	ApprovalTimeoutMinutes int `db:"approval_timeout_minutes" json:"approval_timeout_minutes"`
 }
 
 type Session struct {
@@ -693,6 +695,8 @@ type filterIn struct {
 	Enabled   *bool   `json:"enabled"`
 	GroupName string  `json:"group_name" binding:"max=64"`
 	AssetIDs  []int64 `json:"asset_ids"`
+	// ApprovalTimeoutMinutes 审批等待超时（分钟），仅 action=approve 时保存；0 或缺省表示用全局默认。
+	ApprovalTimeoutMinutes int `json:"approval_timeout_minutes"`
 }
 
 func (in *filterIn) check() error {
@@ -716,6 +720,12 @@ func (in *filterIn) check() error {
 	if in.AssetIDs == nil {
 		in.AssetIDs = []int64{}
 	}
+	if in.ApprovalTimeoutMinutes < 0 || in.ApprovalTimeoutMinutes > MaxApprovalTimeoutMinutes {
+		return httpx.Validation("审批超时需为 1–1440 分钟（0 表示使用全局默认）")
+	}
+	if in.Action != "approve" {
+		in.ApprovalTimeoutMinutes = 0
+	}
 	return nil
 }
 
@@ -737,8 +747,8 @@ func (m *Module) createFilter(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	f, err := queryOne[Filter](c, m, `INSERT INTO bastion_filters (name,pattern,action,priority,enabled,group_name,asset_ids) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-		in.Name, in.Pattern, in.Action, in.Priority, in.Enabled == nil || *in.Enabled, in.GroupName, in.AssetIDs)
+	f, err := queryOne[Filter](c, m, `INSERT INTO bastion_filters (name,pattern,action,priority,enabled,group_name,asset_ids,approval_timeout_minutes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+		in.Name, in.Pattern, in.Action, in.Priority, in.Enabled == nil || *in.Enabled, in.GroupName, in.AssetIDs, in.ApprovalTimeoutMinutes)
 	if err != nil {
 		httpx.Fail(c, mapPgErr(err))
 		return
@@ -760,8 +770,8 @@ func (m *Module) updateFilter(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	f, err := queryOne[Filter](c, m, `UPDATE bastion_filters SET name=$2,pattern=$3,action=$4,priority=$5,enabled=$6,group_name=$7,asset_ids=$8 WHERE id=$1 RETURNING *`,
-		id, in.Name, in.Pattern, in.Action, in.Priority, in.Enabled == nil || *in.Enabled, in.GroupName, in.AssetIDs)
+	f, err := queryOne[Filter](c, m, `UPDATE bastion_filters SET name=$2,pattern=$3,action=$4,priority=$5,enabled=$6,group_name=$7,asset_ids=$8,approval_timeout_minutes=$9 WHERE id=$1 RETURNING *`,
+		id, in.Name, in.Pattern, in.Action, in.Priority, in.Enabled == nil || *in.Enabled, in.GroupName, in.AssetIDs, in.ApprovalTimeoutMinutes)
 	if err != nil {
 		httpx.Fail(c, mapPgErr(err))
 		return
@@ -790,7 +800,7 @@ func (m *Module) loadFilters(ctx context.Context, assetID int64) ([]FilterRule, 
 		if err != nil {
 			return nil, httpx.Conflict("an enabled command filter is invalid; connections are disabled")
 		}
-		out = append(out, FilterRule{ID: f.ID, Name: f.Name, Re: re, Action: f.Action})
+		out = append(out, FilterRule{ID: f.ID, Name: f.Name, Re: re, Action: f.Action, ApprovalTimeoutMinutes: f.ApprovalTimeoutMinutes})
 	}
 	return out, nil
 }

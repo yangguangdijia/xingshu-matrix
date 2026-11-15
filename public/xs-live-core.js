@@ -1712,6 +1712,7 @@
     if (sub === "groups") return iamGroupsLive(el);
     if (sub === "roles") return iamRolesLive(el);
     if (sub === "logs") return iamLogsLive(el);
+    if (sub === "workspaces" && GLOBAL.XSWorkspace) { bump(); return GLOBAL.XSWorkspace.render(el); }
     return iamUsersLive(el);
   }
 
