@@ -502,6 +502,7 @@
     clusterStatus: clusterStatus,
     resultStatus: resultStatus,
     hostTaskStatus: hostTaskStatus,
+    hostInstallCommand: hostInstallCommand,
     toneClass: toneClass,
     aggregateTeam: aggregateTeam,
     summarizeAlerts: summarizeAlerts,
@@ -2185,13 +2186,22 @@
   var HOSTS = [];
   var HOST_TOKENS = [];
 
+  function canAddHost() {
+    var api = xs();
+    return !!(api && typeof api.can === "function" && api.can("host:write"));
+  }
+
+  function hostAddButton() {
+    return canAddHost() ? '<button type="button" class="x-btn x-btn--pri" data-act="host-add" data-id="">添加主机</button>' : "";
+  }
+
   function renderHostsLive(el) {
-    var seq = bump();
+    var seq = bump(), canWrite = canAddHost();
     mount(el, shell("主机纳管", "主机清单、注册令牌与批量任务", "") + loadingPanel("正在加载主机…"));
 
     Promise.all([
       wrap(apiGet("/hosts", { page_size: 200 })),
-      wrap(apiGet("/hosts/enroll-tokens"))
+      canWrite ? wrap(apiGet("/hosts/enroll-tokens")) : Promise.resolve({ ok: true, data: [] })
     ]).then(function (rs) {
       if (!alive(seq, el)) return;
       var hR = rs[0], tR = rs[1];
@@ -2207,7 +2217,9 @@
       if (!hR.ok) {
         hostBody = '<p class="x-aerr" role="alert" style="margin:0">' + gEsc(errText(hR.err)) + "</p>";
       } else if (!hosts.length) {
-        hostBody = '<p class="x-frac" style="margin:0">还没有纳管主机。先在下方创建注册令牌，再在目标主机上安装 matrix-agent。</p>';
+        hostBody = '<div class="x-nodata"><strong>添加第一台主机</strong><p class="x-frac">' +
+          (canWrite ? '创建令牌 → 准备代理程序 → 在目标主机执行 → 确认心跳。' : '还没有纳管主机，请联系有主机管理权限的管理员添加。') +
+          '</p>' + hostAddButton() + '</div>';
       } else {
         hostBody = tableHtml(["主机", "环境", "系统", "规格", "Agent", "状态", "最后心跳", "操作"], hosts.map(function (h) {
           var f = h.facts || {};
@@ -2245,23 +2257,22 @@
         }));
       }
 
-      mount(el, shell("主机纳管", "主机清单、注册令牌与批量任务", "") +
+      mount(el, shell("主机纳管", "主机清单、注册令牌与批量任务", hostAddButton()) +
         statCards([
           { label: "主机总数", value: hR.ok ? String(hosts.length) : "—", sub: "host:read" },
           { label: "在线主机", value: hR.ok ? String(online) : "—", sub: "agent 心跳 90s 内" },
-          { label: "注册令牌", value: tR.ok ? String(HOST_TOKENS.length) : "—", sub: "host:write" },
+          { label: "注册令牌", value: canWrite && tR.ok ? String(HOST_TOKENS.length) : "—", sub: canWrite ? "一次性接入凭证" : "需主机管理权限" },
           { label: "离线主机", value: hR.ok ? String(hosts.length - online) : "—", sub: "待排查" }
         ]) +
         toolbarHtml(
           searchInput("搜索主机 / IP / 环境") +
           selectHtml(envOptions(envs), "", 'data-live-filter data-attr="env" aria-label="按环境筛选"') +
           '<span class="x-frac" data-live-none hidden>无匹配主机</span>' +
-          '<button type="button" class="x-btn x-btn--pri" style="margin-left:auto" data-act="host-batch" data-id="">批量执行</button>'
+          '<button type="button" class="x-btn" style="margin-left:auto" data-act="host-batch" data-id="">批量执行</button>'
         ) +
         panelHtml("主机", hR.ok ? hosts.length + " 台" : "", hostBody) +
-        panelHtml("注册令牌", tR.ok ? HOST_TOKENS.length + " 个" : "",
-          '<div class="x-iamhd"><h2 class="x-h2">注册令牌</h2><span class="x-frac">matrix-agent 接入凭证</span>' +
-          '<button type="button" class="x-btn x-btn--pri" style="margin-left:auto" data-act="token-new" data-id="">+ 新建令牌</button></div>' + tokenBody));
+        (canWrite ? panelHtml("注册令牌", tR.ok ? HOST_TOKENS.length + " 个" : "", tokenBody,
+          '<button type="button" class="x-btn" style="margin-left:auto" data-act="token-new" data-id="">新建令牌</button>') : ""));
 
       Array.prototype.forEach.call(el.querySelectorAll("[data-live-tablewrap] tbody tr"), function (tr, i) {
         var h = hosts[i];
@@ -2270,8 +2281,9 @@
       filterTable(el);
       bindActs(el, function (act, id) {
         if (act === "host-batch") return batchExecDialog(HOSTS);
-        if (act === "token-new") return newTokenDialog();
+        if (act === "host-add" || act === "token-new") return openHostTokenForm();
         if (act === "token-del") {
+          if (!canAddHost()) return toastMsg("需要主机管理权限才能删除令牌");
           var tk = byId(HOST_TOKENS, id);
           if (!tk) return;
           return confirmDialog("删除注册令牌", "确认删除令牌 <b>" + gEsc(tk.name || tk.id) + "</b>？已使用该令牌注册的 Agent 不受影响。", "删除", function () {
@@ -2350,34 +2362,112 @@
     });
   }
 
-  function newTokenDialog() {
-    formDialog("新建注册令牌",
-      '<label><span>名称</span><input class="x-input" name="name" placeholder="如 prod-web" /></label>' +
+  function hostInstallCommand(command, address) {
+    var match = String(command || "").match(/^matrix-agent -server (https?:\/\/[^\s]+) -token ([A-Za-z0-9_-]+)$/);
+    if (!match) throw new Error("接口未返回可用的安装命令，请联系管理员；不要仅复制令牌执行。");
+    var raw = address == null ? match[1] : String(address).trim(), parsed;
+    if (/[\u0000-\u001f\u007f]/.test(raw)) throw new Error("平台地址不能包含控制字符");
+    try { parsed = new URL(raw); } catch (err) { throw new Error("请输入目标主机可访问的平台地址"); }
+    if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash ||
+        parsed.pathname !== "/" || !/^[a-z0-9.\-_:\[\]]+$/i.test(parsed.hostname)) {
+      throw new Error("平台地址必须为不含路径、凭据和参数的 HTTP 或 HTTPS 地址");
+    }
+    if (/^https:/.test(match[1]) && parsed.protocol !== "https:") throw new Error("不能将 HTTPS 平台地址降级为 HTTP");
+    return { server: parsed.origin, command: command.replace(" -server " + match[1] + " ", " -server " + parsed.origin + " ") };
+  }
+
+  function openHostTokenForm() {
+    if (!canAddHost()) return toastMsg("需要主机管理权限才能添加主机");
+    var busy = false;
+    formDialog("添加主机 · 创建注册令牌",
+      '<p class="x-frac" style="margin:0">创建令牌 → 准备代理程序 → 在目标主机执行 → 确认心跳</p>' +
+      '<label><span>令牌名称</span><input class="x-input" name="name" placeholder="如 prod-web（不是主机名称）" /></label>' +
       '<label><span class="x-req">环境</span><input class="x-input" name="env" placeholder="如 生产 / 测试" /></label>' +
-      '<label><span>有效期（小时）</span><input class="x-input" name="ttl" type="number" min="1" max="720" value="24" /></label>',
-      "创建", function (f, bad) {
+      '<label><span>有效期（小时）</span><input class="x-input" name="ttl" type="number" min="1" max="720" value="24" /></label>' +
+      '<p class="x-frac" style="margin:0">每个令牌仅供一台主机注册。创建令牌不会添加主机，收到代理程序心跳后才可确认接入。</p>',
+      "创建令牌并继续", function (f, bad) {
+        if (busy) return;
+        if (!canAddHost()) return bad("需要主机管理权限才能添加主机");
         var env = String(f.elements.env.value || "").trim();
         if (!env) return bad("请填写环境（决定令牌注册主机的权限范围）", f.elements.env);
-        var ttl = Math.max(1, Math.min(720, Number(f.elements.ttl.value) || 24));
-        closeModal();
-        doAction(apiPost("/hosts/enroll-tokens", {
-          name: String(f.elements.name.value || "").trim(),
-          env: env,
-          ttl_hours: ttl
-        }), null, function (data) {
+        var ttl = Number(f.elements.ttl.value);
+        if (!Number.isInteger(ttl) || ttl < 1 || ttl > 720) return bad("有效期需为 1 至 720 的整数", f.elements.ttl);
+        busy = true;
+        var submit = document.querySelector('button[form="liveForm"][type="submit"]');
+        function currentForm() { var modal = $id("modal"); return $id("liveForm") === f && modal && !modal.hidden; }
+        if (submit) submit.disabled = true;
+        apiPost("/hosts/enroll-tokens", {
+          name: String(f.elements.name.value || "").trim(), env: env, ttl_hours: ttl
+        }).then(function (data) {
+          if (!currentForm()) return;
+          if (!data || !data.token || !data.token.id) throw new Error("接口未返回注册令牌，请刷新令牌列表确认结果");
+          closeModal();
           repaint();
-          if (!data) return;
-          var tok = data.token || {};
-          var cmd = data.install_command || "";
-          resultDialog("注册令牌已创建",
-            '<p style="margin:0 0 6px">名称：<b>' + gEsc(tok.name || "—") + "</b>   环境 " + gEsc(tok.env || "—") + "</p>" +
-            '<p style="margin:0 0 6px">令牌（只显示一次）：</p><p class="x-mono" style="margin:0 0 12px;font-size:15px">' + gEsc(tok.token || "—") + "</p>" +
-            (cmd ? '<p style="margin:0 0 6px">在目标主机执行：</p><pre class="x-log" style="margin:0 0 12px;overflow:auto">' + gEsc(cmd) + "</pre>" : "") +
-            '<button type="button" class="x-btn" id="liveCopyTok">复制安装命令</button>');
-          var b = $id("liveCopyTok");
-          if (b) b.onclick = function () { copyText(cmd || tok.token || ""); };
+          hostEnrollmentDialog(data);
+        }).catch(function (err) {
+          if (!currentForm()) return;
+          if (isAuthErr(err)) return kickLogin();
+          bad(pendingInfo(err) ? "已提交审批，尚未创建可用令牌，请审批通过后查看结果" : errText(err));
+        }).then(function () {
+          busy = false;
+          if (submit) submit.disabled = false;
         });
       });
+  }
+
+  function hostEnrollmentDialog(data) {
+    var token = data.token, initial, initialError = "";
+    try { initial = hostInstallCommand(data.install_command); } catch (err) { initialError = err.message; }
+    resultDialog("添加主机 · 等待接入",
+      '<p style="margin:0">' + tagHtml("令牌已创建，主机尚未确认", "warn") + ' <span class="x-frac">环境：' + gEsc(token.env || "—") + '</span></p>' +
+      '<label><span class="x-req">2 · 确认平台回连地址</span><input class="x-input" id="hostEnrollServer" value="' + gEsc(initial ? initial.server : "") + '" autocomplete="off" spellcheck="false" /></label>' +
+      '<p class="x-frac" style="margin:0">使用目标主机能访问的平台地址，不是目标主机 IP 或 Kubernetes API 地址。</p>' +
+      '<details><summary>获取代理程序与安装准备</summary><p class="x-frac">当前接口不提供代理程序下载地址。请向管理员获取与目标系统和 CPU 架构匹配的 matrix-agent，将其放入可执行路径后再运行命令；不要使用来源不明的二进制。</p>' +
+      '<p class="x-frac">保持代理程序运行；如需常驻服务，请按运维规范配置。平台证书须受信任，不要跳过 TLS 校验。令牌仅显示本次，切勿提交到代码仓库。</p></details>' +
+      '<label><span>3 · 在目标主机执行</span><textarea class="x-input x-mono" rows="3" id="hostEnrollCommand" readonly spellcheck="false">' + gEsc(initial ? initial.command : "") + '</textarea></label>' +
+      '<p class="x-aerr" id="hostEnrollError" role="alert"' + (initialError ? '' : ' hidden') + '>' + gEsc(initialError) + '</p>' +
+      '<div><button type="button" class="x-btn" id="liveCopyTok"' + (initial ? '' : ' disabled') + '>复制安装命令</button></div>' +
+      '<div class="x-tbar"><strong>4 · 确认心跳</strong><button type="button" class="x-btn" id="hostEnrollCheck">检查接入状态</button></div>' +
+      '<p class="x-frac" id="hostEnrollStatus" role="status" aria-live="polite" style="margin:0">等待目标主机使用此令牌注册并上报心跳。</p>');
+    var server = $id("hostEnrollServer"), command = $id("hostEnrollCommand"), error = $id("hostEnrollError");
+    var copy = $id("liveCopyTok"), check = $id("hostEnrollCheck"), status = $id("hostEnrollStatus");
+    if (!server || !command || !copy || !check || !status || !error) return;
+    function updateCommand() {
+      try {
+        command.value = hostInstallCommand(data.install_command, server.value).command;
+        error.hidden = true; copy.disabled = false;
+        return command.value;
+      } catch (err) {
+        command.value = ""; copy.disabled = true;
+        error.textContent = err.message; error.hidden = false;
+        return "";
+      }
+    }
+    server.oninput = updateCommand;
+    copy.onclick = function () { var value = updateCommand(); if (value) copyText(value); };
+    check.onclick = function () {
+      if (check.disabled) return;
+      check.disabled = true;
+      status.textContent = "正在核对此令牌对应的主机…";
+      apiGet("/hosts/enroll-tokens").then(function (data) {
+        var current = byId(itemsOf(data), token.id);
+        if (!current) { status.textContent = "令牌已删除或不可见，无法关联主机。请在主机列表核对。"; return; }
+        if (!current.used_host_id) {
+          status.textContent = toDate(current.expires_at) && toDate(current.expires_at).getTime() < Date.now()
+            ? "令牌已过期，尚未接入主机。请重新创建令牌。" : "尚未收到此令牌的注册请求，请确认目标主机已执行命令且能访问平台。";
+          return;
+        }
+        return apiGet("/hosts/" + encodeURIComponent(current.used_host_id)).then(function (host) {
+          if (!host || String(host.id) !== String(current.used_host_id)) throw new Error("主机身份信息不一致，请刷新后重试");
+          status.textContent = (host.online && host.enrolled && host.last_seen_at ? "已确认心跳 · " : "已注册，尚未确认在线心跳 · ") +
+            "主机 #" + host.id + " · " + (host.name || "未命名") + " · " + (host.ip || "地址未上报") + " · 最近心跳：" + fmtTime(host.last_seen_at);
+          repaint();
+        });
+      }).catch(function (err) {
+        if (isAuthErr(err)) return kickLogin();
+        status.textContent = "检查失败：" + errText(err);
+      }).then(function () { check.disabled = false; });
+    };
   }
 
   function batchExecDialog(hosts) {

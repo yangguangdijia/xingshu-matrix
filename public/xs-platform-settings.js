@@ -34,6 +34,11 @@
     });
   }
   function css() {
+    if (!document.getElementById("xs-cfg-appearance-css")) {
+      var link = document.createElement("link");
+      link.id = "xs-cfg-appearance-css"; link.rel = "stylesheet"; link.href = "xs-platform-settings.css";
+      document.head.appendChild(link);
+    }
     if (document.getElementById("xs-cfg-css")) return;
     var s = document.createElement("style"); s.id = "xs-cfg-css";
     s.textContent = [
@@ -55,7 +60,7 @@
       ".xs-cfg-table th{font-weight:500;color:var(--x-sub,#6b7280);font-size:13px;background:#fafbfc}",
       ".xs-cfg-switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer}",
       ".xs-cfg-err{color:#b91c1c;font-size:13px;margin:0 0 12px}",
-      "@media(max-width:960px){.xs-cfg{grid-template-columns:1fr}.xs-cfg-nav{position:static;display:flex;overflow:auto}.xs-cfg-row{grid-template-columns:1fr;gap:8px}.xs-cfg-links{grid-template-columns:1fr}}"
+      "@media(max-width:960px){.xs-cfg{grid-template-columns:1fr}.xs-cfg-nav{position:static;display:flex;overflow:auto}.xs-cfg-nav button{flex:0 0 auto;width:auto;white-space:nowrap}.xs-cfg-row{grid-template-columns:1fr;gap:8px}.xs-cfg-links{grid-template-columns:1fr}}"
     ].join("\n");
     document.head.appendChild(s);
   }
@@ -64,6 +69,154 @@
     return '<div class="xs-cfg-unit"><input class="x-input" type="number" name="' + name + '" min="' + min + '" max="' + max + '" value="' + esc(value) + '" required><em>' + esc(unit) + '</em></div>';
   }
   function foot(label) { return '<div class="xs-cfg-foot"><button class="x-btn x-btn--pri" type="submit">' + esc(label || "保存") + '</button><button class="x-btn" type="reset">还原</button></div>'; }
+
+  function appearance(body, initial, platformName, active) {
+    var defaultColor = "#1677ff";
+    var presets = [["#1677ff", "星枢蓝", "经典 · 清晰"], ["#0f7b6c", "松石绿", "沉稳 · 自然"], ["#7c3aed", "鸢尾紫", "鲜明 · 灵动"],
+      ["#d4380d", "朱砂橙", "温暖 · 醒目"], ["#1d39c4", "靛青蓝", "理性 · 专注"], ["#08979c", "湖水青", "轻盈 · 通透"]];
+    var saved = { logo: initial.logo || "", primary_color: /^#[0-9a-f]{6}$/i.test(initial.primary_color || "") ? initial.primary_color.toLowerCase() : defaultColor,
+      login_title: initial.login_title || "", copyright: initial.copyright || "" };
+    var logo = saved.logo, color = saved.primary_color, uploadId = 0, uploading = false, saving = false, view = "console";
+    var canManage = !!(root.XS && root.XS.can && root.XS.can("setting:manage"));
+    function safeLogo(value) {
+      if (!value) return "";
+      var match = /^data:image\/(png|jpeg|svg\+xml);base64,([A-Za-z0-9+/=]+)$/.exec(value);
+      if (!match) throw new Error("仅支持 PNG、JPG 或 SVG 图片");
+      var raw;
+      try { raw = root.atob(match[2]); } catch (e) { throw new Error("图片内容无法读取，请重新选择"); }
+      if (raw.length > 256 * 1024) throw new Error("图片超过 256 KiB，请压缩后再上传");
+      if (match[1] === "svg+xml" && /<script|javascript:|\son[a-z]+\s*=/i.test(raw)) throw new Error("SVG 不能包含脚本或事件处理器");
+      return value;
+    }
+    function mark(value) {
+      var safe = "";
+      try { safe = safeLogo(value); } catch (e) {}
+      return safe ? '<img src="' + esc(safe) + '" alt="品牌 Logo">' : '<svg viewBox="0 0 32 32" aria-hidden="true"><use href="#mk"></use></svg>';
+    }
+    body.innerHTML = '<form class="xs-appearance" data-f aria-label="品牌与主题设置">' +
+      '<header class="xs-appearance-head"><div><span class="xs-appearance-eyebrow">平台个性化</span><h2>品牌与主题</h2><p>让每一次登录，都带有你们的品牌印记。</p></div><span class="xs-appearance-local">仅在此页预览</span></header>' +
+      '<div class="xs-appearance-layout"><div class="xs-appearance-editor">' +
+      '<section class="xs-appearance-section"><div class="xs-appearance-sectionhead"><span>01</span><div><h3>品牌标识</h3><p>用于控制台导航与登录页面</p></div></div>' +
+      '<div class="xs-appearance-upload"><div class="xs-appearance-logo" data-prev>' + mark(logo) + '</div><div><div class="xs-appearance-upload-actions"><button class="x-btn" type="button" data-upload>上传 Logo</button><button class="xs-appearance-textbtn" type="button" data-clear>恢复默认 Logo</button></div>' +
+      '<input type="file" accept="image/png,image/jpeg,image/svg+xml" data-file hidden aria-label="选择品牌 Logo"><p id="xs-appearance-upload-hint">PNG / JPG / SVG · 最大 256 KiB<br>建议使用正方形、透明背景图片</p></div></div></section>' +
+      '<section class="xs-appearance-section"><div class="xs-appearance-sectionhead"><span>02</span><div><h3>主题色</h3><p>一个主色，串联按钮、导航与选中状态</p></div></div>' +
+      '<div class="xs-appearance-presets" role="group" aria-label="预设主题色">' + presets.map(function (preset) {
+        return '<button type="button" class="xs-appearance-preset" data-preset="' + preset[0] + '" aria-pressed="false" aria-label="' + preset[1] + ' ' + preset[0] + '" style="--swatch:' + preset[0] + '">' +
+          '<span class="xs-appearance-swatch" aria-hidden="true"><span class="xs-appearance-check">✓</span></span><span class="xs-appearance-preset-name">' + preset[1] + '<small>' + preset[2] + '</small></span></button>';
+      }).join("") + '</div><div class="xs-appearance-custom"><label for="xs-appearance-hex">自定义主题色</label><div class="xs-appearance-colorinput"><input type="color" name="primary_color" value="' + color + '" aria-label="选择自定义主题色">' +
+      '<input class="x-input" id="xs-appearance-hex" name="color_hex" value="' + color + '" maxlength="7" pattern="#[0-9a-fA-F]{6}" required spellcheck="false" autocomplete="off" aria-describedby="xs-appearance-color-hint"></div></div>' +
+      '<p class="xs-appearance-hint" id="xs-appearance-color-hint">输入六位 HEX 色值，例如 #1677ff</p></section>' +
+      '<section class="xs-appearance-section"><div class="xs-appearance-sectionhead"><span>03</span><div><h3>登录文案</h3><p>向团队传递统一的平台形象</p></div></div>' +
+      '<label class="xs-appearance-field">登录页标题<span class="xs-appearance-field-meta">最多 40 字</span><input class="x-input" name="login_title" maxlength="40" value="' + esc(saved.login_title) + '" placeholder="研发与运维，一个平台"></label>' +
+      '<label class="xs-appearance-field">版权信息<span class="xs-appearance-field-meta">最多 120 字</span><input class="x-input" name="copyright" maxlength="120" value="' + esc(saved.copyright) + '" placeholder="留空使用默认版权信息"></label>' +
+      '<p class="xs-appearance-hint">留空使用默认文案。平台名称请在「基本信息」中修改。</p></section></div>' +
+      '<aside class="xs-appearance-preview" aria-label="外观即时预览"><div class="xs-appearance-previewhead"><div><span class="xs-appearance-eyebrow">即时预览</span><h3>先看效果，再应用</h3></div><div class="xs-appearance-views" role="group" aria-label="预览场景">' +
+      '<button type="button" data-view="console" aria-pressed="true">控制台</button><button type="button" data-view="login" aria-pressed="false">登录页</button></div></div>' +
+      '<div class="xs-appearance-canvas" data-preview></div><div class="xs-appearance-previewnote"><span aria-hidden="true">◇</span><p>预览不会影响当前平台。<br>保存成功后，新外观将应用到整个团队。</p></div></aside></div>' +
+      '<footer class="xs-appearance-footer"><div><p class="xs-appearance-status" data-status role="status" aria-live="polite"></p><p class="xs-appearance-error" data-error role="alert" hidden></p></div>' +
+      '<div class="xs-appearance-actions"><button type="reset" class="x-btn" data-restore>还原更改</button><button type="submit" class="x-btn x-btn--pri" data-save>保存并应用</button></div></footer></form>';
+    var form = body.querySelector("[data-f]"), preview = form.querySelector("[data-preview]"), error = form.querySelector("[data-error]");
+    function alive() { return active() && body.isConnected !== false; }
+    function values() { return { logo: logo, primary_color: form.elements.color_hex.value.trim().toLowerCase(), login_title: form.elements.login_title.value.trim(), copyright: form.elements.copyright.value.trim() }; }
+    function dirty() { return JSON.stringify(values()) !== JSON.stringify(saved); }
+    function showError(message) { error.textContent = message; error.hidden = !message; }
+    function status() {
+      var changed = dirty(), valid = /^#[0-9a-f]{6}$/i.test(form.elements.color_hex.value.trim());
+      form.elements.color_hex.setAttribute("aria-invalid", valid ? "false" : "true");
+      form.querySelector("[data-status]").textContent = !canManage ? "当前为只读模式，需要设置管理权限才能保存" : saving ? "正在保存，请稍候…" : uploading ? "正在读取 Logo…" : changed ? "有未保存的更改 · 仅在本页预览" : "已与保存的设置一致";
+      form.querySelector("[data-status]").setAttribute("data-dirty", changed ? "true" : "false");
+      [].forEach.call(form.querySelectorAll("input, button"), function (control) { control.disabled = saving || (!canManage && !control.hasAttribute("data-view")); });
+      form.querySelector("[data-save]").disabled = !canManage || saving || uploading || !changed || !valid;
+      form.querySelector("[data-restore]").disabled = !canManage || saving || (!changed && !uploading);
+      form.setAttribute("aria-busy", saving || uploading ? "true" : "false");
+    }
+    function draw() {
+      var data = values(), numeric = parseInt(color.slice(1), 16), channels = [numeric >> 16, (numeric >> 8) & 255, numeric & 255];
+      var brightness = channels.map(function (channel) { channel /= 255; return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4); });
+      var ink = brightness[0] * 0.2126 + brightness[1] * 0.7152 + brightness[2] * 0.0722 > 0.179 ? "#101828" : "#ffffff";
+      preview.setAttribute("style", "--preview-accent:" + color + ";--preview-rgb:" + channels.join(",") + ";--preview-on:" + ink);
+      var brand = '<span class="xs-appearance-mini-logo">' + mark(logo) + '</span><strong>' + esc(platformName || "星枢 Matrix") + '</strong>';
+      if (view === "console") {
+        preview.innerHTML = '<div class="xs-appearance-console"><div class="xs-appearance-mini-top">' + brand + '<span class="xs-appearance-avatar" aria-hidden="true">M</span></div>' +
+          '<div class="xs-appearance-mini-body"><div class="xs-appearance-mini-nav"><span>工作空间</span><b>应用服务</b><span>集群资源</span><span>系统设置</span></div>' +
+          '<div class="xs-appearance-mini-content"><span class="xs-appearance-mini-breadcrumb">工作空间 / 应用服务</span><div class="xs-appearance-mini-title"><strong>应用服务</strong><span class="xs-appearance-mini-primary">创建应用</span></div>' +
+          '<div class="xs-appearance-mini-list"><div><strong>团队应用</strong><span>运行状态</span></div><div><span><i aria-hidden="true"></i>业务服务</span><span class="xs-appearance-mini-state">运行中</span></div><div><span><i aria-hidden="true"></i>网关服务</span><span class="xs-appearance-mini-state">运行中</span></div></div>' +
+          '<p class="xs-appearance-mini-caption">专注协作，有序交付。</p></div></div></div>';
+      } else {
+        preview.innerHTML = '<div class="xs-appearance-login"><div class="xs-appearance-login-brand">' + brand + '</div><h4>' + esc(data.login_title || "研发与运维，一个平台") + '</h4>' +
+          '<div class="xs-appearance-login-form"><strong>欢迎登录</strong><span class="xs-appearance-mini-input">用户名</span><span class="xs-appearance-mini-input">密码</span><span class="xs-appearance-mini-primary">登 录</span></div>' +
+          '<p class="xs-appearance-mini-copyright">' + esc(data.copyright || "© 星枢 Matrix 私有化部署版 v1.0") + '</p></div>';
+      }
+      form.querySelector("[data-prev]").innerHTML = mark(logo);
+      [].forEach.call(form.querySelectorAll("[data-preset]"), function (button) { button.setAttribute("aria-pressed", button.getAttribute("data-preset") === data.primary_color ? "true" : "false"); });
+      [].forEach.call(form.querySelectorAll("[data-view]"), function (button) { button.setAttribute("aria-pressed", button.getAttribute("data-view") === view ? "true" : "false"); });
+      status();
+    }
+    function setColor(value) { color = value.toLowerCase(); form.elements.primary_color.value = color; form.elements.color_hex.value = color; showError(""); draw(); }
+    form.elements.primary_color.oninput = function () { if (canManage && !saving) setColor(this.value); };
+    form.elements.color_hex.oninput = function () {
+      if (!canManage || saving) return;
+      var value = this.value.trim();
+      if (/^#[0-9a-f]{6}$/i.test(value)) { color = value.toLowerCase(); form.elements.primary_color.value = color; showError(""); }
+      draw();
+    };
+    form.elements.login_title.oninput = form.elements.copyright.oninput = function () { if (!saving) draw(); };
+    [].forEach.call(form.querySelectorAll("[data-preset]"), function (button) { button.onclick = function () { if (canManage && !saving) setColor(button.getAttribute("data-preset")); }; });
+    [].forEach.call(form.querySelectorAll("[data-view]"), function (button) { button.onclick = function () { view = button.getAttribute("data-view"); draw(); }; });
+    form.querySelector("[data-upload]").onclick = function () { if (canManage && !saving) form.querySelector("[data-file]").click(); };
+    form.querySelector("[data-file]").onchange = function () {
+      if (!canManage || saving) return;
+      var file = this.files && this.files[0];
+      if (!file) return;
+      var request = ++uploadId;
+      this.value = ""; uploading = false; showError("");
+      if (!/^image\/(png|jpeg|svg\+xml)$/.test(file.type)) { showError("仅支持 PNG、JPG 或 SVG 图片"); status(); return; }
+      if (file.size > 256 * 1024) { showError("图片超过 256 KiB，请压缩后再上传"); status(); return; }
+      uploading = true; status();
+      var reader = new root.FileReader();
+      reader.onload = function () {
+        if (!alive() || request !== uploadId) return;
+        uploading = false;
+        try { logo = safeLogo(String(reader.result || "")); showError(""); } catch (e) { showError(errMsg(e)); }
+        draw();
+      };
+      reader.onerror = reader.onabort = function () { if (alive() && request === uploadId) { uploading = false; showError("读取图片失败，请重新选择"); status(); } };
+      try { reader.readAsDataURL(file); } catch (e) { uploading = false; showError("读取图片失败，请重新选择"); status(); }
+    };
+    form.querySelector("[data-clear]").onclick = function () {
+      if (!canManage || saving) return;
+      uploadId++; uploading = false; logo = ""; showError(""); draw();
+    };
+    form.onreset = function (event) {
+      event.preventDefault();
+      if (!canManage || saving) return;
+      uploadId++; uploading = false; logo = saved.logo; color = saved.primary_color;
+      form.elements.primary_color.value = color; form.elements.color_hex.value = color;
+      form.elements.login_title.value = saved.login_title; form.elements.copyright.value = saved.copyright;
+      form.querySelector("[data-file]").value = ""; showError(""); draw();
+    };
+    form.onsubmit = function (event) {
+      event.preventDefault();
+      if (!canManage || saving || uploading || !dirty()) return;
+      var data = values();
+      if (!/^#[0-9a-f]{6}$/i.test(data.primary_color)) { showError("请输入完整的六位 HEX 色值，例如 #1677ff"); form.elements.color_hex.focus(); return; }
+      if (Array.from(data.login_title).length > 40 || Array.from(data.copyright).length > 120) { showError("登录页标题最多 40 字，版权信息最多 120 字"); return; }
+      try { safeLogo(data.logo); } catch (e) { showError(errMsg(e)); return; }
+      saving = true; showError(""); status();
+      return Promise.resolve().then(function () {
+        return api("/settings/appearance", { method: "PUT", body: { logo: data.logo, primary_color: data.primary_color === defaultColor ? "" : data.primary_color, login_title: data.login_title, copyright: data.copyright } });
+      }).then(function () {
+        if (!alive()) return;
+        saved = data; toast("外观已保存，正在应用…");
+        location.reload();
+      }, function (e) {
+        if (!alive()) return;
+        saving = false; showError("保存失败：" + errMsg(e)); status();
+      });
+    };
+    draw();
+    return function () { return !alive() || (!dirty() && !uploading && !saving) || root.confirm(saving ? "外观正在保存，确定离开此页面？" : "有未保存的外观更改，确定放弃？"); };
+  }
 
   function render(el) {
     if (!el) return;
@@ -77,9 +230,10 @@
       '<div class="xs-cfg"><nav class="xs-cfg-nav">' + TABS.map(function (t) {
         return '<button type="button" data-cfg-tab="' + t.k + '" class="' + (t.k === tab ? "on" : "") + '">' + t.t + '</button>';
       }).join("") + '</nav><div data-cfg-body><section class="xs-cfg-card"><p>正在加载…</p></section></div></div>';
-    el.querySelector("[data-cfg-refresh]").onclick = function () { render(el); };
+    var leaveAppearance = function () { return true; };
+    el.querySelector("[data-cfg-refresh]").onclick = function () { if (leaveAppearance()) render(el); };
     [].forEach.call(el.querySelectorAll("[data-cfg-tab]"), function (b) {
-      b.onclick = function () { el._xsCfgTab = b.getAttribute("data-cfg-tab"); render(el); };
+      b.onclick = function () { if (leaveAppearance()) { el._xsCfgTab = b.getAttribute("data-cfg-tab"); render(el); } };
     });
     var body = el.querySelector("[data-cfg-body]");
     function fail(e) { if (active()) body.innerHTML = '<section class="xs-cfg-card"><p class="xs-cfg-err">' + esc(errMsg(e)) + '</p></section>'; }
@@ -217,36 +371,9 @@
         bindSave(f, function () { return api("/settings/sso", { method: "PUT", body: collect() }); });
       }, fail);
     } else if (tab === "appearance") {
-      api("/settings/appearance").then(function (a) {
+      Promise.all([api("/settings/appearance"), getSetting("platform.name").catch(function () { return ""; })]).then(function (results) {
         if (!active()) return;
-        a = a || {};
-        var logo = a.logo || "";
-        var presets = ["#1677ff", "#0f7b6c", "#7c3aed", "#d4380d", "#1d39c4", "#08979c"];
-        body.innerHTML = '<form class="xs-cfg-card" data-f><h3>外观</h3>' +
-          row("Logo", '<div style="display:flex;align-items:center;gap:12px"><span data-prev style="width:40px;height:40px;border:1px solid #e5e9f0;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:#fafbfc;overflow:hidden">' + (logo ? '<img src="' + esc(logo) + '" alt="" style="max-width:36px;max-height:36px">' : '<span style="font-size:12px;color:#8a94a3">默认</span>') + '</span>' +
-            '<label class="x-btn" style="cursor:pointer">上传图片<input type="file" accept="image/png,image/jpeg,image/svg+xml" data-file hidden></label><button type="button" class="x-btn" data-clear>恢复默认</button></div><div style="color:#8a94a3;font-size:12px;margin-top:4px">PNG / JPG / SVG，不超过 256 KB，建议正方形</div>') +
-          row("主题色", '<div style="display:flex;align-items:center;gap:8px"><input type="color" name="primary_color" value="' + esc(a.primary_color || "#1677ff") + '" style="width:44px;height:32px;padding:0;border:1px solid #e5e9f0;border-radius:6px">' +
-            presets.map(function (c) { return '<button type="button" data-preset="' + c + '" title="' + c + '" style="width:22px;height:22px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px #d0d5dd;background:' + c + ';cursor:pointer"></button>'; }).join("") + '</div>') +
-          row("登录页标题", '<input class="x-input" name="login_title" maxlength="40" value="' + esc(a.login_title || "") + '" placeholder="研发与运维，一个平台" style="width:420px">') +
-          row("版权信息", '<input class="x-input" name="copyright" maxlength="120" value="' + esc(a.copyright || "") + '" placeholder="© 2026 某某科技" style="width:420px">') +
-          '<p style="color:#8a94a3;font-size:13px;margin:12px 0 0">平台名称在「基本信息」里修改。保存后页面会刷新以应用新外观。</p>' + foot() + '</form>';
-        var f = body.querySelector("[data-f]");
-        var prev = f.querySelector("[data-prev]");
-        f.querySelector("[data-file]").onchange = function () {
-          var file = this.files && this.files[0];
-          if (!file) return;
-          if (file.size > 256 * 1024) { toast("图片超过 256 KB，请压缩后再上传"); return; }
-          var rd = new FileReader();
-          rd.onload = function () { logo = String(rd.result || ""); prev.innerHTML = '<img src="' + esc(logo) + '" alt="" style="max-width:36px;max-height:36px">'; };
-          rd.readAsDataURL(file);
-        };
-        f.querySelector("[data-clear]").onclick = function () { logo = ""; f.elements.primary_color.value = "#1677ff"; prev.innerHTML = '<span style="font-size:12px;color:#8a94a3">默认</span>'; };
-        [].forEach.call(f.querySelectorAll("[data-preset]"), function (b) { b.onclick = function () { f.elements.primary_color.value = b.getAttribute("data-preset"); }; });
-        bindSave(f, function () {
-          var col = f.elements.primary_color.value;
-          return api("/settings/appearance", { method: "PUT", body: { logo: logo, primary_color: col.toLowerCase() === "#1677ff" ? "" : col, login_title: V(f, "login_title"), copyright: V(f, "copyright") } })
-            .then(function () { setTimeout(function () { location.reload(); }, 600); });
-        });
+        leaveAppearance = appearance(body, results[0] || {}, typeof results[1] === "string" ? results[1] : "", active);
       }, fail);
     } else if (tab === "smtp") {
       api("/settings/smtp").then(function (r) {

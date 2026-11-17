@@ -1,21 +1,54 @@
-.xi-root { min-width: 0; }
+.xi-root { min-width: 0; color: var(--x-text, #263c42); }
 .xi-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-.xi-toolbar h2, .xi-toolbar h3 { margin: 0 auto 0 0; font-size: 15px; }
+.xi-toolbar h2 { margin: 0 auto 0 0; font-size: 15px; }
+.xi-muted, .xi-eyebrow { color: var(--x-sub, #666); font-size: 12px; line-height: 1.65; }
+.xi-hint { padding: 10px 12px; border-left: 3px solid var(--x-blue, #1677ff); background: var(--x-bg, #f6f8fa); color: var(--x-sub, #666); font-size: 12px; line-height: 1.75; }
+.xi-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 20px 0 12px; }
+.xi-filters label { display: grid; gap: 6px; font-size: 12px; }
+.xi-filters label:first-child { flex: 1 1 260px; max-width: 440px; }
+.xi-filters select { min-width: 144px; }
+.xi-filters [data-xi-count] { margin-left: auto; padding-bottom: 8px; }
 .xi-scroll { overflow-x: auto; border: 1px solid var(--x-line, #ddd); border-radius: 6px; }
 .xi-table { min-width: 800px; width: 100%; margin: 0; }
-.xi-table td { vertical-align: top; overflow-wrap: anywhere; max-width: 300px; }
+.xi-table td { vertical-align: top; overflow-wrap: anywhere; max-width: 260px; }
 .xi-table small { display: block; margin-top: 5px; }
+.xi-ellipsis { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 .xi-table .x-btn { margin: 0 4px 6px 0; }
 .xi-state { color: var(--x-sub, #666); padding: 14px 0; }
 .xi-error { color: var(--x-red, #b42318); overflow-wrap: anywhere; }
-.xi-detail, .xi-components { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--x-line, #ddd); }
 .xi-root [hidden] { display: none; }
-.xi-form { max-width: 900px; }
-.xi-form fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; border: 0; padding: 0; margin: 0; }
-.xi-form label { display: grid; gap: 5px; font-size: 12px; min-width: 0; }
-.xi-form input, .xi-form select { width: 100%; min-width: 0; }
+.xi-detail { position: fixed; inset: 0; width: 100%; max-width: none; height: 100%; height: 100dvh; max-height: none; padding: 0; margin: 0; border: 0; background: transparent; color: var(--x-text, #263c42); overflow: hidden; }
+.xi-detail[open] { display: flex; justify-content: flex-end; }
+.xi-detail::backdrop { background: rgb(15 23 42 / 42%); }
+.xi-panel { display: flex; flex-direction: column; width: min(680px, 100%); height: 100%; min-width: 0; background: var(--x-panel, #fff); border-left: 1px solid var(--x-line, #ddd); box-shadow: -12px 0 36px rgb(0 0 0 / 12%); }
+.xi-drawer-head { display: flex; align-items: start; gap: 16px; padding: 24px 24px 16px; border-bottom: 1px solid var(--x-line, #ddd); }
+.xi-drawer-head > div { flex: 1; min-width: 0; }
+.xi-drawer-head h3 { margin: 6px 0 0; font-size: 20px; line-height: 1.4; overflow-wrap: anywhere; }
+.xi-drawer-context { display: grid; gap: 6px; padding: 14px 24px; background: var(--x-bg, #f6f8fa); font-size: 13px; overflow-wrap: anywhere; }
+.xi-drawer-context span { color: var(--x-sub, #666); font-size: 12px; }
+.xi-form { display: flex; flex-direction: column; flex: 1; min-height: 0; margin: 0; }
+.xi-drawer-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 24px 20px; }
+.xi-form fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; border: 0; padding: 0; margin: 20px 0 0; min-width: 0; }
+.xi-form label { display: grid; gap: 6px; font-size: 12px; min-width: 0; }
+.xi-form input, .xi-form select { width: 100%; min-width: 0; box-sizing: border-box; }
 .xi-form .xi-check { display: flex; align-items: center; gap: 6px; }
-.xi-check input { width: auto; }
-.xi-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+.xi-check input { width: auto; flex-shrink: 0; }
+.xi-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 16px 24px max(16px, env(safe-area-inset-bottom)); border-top: 1px solid var(--x-line, #ddd); background: var(--x-panel, #fff); }
+.xi-actions .xi-check { flex: 1; min-width: 160px; overflow-wrap: anywhere; }
+.xi-candidates { border: 1px solid var(--x-line, #ddd); border-radius: 6px; padding: 12px; margin: 16px 0; font-size: 12px; }
+.xi-candidates summary { cursor: pointer; font-weight: 600; }
+.xi-candidates article { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--x-line, #ddd); overflow-wrap: anywhere; }
+.xi-candidates small { display: block; color: var(--x-sub, #666); margin: 5px 0; }
+.xi-candidates code { display: block; margin-top: 6px; overflow-wrap: anywhere; white-space: normal; }
 .xi-root :focus-visible { outline: 2px solid var(--x-blue, #1677ff); outline-offset: 2px; }
-@media (max-width: 640px) { .xi-toolbar h2 { flex: 1 0 100%; } .xi-form fieldset { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) {
+  .xi-toolbar h2 { flex: 1 0 100%; }
+  .xi-filters label:first-child { max-width: none; }
+  .xi-panel { width: 100%; border-left: 0; }
+  .xi-drawer-head { padding: 18px 16px 14px; }
+  .xi-drawer-context, .xi-actions { padding-left: 16px; padding-right: 16px; }
+  .xi-drawer-body { padding-left: 16px; padding-right: 16px; }
+  .xi-form fieldset { grid-template-columns: minmax(0, 1fr); }
+  .xi-actions .xi-check { order: -1; flex-basis: 100%; }
+  .xi-actions [data-xi-save] { margin-left: auto; }
+}
