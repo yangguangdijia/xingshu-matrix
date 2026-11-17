@@ -2259,7 +2259,7 @@
 
       mount(el, shell("主机纳管", "主机清单、注册令牌与批量任务", hostAddButton()) +
         statCards([
-          { label: "主机总数", value: hR.ok ? String(hosts.length) : "—", sub: "host:read" },
+          { label: "主机总数", value: hR.ok ? String(hosts.length) : "—", sub: "已纳管" },
           { label: "在线主机", value: hR.ok ? String(online) : "—", sub: "agent 心跳 90s 内" },
           { label: "注册令牌", value: canWrite && tR.ok ? String(HOST_TOKENS.length) : "—", sub: canWrite ? "一次性接入凭证" : "需主机管理权限" },
           { label: "离线主机", value: hR.ok ? String(hosts.length - online) : "—", sub: "待排查" }
