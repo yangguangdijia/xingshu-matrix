@@ -621,7 +621,12 @@
     return '<section class="x-panel"><div class="x-tbar"><h2 class="x-h2">' + E(title) + "</h2>" + (tools || "") + "</div>" + inner + "</section>";
   }
   function loadingHTML(text) { return '<div class="x-panel"><p class="x-empty">' + E(text || "正在加载…") + "</p></div>"; }
-  function emptyHTML(text) { return '<p class="x-empty">' + E(text || "暂无数据") + "</p>"; }
+  // emptyHTML(text) 或 emptyHTML({ kind, title, desc, actions, fallback })：已加载 XSEmpty 且传对象时用统一空状态，否则回退为一行文字。
+  function emptyHTML(o) {
+    var X = window.XSEmpty;
+    if (o && typeof o === "object") return typeof X !== "undefined" && X && typeof X.html === "function" ? X.html(o) : '<p class="x-empty">' + E(o.fallback || o.title || "暂无数据") + "</p>";
+    return '<p class="x-empty">' + E(o || "暂无数据") + "</p>";
+  }
   function errorHTML(err) {
     return '<div class="x-panel"><p class="x-aerr" role="alert">' + E(errMsg(err)) + '</p><p style="margin:12px 0 0"><button class="x-btn" type="button" data-opretry>重试</button></p></div>';
   }
@@ -2756,9 +2761,9 @@
         var jkRows = CICD_JK.map(function (j) {
           return [E(j.name || "—"), code(j.url || "—", 60), E(j.username || "—"), fmtMin(j.created_at), '<button class="x-btn" type="button" data-jkdel="' + E(j.id) + '">删除</button>'];
         });
-        var html = panelHTML("流水线定义", (plRows.length ? tbl(["ID", "名称", "应用", "执行集群", "触发", "阶段", "更新时间", "操作"], plRows) : emptyHTML("暂无流水线。点击右上角「+ 新建流水线」。")),
+        var html = panelHTML("流水线定义", (plRows.length ? tbl(["ID", "名称", "应用", "执行集群", "触发", "阶段", "更新时间", "操作"], plRows) : emptyHTML({ kind: "pipeline", title: "还没有流水线", desc: "流水线把构建、扫描、测试和部署串起来，推送代码即可自动执行。", actions: [{ text: "新建流水线", act: "newpl", primary: true }], fallback: "暂无流水线。点击右上角「+ 新建流水线」。" })),
           '<button class="x-btn" type="button" data-newpl2 style="margin-left:auto">+ 新建</button>') +
-          panelHTML("执行集群（runner target）", (tgRows.length ? tbl(["名称", "集群", "环境", "命名空间", "创建时间", "操作"], tgRows) : emptyHTML("暂无执行集群。流水线构建需要至少一个执行集群。")),
+          panelHTML("执行集群（runner target）", (tgRows.length ? tbl(["名称", "集群", "环境", "命名空间", "创建时间", "操作"], tgRows) : emptyHTML({ kind: "cluster", size: "s", title: "暂无执行集群", desc: "流水线构建需要至少一个执行集群。", actions: [{ text: "接入集群", act: "newtg", primary: true }], fallback: "暂无执行集群。流水线构建需要至少一个执行集群。" })),
             '<button class="x-btn" type="button" data-newtg style="margin-left:auto">+ 接入集群</button>') +
           panelHTML("Jenkins 服务器", (jkRows.length ? tbl(["名称", "地址", "用户名", "创建时间", "操作"], jkRows) : emptyHTML("暂无 Jenkins 接入。流水线的 jenkins 阶段需要它。")),
             '<button class="x-btn" type="button" data-newjk style="margin-left:auto">+ 接入 Jenkins</button>') +
@@ -2776,6 +2781,8 @@
     }
     function bind() {
       var n2 = p.box.querySelector("[data-newpl2]"); if (n2) n2.onclick = function () { pipelineModal(function () { cicdPipelines(el); }); };
+      var ne = p.box.querySelector('[data-xse-act="newpl"]'); if (ne) ne.onclick = function () { pipelineModal(function () { cicdPipelines(el); }); };
+      var nte = p.box.querySelector('[data-xse-act="newtg"]'); if (nte) nte.onclick = function () { targetModal(function () { cicdPipelines(el); }); };
       var nt = p.box.querySelector("[data-newtg]"); if (nt) nt.onclick = function () { targetModal(function () { cicdPipelines(el); }); };
       var nj = p.box.querySelector("[data-newjk]"); if (nj) nj.onclick = function () { jenkinsModal(function () { cicdPipelines(el); }); };
       [].slice.call(p.box.querySelectorAll("[data-pledit]")).forEach(function (b) {
@@ -3152,8 +3159,11 @@
         ]);
         var html = panelHTML("应用", filters + (rows.length
           ? tbl(["应用", "代码仓库", "默认分支", "镜像仓库", "部署环境", "更新时间", "操作"], rows)
-          : emptyHTML(applicationList.length ? "没有符合当前筛选条件的应用。" : "尚未创建应用。点击右上角「+ 从代码仓库创建」，填写仓库地址、构建与部署环境即可。")));
+          : emptyHTML(applicationList.length
+            ? { kind: "search", title: "没有符合当前筛选条件的应用", desc: "换个关键词或环境再看看。", fallback: "没有符合当前筛选条件的应用。" }
+            : { kind: "app", title: "尚未创建应用", desc: "填写代码仓库地址、构建与部署环境，即可从代码仓库创建应用。", actions: [{ text: "从代码仓库创建", act: "newapp", primary: true }], fallback: "尚未创建应用。点击右上角「+ 从代码仓库创建」，填写仓库地址、构建与部署环境即可。" })));
         if (!p.paint(token, html)) return;
+        var newAppEmpty = p.box.querySelector('[data-xse-act="newapp"]'); if (newAppEmpty) newAppEmpty.onclick = function () { appModal(function () { deliveryList(el); }); };
         var search = p.box.querySelector("[data-app-search]");
         var env = p.box.querySelector("[data-app-env]");
         if (search) search.oninput = function () {
@@ -3336,9 +3346,12 @@
   }
   function isProd(env) { return /prod|生产/i.test(String(env || "")); }
 
-  var DELIVERY_MENU = ["导览", "服务列表", "实例列表", "部署编排", "金丝雀发布", "镜像扫描", "监控告警", "应用成员", "操作记录", "流程中心"];
+  var DELIVERY_MENU = ["导览", "服务列表", "实例列表", "拓扑", "部署编排", "金丝雀发布", "镜像扫描", "监控告警", "应用成员", "操作记录", "流程中心"];
+  // 拓扑视图依赖 xs-topology.js（window.XSTopo），未加载时不出现该菜单项
+  function deliveryMenu() { return DELIVERY_MENU.filter(function (item) { return item !== "拓扑" || !!(window.XSTopo && window.XSTopo.render); }); }
   function deliveryWorkspace(el, name, initialPane) {
-    var pane = DELIVERY_MENU.indexOf(initialPane) >= 0 ? initialPane : "导览";
+    var pane = deliveryMenu().indexOf(initialPane) >= 0 ? initialPane : "导览";
+    var topoView = null, appTargets = [];
     var app = null, selectedEnv = "", inventory = null, alerts = [], appClusters = [], appDatasources = [], auditRows = [], releases = [], runs = [], pipes = [];
     var p = livePage(el, "应用   " + name, "应用服务、实例、发布与运行记录", '<button class="x-btn" type="button" data-refresh>刷新</button>', "");
     el.querySelector("[data-refresh]").onclick = load;
@@ -3367,16 +3380,18 @@
         needReleases && env ? GET(base + "/releases", { env: env.name }) : Promise.resolve([]),
         needFlow ? GET("/cicd/runs", { page: 1, page_size: 100, app_id: app.id }) : Promise.resolve([]),
         needFlow ? GET("/cicd/pipelines", { app_id: app.id }) : Promise.resolve([]),
-        ["导览", "服务列表", "实例列表", "监控告警"].indexOf(pane) >= 0 && env ? GET(base + "/inventory", { env: env.name }) : Promise.resolve(null),
+        ["导览", "服务列表", "实例列表", "拓扑", "监控告警"].indexOf(pane) >= 0 && env ? GET(base + "/inventory", { env: env.name }) : Promise.resolve(null),
         pane === "监控告警" && activeCluster() ? GET("/observability/alerts", { page: 1, page_size: 200, cluster_id: activeCluster().id }) : Promise.resolve([]),
         pane === "操作记录" ? GET("/audit-logs", { page: 1, page_size: 100, resource: "cicd_application", q: String(app.id) }) : Promise.resolve([]),
         pane === "监控告警" ? GET("/clusters", { page_size: 500 }) : Promise.resolve([]),
-        pane === "监控告警" ? GET("/observability/datasources", { page_size: 500 }) : Promise.resolve([])
+        pane === "监控告警" ? GET("/observability/datasources", { page_size: 500 }) : Promise.resolve([]),
+        pane === "拓扑" ? GET("/cicd/targets").catch(function () { return []; }) : Promise.resolve([])
       ];
+      if (topoView) { topoView.destroy(); topoView = null; }
       Promise.all(requests.map(function (request) { return settle(request, null); })).then(function (results) {
         if (token !== p.token) return;
         var data = results.map(function (result) { return result.value; });
-        var failures = results.map(function (result, index) { return result.ok ? "" : ["发布", "运行", "流水线", "资源", "告警", "审计", "集群", "数据源"][index] + "：" + errMsg(result.error); }).filter(Boolean);
+        var failures = results.map(function (result, index) { return result.ok ? "" : ["发布", "运行", "流水线", "资源", "告警", "审计", "集群", "数据源", "执行集群"][index] + "：" + errMsg(result.error); }).filter(Boolean);
         releases = Array.isArray(data[0]) ? data[0] : asArray(data[0], ["items", "releases"]);
         runs = asArray(data[1], ["items", "runs"]);
         pipes = Array.isArray(data[2]) ? data[2] : asArray(data[2], ["items", "pipelines"]);
@@ -3385,6 +3400,7 @@
         auditRows = asArray(data[5], ["items"]);
         appClusters = asArray(data[6], ["items", "clusters"]);
         appDatasources = asArray(data[7], ["items", "datasources"]);
+        appTargets = asArray(data[8], ["items", "targets"]);
         if (!p.paint(token, (failures.length ? '<p class="x-aerr" role="alert">部分面板读取失败：' + E(failures.join("；")) + '</p>' : "") + workspaceHTML())) return;
         bindWorkspace();
       }).catch(function (err) { p.error(token, err); });
@@ -3443,6 +3459,11 @@
         return envBar() + '<p class="x-frac">' + E(env.name + "   " + env.namespace + "   实时 Pod 清单") + (inv.warnings && inv.warnings.length ? "<br />" + inv.warnings.map(E).join("<br />") : "") + "</p>" +
           (podRows.length ? tbl(["Pod", "命名空间", "Ready", "状态", "重启", "节点", "Pod IP", "详情"], podRows) : emptyHTML("此环境当前没有该应用的 Pod。"));
       }
+      if (pane === "拓扑") {
+        if (!env) return emptyHTML("该应用没有环境配置。");
+        if (!window.XSTopo) return emptyHTML("拓扑模块未加载，请刷新页面。");
+        return envBar() + '<p class="x-frac">' + E(env.name + "   " + (env.namespace || "未配置命名空间")) + "   应用路由 → 服务 → 工作负载 → 容器组，点击节点查看速览</p>" + '<div data-app-topo-host></div>';
+      }
       if (pane === "部署编排") {
         if (!env) return emptyHTML("该应用没有环境配置。");
         var configRows = (app.envs || []).map(function (item) { return [E(item.name), E(item.namespace || "—"), E(item.deployment || (item.helm && item.helm.release) || "—"), E("#" + item.target_id),
@@ -3486,8 +3507,22 @@
     function workspaceHTML() {
       var crumbs = '<p class="x-crumb">CI/CD<i>/</i>' + E(app.name) + '<i>/</i><b>' + E(pane) + "</b></p>";
       var nav = '<nav class="x-menu" aria-label="应用菜单"><a href="#/delivery/apps" class="x-back">← 返回应用列表</a><p class="x-appname">' + E(app.name) + "</p>" +
-        DELIVERY_MENU.map(function (item) { return '<button type="button" data-pane="' + E(item) + '"' + (item === pane ? ' class="on" aria-current="page"' : "") + ">" + E(item) + "</button>"; }).join("") + "</nav>";
+        deliveryMenu().map(function (item) { return '<button type="button" data-pane="' + E(item) + '"' + (item === pane ? ' class="on" aria-current="page"' : "") + ">" + E(item) + "</button>"; }).join("") + "</nav>";
       return '<div class="x-appv">' + nav + '<section class="x-panel">' + crumbs + paneContent() + "</section></div>";
+    }
+    // 应用拓扑：执行集群已关联平台集群时读取该命名空间的实时资源（含应用路由），否则用应用清单推算
+    function mountAppTopology(host) {
+      var env = envConfig();
+      if (!env) return null;
+      var target = appTargets.filter(function (t) { return String(t.id) === String((inventory && inventory.target_id) || env.target_id); })[0] || null;
+      var clusterId = target && Number(target.cluster_id) > 0 ? target.cluster_id : null;
+      var spec = { name: app.name, workloads: env.deployment ? [env.deployment] : [], release: env.helm && env.helm.release || "" };
+      var fallback = inventory ? window.XSTopo.fromInventory(inventory) : null;
+      if (!clusterId || !env.namespace) {
+        if (!fallback) { host.innerHTML = emptyHTML("暂时无法读取该环境的资源清单。"); return null; }
+        return window.XSTopo.render(host, { data: fallback, namespace: env.namespace, height: 480 });
+      }
+      return window.XSTopo.render(host, { clusterId: clusterId, namespace: env.namespace, app: spec, fallbackData: fallback, height: 480 });
     }
     function bindWorkspace() {
       [].slice.call(p.box.querySelectorAll("[data-pane]")).forEach(function (button) {
@@ -3517,6 +3552,8 @@
       var newRun = p.box.querySelector("[data-app-newrun]"); if (newRun) newRun.onclick = function () { runPipelineModal(load, pipes); };
       var canaryHost = p.box.querySelector("[data-app-canary-host]");
       if (canaryHost && window.XSReleaseCanary) window.XSReleaseCanary.render(canaryHost, { appId: app.id, env: (envConfig() || {}).name || "" });
+      var topoHost = p.box.querySelector("[data-app-topo-host]");
+      if (topoHost && window.XSTopo) topoView = mountAppTopology(topoHost);
       var scanHost = p.box.querySelector("[data-app-scan-host]");
       if (scanHost && window.XSImageScan) window.XSImageScan.render(scanHost, { appId: app.id });
       [].slice.call(p.box.querySelectorAll("[data-app-canary]")).forEach(function (button) {

@@ -10,6 +10,11 @@
  */
 (function (root) {
   "use strict";
+  // emptyHTML：统一空状态（XSEmpty）；未加载 xs-empty.js 时回退为原来的一行文字 fallbackHTML。
+  function emptyHTML(o, fallbackHTML) {
+    var X = root.XSEmpty;
+    return typeof X !== "undefined" && X && typeof X.html === "function" ? X.html(o) : fallbackHTML;
+  }
   var PAGE_SIZE = 10; // 每页运行记录数（每条需单独读取详情，保持较小）
   var POLL_MS = 8000;
   var SEV = {
@@ -221,12 +226,18 @@
       var body;
       if (st.loading && !st.scans.length) body = '<p class="xis-empty">正在加载…</p>';
       else if (st.error) body = '<p class="xis-err" data-isc-error>' + esc(st.error) + "</p>";
-      else if (!Object.keys(st.scanPipeIds).length) body = '<p class="xis-empty" data-isc-noscan>该应用的流水线尚未配置镜像扫描阶段。可在流水线编辑中添加「镜像扫描」阶段后运行。</p>';
+      else if (!Object.keys(st.scanPipeIds).length) {
+        var firstPipe = st.pipes && st.pipes[0];
+        body = emptyHTML({ kind: "scan", title: "该应用的流水线尚未配置镜像扫描阶段", desc: "可在流水线编辑中添加「镜像扫描」阶段后运行，构建出的镜像会自动检查已知漏洞。", attrs: { "data-isc-noscan": "" },
+          actions: [{ text: firstPipe ? "前往流水线添加扫描阶段" : "前往流水线", href: firstPipe ? "#/cicd/pipeline/" + encodeURIComponent(firstPipe.id) : "#/cicd/pipeline", primary: true }] },
+          '<p class="xis-empty" data-isc-noscan>该应用的流水线尚未配置镜像扫描阶段。可在流水线编辑中添加「镜像扫描」阶段后运行。</p>');
+      }
       else {
         var pages = Math.max(1, Math.ceil(st.totalRuns / PAGE_SIZE));
         body = cardsHTML() + (st.partial ? '<p class="xis-err" role="alert">' + esc(st.partial) + "</p>" : "") +
           (st.scans.length ? '<table class="xis-table"><thead><tr><th>运行</th><th>镜像</th><th>扫描方式</th><th>结果</th><th>严重 / 高 / 中 / 低</th><th>阻断</th><th>扫描时间</th><th>操作</th></tr></thead><tbody>' +
-            st.scans.map(rowHTML).join("") + "</tbody></table>" : '<p class="xis-empty">本页的运行记录中没有扫描结果' + (st.hasActive ? "，扫描进行中的运行完成后会自动刷新" : "") + "</p>") +
+            st.scans.map(rowHTML).join("") + "</tbody></table>" : emptyHTML({ kind: "scan", size: "s", title: "本页的运行记录中没有扫描结果", desc: st.hasActive ? "扫描进行中的运行完成后会自动刷新。" : "运行包含扫描阶段的流水线即可产生新的扫描结果。", actions: [{ text: "刷新", act: "reload", attrs: { "data-isc-click": "reload" } }] },
+              '<p class="xis-empty">本页的运行记录中没有扫描结果' + (st.hasActive ? "，扫描进行中的运行完成后会自动刷新" : "") + "</p>")) +
           '<div class="xis-pager"><span>按运行记录分页，共 ' + esc(st.totalRuns) + " 次运行</span>" +
           '<button type="button" class="x-btn" data-isc-click="prev"' + (st.page <= 1 ? " disabled" : "") + ">上一页</button>" +
           "<span>" + st.page + " / " + pages + "</span>" +

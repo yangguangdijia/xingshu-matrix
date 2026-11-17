@@ -89,6 +89,13 @@
   // 「密码 / Token」标签随类型变化
   var _open = credentialForm;
 
+  // 凭证空状态：优先用统一空状态组件 XSEmpty，未加载时回退为原文字。
+  function credEmptyHTML() {
+    var X = root.XSEmpty, text = "还没有凭证。私有代码仓库和镜像仓库需要先在这里保存凭证。";
+    if (typeof X === "undefined" || !X || typeof X.html !== "function") return '<p class="x-cicd-empty">' + text + "</p>";
+    return X.html({ kind: "credential", size: "s", title: "还没有凭证", desc: "私有代码仓库和镜像仓库需要先在这里保存凭证。",
+      actions: [{ text: "新建凭证", act: "cred-new", primary: true, attrs: { "data-cred-new": "" } }] });
+  }
   function credentialsPanelHTML(list, error) {
     var rows = (list || []).map(function (c) {
       return "<tr><td class=\"x-cicd-title\">" + esc(c.name) + "</td><td>" + esc(CRED_LABEL[c.type] || c.type) + "</td><td class=\"x-cicd-break\">" +
@@ -99,12 +106,11 @@
     return '<section class="x-cicd-section x-cicd-connection"><div class="x-cicd-section-head"><h2>凭证</h2><button class="x-btn" type="button" data-cred-new>新建</button></div>' +
       (error ? '<p class="x-cicd-alert" role="status">' + esc(error) + "</p>" : "") +
       (rows.length ? '<div class="x-cicd-table-wrap"><table class="x-table x-cicd-table x-cicd-table--compact"><thead><tr><th>名称</th><th>类型</th><th>仓库 / 用户</th><th>引用</th><th>操作</th></tr></thead><tbody>' + rows.join("") + "</tbody></table></div>"
-        : '<p class="x-cicd-empty">还没有凭证。私有代码仓库和镜像仓库需要先在这里保存凭证。</p>') + "</section>";
+        : credEmptyHTML()) + "</section>";
   }
   function bindCredentials(box, list, reload) {
     var byId = function (id) { return (list || []).filter(function (c) { return String(c.id) === String(id); })[0]; };
-    var n = box.querySelector("[data-cred-new]");
-    if (n) n.onclick = function () { credentialForm(null, reload); };
+    [].forEach.call(box.querySelectorAll("[data-cred-new]"), function (n) { n.onclick = function () { credentialForm(null, reload); }; });
     [].forEach.call(box.querySelectorAll("[data-cred-edit]"), function (b) { b.onclick = function () { credentialForm(byId(b.getAttribute("data-cred-edit")), reload); }; });
     [].forEach.call(box.querySelectorAll("[data-cred-del]"), function (b) {
       b.onclick = function () {

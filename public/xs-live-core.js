@@ -478,6 +478,177 @@
     return String(alert.fingerprint || alert.key || "");
   }
 
+  /* ---------------- v1.31 总览健康 / 事件 / Top 消耗 / 主机状态（纯函数） ---------------- */
+  // 状态四色：正常 绿、警告 橙、异常 红、未知/停用 灰
+  var STATE_COLORS = { ok: "#16a34a", warn: "#d97706", bad: "#dc2626", muted: "#6b7280" };
+  var POD_BAD_STATUS = /CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError|CreateContainerError|InvalidImageName|RunContainerError|OOMKilled|Evicted|ContainerStatusUnknown|^Error$/i;
+  var POD_RESTART_WARN = 5;
+
+  function readyParts(v) {
+    var m = String(v == null ? "" : v).match(/^\s*(\d+)\s*\/\s*(\d+)\s*$/);
+    return m ? [Number(m[1]), Number(m[2])] : null;
+  }
+
+  // 异常 Pod：失败/未知/等待中、容器处于错误状态，或运行中但容器未全部就绪；已完成与终止中不算
+  function isAbnormalPod(p) {
+    if (!p) return false;
+    var phase = String(p.phase || ""), status = String(p.status || "");
+    if (phase === "Succeeded" || status === "Completed" || status === "Terminating") return false;
+    if (phase === "Failed" || phase === "Unknown" || phase === "Pending") return true;
+    if (POD_BAD_STATUS.test(status)) return true;
+    var r = readyParts(p.ready);
+    return !!(r && r[1] > 0 && r[0] < r[1]);
+  }
+
+  function isRestartingPod(p) {
+    return !!p && String(p.phase || "") !== "Succeeded" && Number(p.restarts || 0) >= POD_RESTART_WARN;
+  }
+
+  // 未就绪工作负载：期望副本 > 0 且就绪数不足
+  function isUnreadyWorkload(w) {
+    var r = readyParts(w && w.ready);
+    return !!(r && r[1] > 0 && r[0] < r[1]);
+  }
+
+  function nodePressured(n) {
+    return (n && n.conditions || []).some(function (c) { return c && c.type !== "Ready" && c.status === "True"; });
+  }
+
+  var CRITICAL_SEVERITY = { critical: 1, fatal: 1, p0: 1, severe: 1, error: 1 };
+
+  // 健康总览：控制面 / 节点 / 工作负载 / 告警 四格 + 一句结论。
+  // d: { clusterId, apiOk, nodes, nodesOk, pods, podsOk, deployments, deploysOk, alerts, alertsOk }
+  function overviewHealth(d) {
+    d = d || {};
+    var cid = d.clusterId == null ? "" : String(d.clusterId);
+    var link = function (sub, q) { return clusterResourceHash("cluster", sub, cid) + (q ? "?" + q : ""); };
+    var nodes = d.nodes || [], pods = d.pods || [], deploys = d.deployments || [], alerts = d.alerts || [];
+    var cells = [];
+
+    // 控制面：API Server 可达 + kube-system 组件 Pod
+    var sysPods = pods.filter(function (p) { return p && p.namespace === "kube-system"; });
+    var sysBad = sysPods.filter(isAbnormalPod).length;
+    if (d.apiOk === false) {
+      cells.push({ key: "control", label: "控制面", tone: "bad", value: "不可达", detail: "API Server 无法访问", href: clusterResourceHash("cluster", "list", "") });
+    } else if (!d.podsOk) {
+      cells.push({ key: "control", label: "控制面", tone: "ok", value: "可达", detail: "系统组件状态未知", href: "" });
+    } else if (sysBad) {
+      cells.push({ key: "control", label: "控制面", tone: "warn", value: String(sysBad), detail: "个系统组件 Pod 异常", href: link("workloads", "kind=pods&ns=kube-system&status=abnormal") });
+    } else {
+      cells.push({ key: "control", label: "控制面", tone: "ok", value: "正常", detail: "API Server 可达 · 系统组件 " + sysPods.length + " 个就绪", href: "" });
+    }
+
+    // 节点
+    if (!d.nodesOk) {
+      cells.push({ key: "nodes", label: "节点", tone: "muted", value: "—", detail: "节点状态读取失败", href: "" });
+    } else {
+      var notReady = nodes.filter(function (n) { return !n.ready; }).length;
+      var limited = nodes.filter(function (n) { return n.ready && (n.unschedulable || nodePressured(n)); }).length;
+      var parts = [];
+      if (notReady) parts.push("未就绪 " + notReady);
+      if (limited) parts.push("禁止调度/资源压力 " + limited);
+      cells.push({ key: "nodes", label: "节点", tone: notReady ? "bad" : limited ? "warn" : nodes.length ? "ok" : "muted",
+        value: (nodes.length - notReady) + "/" + nodes.length, detail: parts.length ? parts.join(" · ") : nodes.length ? "全部就绪" : "没有节点",
+        href: notReady || limited ? link("nodes", "status=abnormal") : "" });
+    }
+
+    // 工作负载：异常 Pod / 频繁重启 / 未就绪 Deployment
+    if (!d.podsOk && !d.deploysOk) {
+      cells.push({ key: "workloads", label: "工作负载", tone: "muted", value: "—", detail: "工作负载读取失败", href: "" });
+    } else {
+      var badPods = d.podsOk ? pods.filter(isAbnormalPod).length : 0;
+      var restarting = d.podsOk ? pods.filter(function (p) { return !isAbnormalPod(p) && isRestartingPod(p); }).length : 0;
+      var unready = d.deploysOk ? deploys.filter(isUnreadyWorkload).length : 0;
+      var wparts = [];
+      if (badPods) wparts.push("异常 Pod " + badPods);
+      if (unready) wparts.push("未就绪 Deployment " + unready);
+      if (restarting) wparts.push("频繁重启 " + restarting);
+      var wTone = badPods || unready ? "bad" : restarting ? "warn" : "ok";
+      var running = pods.filter(function (p) { return p && p.phase === "Running"; }).length;
+      cells.push({ key: "workloads", label: "工作负载", tone: wTone,
+        value: wTone === "ok" ? String(running) : String(badPods + unready + restarting),
+        detail: wTone === "ok" ? "Pod 运行中，未发现异常" : wparts.join(" · "),
+        href: wTone === "ok" ? "" : badPods || restarting || !unready ? link("workloads", "kind=pods&status=abnormal") : link("workloads", "kind=deployments&status=abnormal") });
+    }
+
+    // 告警
+    if (!d.alertsOk) {
+      cells.push({ key: "alerts", label: "告警", tone: "muted", value: "—", detail: "未接入告警源", href: "" });
+    } else {
+      var critical = alerts.filter(function (a) {
+        var sev = String(a && (a.severity || (a.labels || {}).severity) || "").toLowerCase();
+        return !!CRITICAL_SEVERITY[sev];
+      }).length;
+      cells.push({ key: "alerts", label: "告警", tone: critical ? "bad" : alerts.length ? "warn" : "ok", value: String(alerts.length),
+        detail: alerts.length ? (critical ? "严重 " + critical + " · " : "") + "触发中" : "没有触发中的告警",
+        href: alerts.length ? "#/observe/events" : "" });
+    }
+
+    var issues = cells.filter(function (c) { return c.tone === "warn" || c.tone === "bad"; }).length;
+    var unknown = cells.filter(function (c) { return c.tone === "muted"; }).length;
+    var anyBad = cells.some(function (c) { return c.tone === "bad"; });
+    var summary = issues ? issues + " 项需处理" : unknown ? "未发现异常" : "全部正常";
+    var note = issues ? "" : unknown ? "部分数据暂不可用，已按可读取的数据判断" : "控制面、节点、工作负载与告警均无异常";
+    return { tone: anyBad ? "bad" : issues ? "warn" : unknown === cells.length ? "muted" : "ok", issues: issues, summary: summary, note: note, cells: cells };
+  }
+
+  // 最近事件：按最后发生时间倒序，only="Warning" 时只看警告
+  function recentEvents(events, limit, only) {
+    var list = (events || []).filter(function (e) { return e && (!only || String(e.type || "") === only); });
+    return list.map(function (e, i) {
+      var d = toDate(e.last_seen || e.first_seen);
+      return { e: e, i: i, t: d ? d.getTime() : 0 };
+    }).sort(function (a, b) { return b.t - a.t || a.i - b.i; }).slice(0, limit == null ? 8 : limit).map(function (x) { return x.e; });
+  }
+
+  // Prometheus 向量结果 → [{namespace, pod, value}]，按值倒序
+  function podTopConsumers(res, limit) {
+    var result = res && res.data && Array.isArray(res.data.result) ? res.data.result : [];
+    return result.map(function (row) {
+      var m = row && row.metric || {}, v = row && Array.isArray(row.value) ? Number(row.value[1]) : NaN;
+      return { namespace: String(m.namespace || ""), pod: String(m.pod || ""), value: v };
+    }).filter(function (x) { return x.pod && isFinite(x.value) && x.value >= 0; })
+      .sort(function (a, b) { return b.value - a.value || a.pod.localeCompare(b.pod); })
+      .slice(0, limit == null ? 5 : limit);
+  }
+
+  function fmtCores(v) {
+    if (v == null || !isFinite(v)) return "—";
+    return v < 1 ? Math.round(v * 1000) + "m" : (v >= 10 ? v.toFixed(1) : v.toFixed(2)) + " 核";
+  }
+
+  // "#/cluster/hosts?status=offline" -> { status: "offline" }
+  function hashQuery(hash) {
+    var s = String(hash == null ? "" : hash), i = s.indexOf("?"), out = {};
+    if (i < 0) return out;
+    s.slice(i + 1).split("&").forEach(function (kv) {
+      if (!kv) return;
+      var j = kv.indexOf("="), k = decodePart(j < 0 ? kv : kv.slice(0, j)), v = j < 0 ? "" : decodePart(kv.slice(j + 1).replace(/\+/g, " "));
+      if (k) out[k] = v;
+    });
+    return out;
+  }
+
+  function stripHashQuery(hash) { return String(hash == null ? "" : hash).split("?")[0]; }
+
+  // 主机状态四色：离线 红、负载高 橙、未注册 灰、在线 绿
+  function hostState(h) {
+    if (!h) return { text: "未知", tone: "muted", rank: 2, filter: "offline" };
+    if (h.online) {
+      var f = h.facts || {};
+      if (Number(f.cpu_percent) >= 90 || Number(f.mem_percent) >= 90) return { text: "负载高", tone: "warn", rank: 1, filter: "online" };
+      return { text: "在线", tone: "ok", rank: 3, filter: "online" };
+    }
+    if (!h.enrolled) return { text: "未注册", tone: "muted", rank: 2, filter: "offline" };
+    return { text: "离线", tone: "bad", rank: 0, filter: "offline" };
+  }
+
+  // 异常置顶：离线 → 负载高 → 未注册 → 在线，同级保持原顺序
+  function sortHostsByHealth(hosts) {
+    return (hosts || []).map(function (h, i) { return { h: h, i: i, r: hostState(h).rank }; })
+      .sort(function (a, b) { return a.r - b.r || a.i - b.i; }).map(function (x) { return x.h; });
+  }
+
   var PURE = {
     esc: escLocal,
     clusterEditPayload: clusterEditPayload,
@@ -521,6 +692,17 @@
     listIsIncomplete: listIsIncomplete,
     countLabel: countLabel,
     alertIdOf: alertIdOf,
+    isAbnormalPod: isAbnormalPod,
+    isRestartingPod: isRestartingPod,
+    isUnreadyWorkload: isUnreadyWorkload,
+    overviewHealth: overviewHealth,
+    recentEvents: recentEvents,
+    podTopConsumers: podTopConsumers,
+    fmtCores: fmtCores,
+    hashQuery: hashQuery,
+    stripHashQuery: stripHashQuery,
+    hostState: hostState,
+    sortHostsByHealth: sortHostsByHealth,
     prettyJSON: prettyJSON
   };
 
@@ -747,7 +929,9 @@
       '<button type="button" class="x-btn" data-live-retry>' + gEsc(retryLabel || "重试") + '</button></section>';
   }
 
-  function emptyPanel(title, desc) {
+  function emptyPanel(title, desc, kind) {
+    var X = window.XSEmpty;
+    if (typeof X !== "undefined" && X && typeof X.html === "function") return '<section class="x-panel">' + X.html({ kind: kind || "generic", title: title, desc: desc || "" }) + "</section>";
     return '<section class="x-panel x-nodata"><strong>' + gEsc(title) + '</strong><p>' + gEsc(desc || "") + '</p></section>';
   }
 
@@ -1273,8 +1457,9 @@
       '<div class="ks-ring-txt"><p>' + gEsc(title) + '</p><strong>' + gEsc(main) + '</strong></div></div>';
   }
   function ksSpark(points, key, color) {
-    var pts = points.filter(function (p) { return p[key] != null; });
-    if (pts.length < 2) return '<p class="ks-muted ks-spark-empty">采样中…</p>';
+    var pts = (points || []).filter(function (p) { return p[key] != null; });
+    if (!pts.length) return '<p class="ks-muted ks-line">暂无实时用量</p>';
+    if (pts.length < 2) return '<p class="ks-line">当前 <b>' + Number(pts[0][key]).toFixed(1) + '%</b> <span class="ks-muted">· 继续采样后显示趋势</span></p>';
     var w = 560, h = 120, t0 = pts[0].t, t1 = pts[pts.length - 1].t;
     var d = pts.map(function (p, i) {
       return (i ? "L" : "M") + ((p.t - t0) / (t1 - t0 || 1) * w).toFixed(1) + "," + (h - 6 - p[key] / 100 * (h - 12)).toFixed(1);
@@ -1327,7 +1512,22 @@
       ".ks-comp div em{margin-left:auto;font-style:normal;font-size:12px;color:var(--x-sub,#6b7280);white-space:nowrap}",
       ".ks-comp div span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".ks-cond{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.ks-cond span{font-size:12px;padding:3px 8px;border-radius:4px;background:#f0fdf4;color:#15803d}.ks-cond span.bad{background:#fef2f2;color:#b91c1c}",
-      ".ks-spark{width:100%;height:120px;display:block}.ks-spark line{stroke:var(--x-line,#e5e7eb);stroke-dasharray:3 3}.ks-spark-empty{height:120px;display:flex;align-items:center;justify-content:center;margin:0}",
+      ".ks-spark{width:100%;height:120px;display:block}.ks-spark line{stroke:var(--x-line,#e5e7eb);stroke-dasharray:3 3}",
+      ".ks-line{margin:0;padding:4px 0;font-size:13px;line-height:1.6}.ks-note{margin:0 0 14px;padding:0 2px}",
+      ".ks-grid1{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;margin-bottom:14px}",
+      ".ks-health{display:grid;grid-template-columns:minmax(210px,1.2fr) repeat(4,minmax(0,1fr));background:var(--x-card,#fff);border:1px solid var(--x-line);border-radius:10px;margin-bottom:14px;overflow:hidden}",
+      ".ks-hsum{display:flex;flex-direction:column;justify-content:center;gap:6px;padding:16px 18px;border-right:1px solid var(--x-line)}",
+      ".ks-hsum strong{display:flex;align-items:center;gap:8px;font-size:18px}.ks-hsum strong svg{flex:none}",
+      ".ks-hcell{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border-right:1px solid var(--x-line);border-top:3px solid transparent;min-width:0;text-decoration:none;color:inherit;position:relative}",
+      ".ks-hcell:last-child{border-right:0}.ks-hcell strong{font-size:22px;line-height:1.2}.ks-hlabel{font-size:12.5px;color:var(--x-sub,#6b7280)}",
+      ".ks-hdetail{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".ks-hcell--go{cursor:pointer}.ks-hcell--go:hover{background:var(--x-hover,#f5f7fb)}.ks-hcell--go:focus-visible{outline:2px solid var(--x-blue,#2563eb);outline-offset:-2px}",
+      ".ks-hcell em{position:absolute;right:12px;top:12px;font-style:normal;font-size:12px;color:var(--x-blue,#2563eb)}",
+      "@media(max-width:1180px){.ks-health{grid-template-columns:repeat(2,minmax(0,1fr))}.ks-hsum{grid-column:1/-1;border-right:0;border-bottom:1px solid var(--x-line)}.ks-hcell{border-bottom:1px solid var(--x-line)}}",
+      ".ks-ev2 li.is-warn{background:#fffbeb;box-shadow:inset 3px 0 0 #d97706;padding-left:8px}.ks-ev2 li{padding-left:8px;padding-right:4px}",
+      ".ks-ev li strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}",
+      ".ks-pill.ks-pill--info{background:#f3f4f6;color:#4b5563}.ks-ellipsis{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".ks-tabs button[disabled]{opacity:.45;cursor:not-allowed}",
       ".ks-tabs{display:inline-flex;border:1px solid var(--x-line);border-radius:6px;overflow:hidden}.ks-tabs button{border:0;background:none;padding:3px 10px;font-size:12px;cursor:pointer;color:var(--x-sub,#6b7280)}",
       ".ks-tabs button.on{background:var(--x-blue,#2563eb);color:#fff}",
       ".ks-rank{width:100%;border-collapse:collapse;font-size:13px}.ks-rank td,.ks-rank th{padding:8px 6px;border-bottom:1px solid var(--x-line);text-align:left}.ks-rank th{font-weight:500;color:var(--x-sub,#6b7280);font-size:12px}",
@@ -1337,6 +1537,127 @@
       ".ks-pill{font-size:11.5px;padding:1px 7px;border-radius:4px;background:#fff7ed;color:#c2410c;white-space:nowrap}"
     ].join("\n");
     document.head.appendChild(s);
+  }
+
+  var KS_TOP = {}, KS_CHART = {};
+  var KS_ICON_OK = '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 10.2l2.6 2.6L14.2 7.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var KS_ICON_WARN = '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 5.5v5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="14.2" r="1.1" fill="currentColor"/></svg>';
+
+  // 健康总览卡：一句结论 + 控制面/节点/工作负载/告警 四格，异常格可点击跳到带筛选的列表
+  function ksHealthHtml(h) {
+    var color = STATE_COLORS[h.tone] || STATE_COLORS.muted;
+    var head = '<div class="ks-hsum"><strong style="color:' + color + '">' + (h.issues ? KS_ICON_WARN : KS_ICON_OK) +
+      '<span data-ks-health-summary>' + gEsc(h.summary) + '</span></strong>' +
+      '<span class="ks-muted">' + gEsc(h.note || "点击标记的分项查看需要处理的对象") + '</span></div>';
+    var cells = h.cells.map(function (c) {
+      var col = STATE_COLORS[c.tone] || STATE_COLORS.muted;
+      var inner = '<span class="ks-hlabel"><i class="ks-dot" style="background:' + col + '"></i>' + gEsc(c.label) + '</span>' +
+        '<strong style="color:' + (c.tone === "ok" || c.tone === "muted" ? "var(--x-text,#1f2937)" : col) + '">' + gEsc(c.value) + '</strong>' +
+        '<span class="ks-muted ks-hdetail" title="' + gEsc(c.detail) + '">' + gEsc(c.detail) + '</span>';
+      var attrs = ' data-ks-health="' + gEsc(c.key) + '" data-tone="' + gEsc(c.tone) + '" style="border-top-color:' + col + '"';
+      return c.href
+        ? '<a class="ks-hcell ks-hcell--go" href="' + gEsc(c.href) + '" data-ks-filter-go="' + gEsc(c.href) + '"' + attrs + ' title="查看' + gEsc(c.label) + '异常">' + inner + '<em>查看 ›</em></a>'
+        : '<div class="ks-hcell"' + attrs + '>' + inner + '</div>';
+    }).join("");
+    return '<section class="ks-health" aria-label="健康总览" data-ks-health-card>' + head + cells + '</section>';
+  }
+
+  // 最近事件卡：警告高亮、相对时间，最多 8 条
+  function ksEventsHtml(res, events, filter, clusterId) {
+    var warnCount = (events || []).filter(function (e) { return e && e.type === "Warning"; }).length;
+    var list = recentEvents(events, 8, filter === "warn" ? "Warning" : "");
+    var all = clusterResourceHash("cluster", "events", clusterId) + (filter === "warn" ? "?type=Warning" : "");
+    var tabs = '<span class="ks-tabs"><button type="button" data-ks-ev="all" class="' + (filter === "warn" ? "" : "on") + '">全部</button>' +
+      '<button type="button" data-ks-ev="warn" class="' + (filter === "warn" ? "on" : "") + '">警告 ' + warnCount + '</button></span>';
+    var body;
+    if (!res.ok) body = '<p class="ks-muted ks-line">事件读取失败：' + gEsc(errText(res.err)) + '</p>';
+    else if (!list.length) body = '<p class="ks-muted ks-line">' + (filter === "warn" ? "最近没有警告事件" : "最近没有事件") + '</p>';
+    else body = '<ul class="ks-ev ks-ev2">' + list.map(function (e) {
+      var warn = e.type === "Warning";
+      return '<li class="' + (warn ? "is-warn" : "") + '"><span class="ks-pill ' + (warn ? "" : "ks-pill--info") + '">' + gEsc(warn ? "警告" : "正常") + '</span>' +
+        '<strong title="' + gEsc((e.object_kind || "") + " " + (e.namespace ? e.namespace + "/" : "") + (e.object_name || "")) + '">' + gEsc(e.reason || "—") +
+        ' <span class="ks-muted">' + gEsc((e.namespace ? e.namespace + "/" : "") + (e.object_name || "")) + '</span></strong>' +
+        '<span class="ks-muted" title="' + gEsc(fmtTime(e.last_seen)) + '">' + gEsc(fmtAgo(e.last_seen)) + (e.count > 1 ? " ×" + e.count : "") + '</span>' +
+        '<p title="' + gEsc(e.message) + '">' + gEsc(e.message || "") + '</p></li>';
+    }).join("") + '</ul>';
+    return '<h3>最近事件<span class="ks-r ks-muted">' + tabs +
+      ' <a href="' + gEsc(all) + '" data-ks-filter-go="' + gEsc(all) + '">查看全部</a></span></h3>' + body;
+  }
+
+  function bindKsEvents(el, res, events, clusterId) {
+    var box = el.querySelector("[data-ks-events]");
+    if (!box) return;
+    [].slice.call(box.querySelectorAll("[data-ks-filter-go]")).forEach(function (a) {
+      a.onclick = function (e) { if (e && e.preventDefault) e.preventDefault(); goFiltered(a.getAttribute("data-ks-filter-go")); };
+    });
+    [].slice.call(box.querySelectorAll("[data-ks-ev]")).forEach(function (b) {
+      b.onclick = function () {
+        el.__ksEv = b.getAttribute("data-ks-ev");
+        box.innerHTML = ksEventsHtml(res, events, el.__ksEv, clusterId);
+        bindKsEvents(el, res, events, clusterId);
+      };
+    });
+  }
+
+  // 资源消耗 Top 5（Pod，按 CPU / 内存切换）；没有指标时返回空串（整卡隐藏）
+  function ksTopHtml(top, by) {
+    if (!top || (!top.cpu.length && !top.mem.length)) return "";
+    if (by !== "mem" && !top.cpu.length) by = "mem";
+    if (by === "mem" && !top.mem.length) by = "cpu";
+    var rows = by === "mem" ? top.mem : top.cpu, max = rows.length ? rows[0].value || 1 : 1;
+    return '<h3>资源消耗 Top 5<span class="ks-r"><span class="ks-tabs">' +
+      '<button type="button" data-ks-top-by="cpu" class="' + (by === "cpu" ? "on" : "") + '"' + (top.cpu.length ? "" : " disabled") + '>CPU</button>' +
+      '<button type="button" data-ks-top-by="mem" class="' + (by === "mem" ? "on" : "") + '"' + (top.mem.length ? "" : " disabled") + '>内存</button></span></span></h3>' +
+      '<table class="ks-rank"><thead><tr><th>Pod</th><th>命名空间</th><th>' + (by === "mem" ? "内存" : "CPU") + '</th></tr></thead><tbody>' +
+      rows.map(function (x) {
+        return '<tr><td class="ks-ellipsis" title="' + gEsc(x.pod) + '">' + gEsc(x.pod) + '</td><td class="ks-muted">' + gEsc(x.namespace || "—") + '</td>' +
+          '<td style="width:44%"><div style="display:flex;align-items:center;gap:8px"><div class="ks-bar" style="flex:1"><i style="width:' +
+          Math.max(2, Math.min(100, x.value / max * 100)).toFixed(1) + '%;background:#2563eb"></i></div><span style="min-width:64px;text-align:right">' +
+          gEsc(by === "mem" ? ksBytes(x.value) : fmtCores(x.value)) + '</span></div></td></tr>';
+      }).join("") + '</tbody></table><p class="ks-muted" style="margin:8px 0 0">来自 Prometheus 当前采样，CPU 为近 5 分钟平均</p>';
+  }
+
+  function applyKsTop(el, clusterId) {
+    var box = el.querySelector("[data-ks-top]"), row = el.querySelector("[data-ks-trendrow]");
+    if (!box) return;
+    var html = ksTopHtml(KS_TOP[String(clusterId)], el.__ksTopBy || "cpu");
+    box.innerHTML = html;
+    box.hidden = !html;
+    if (row) row.setAttribute("class", html ? "ks-grid3" : "ks-grid1");
+    [].slice.call(box.querySelectorAll("[data-ks-top-by]")).forEach(function (b) {
+      b.onclick = function () { el.__ksTopBy = b.getAttribute("data-ks-top-by"); applyKsTop(el, clusterId); };
+    });
+  }
+
+  // 按筛选参数预置列表页状态（工作负载/节点/事件/主机），再跳转到不带参数的地址
+  function applyHashFilters(hash) {
+    var p = parseHash(stripHashQuery(hash)), q = hashQuery(hash);
+    if (p.key !== "cluster" || !Object.keys(q).length) return false;
+    if (p.sub === "workloads") {
+      var kinds = ["deployments", "statefulsets", "daemonsets", "jobs", "cronjobs", "pods"];
+      if (kinds.indexOf(q.kind) >= 0) CLSTATE.kind = q.kind;
+      CLSTATE.ns = q.ns || "";
+      CLSTATE.wlStatus = q.status === "abnormal" ? "abnormal" : "";
+    } else if (p.sub === "nodes") {
+      CLSTATE.nodeStatus = q.status === "abnormal" ? "abnormal" : "";
+    } else if (p.sub === "events") {
+      CLSTATE.evtype = q.type === "Warning" || q.type === "Normal" ? q.type : "";
+    } else if (p.sub === "hosts") {
+      HOST_FILTER = q.status === "online" || q.status === "offline" ? q.status : "";
+    } else return false;
+    return true;
+  }
+
+  function goFiltered(hash) {
+    applyHashFilters(hash);
+    goHash(stripHashQuery(hash));
+  }
+
+  // 直接打开带筛选参数的地址时：预置状态并去掉参数（避免刷新后重复套用、导航高亮错位）
+  function consumeHashFilters() {
+    if (typeof location === "undefined" || String(location.hash || "").indexOf("?") < 0) return;
+    if (!applyHashFilters(location.hash)) return;
+    try { history.replaceState(null, "", stripHashQuery(location.hash)); } catch (e) {}
   }
 
   function renderSreLive(el, silent) {
@@ -1375,7 +1696,7 @@
         wrap(apiGet(base + "/workloads/deployments", { page_size: 500 }, o)),
         wrap(apiGet(base + "/network/services", { page_size: 500 }, o)),
         wrap(apiGet(base + "/storage/claims", { page_size: 500 }, o)),
-        wrap(apiGet(base + "/events", { page_size: 50, type: "Warning" }, o)),
+        wrap(apiGet(base + "/events", { limit: 100 }, o)),
         wrap(apiGet(base + "/components", null, o)),
         wrap(apiGet("/observability/alerts", { page_size: 50, status: "firing", cluster_id: cluster.id }, o))
       ]).then(function (r) {
@@ -1408,9 +1729,13 @@
 
         var html = shell(TITLE, DESC, "");
         var apiOk = r[0].ok;
+        var health = overviewHealth({
+          clusterId: cluster.id, apiOk: apiOk, nodes: nodes, nodesOk: r[0].ok, pods: pods, podsOk: r[1].ok,
+          deployments: L(3) || [], deploysOk: r[3].ok, alerts: alerts, alertsOk: r[8].ok
+        });
         html += '<div class="ks-head"><h2>' + gEsc(cluster.name || "#" + cluster.id) + '</h2>' +
           tagHtml(cluster.env || "—", "info") +
-          '<div class="ks-meta"><span><i class="ks-dot" style="background:' + (apiOk ? "#16a34a" : "#dc2626") + '"></i>API Server<b>' + (apiOk ? "可达" : "不可达") + '</b></span>' +
+          '<div class="ks-meta"><span><i class="ks-dot" style="background:' + (apiOk ? STATE_COLORS.ok : STATE_COLORS.bad) + '"></i>API Server<b>' + (apiOk ? "可达" : "不可达") + '</b></span>' +
           '<span>版本<b>' + gEsc((nodes[0] && nodes[0].kubelet_version) || cluster.version || "—") + '</b></span>' +
           '<span>节点<b>' + nodes.length + '</b></span><span>架构<b>' + gEsc((nodes[0] && nodes[0].architecture) || "—") + '</b></span>' +
           '<span>运行时<b>' + gEsc(((nodes[0] && nodes[0].container_runtime) || "—").split("://")[0]) + '</b></span>' +
@@ -1419,13 +1744,40 @@
             return '<option value="' + gEsc(c.id) + '"' + (c.id === cluster.id ? " selected" : "") + '>' + gEsc(c.name) + '</option>'; }).join("") + '</select>' : "") +
           '</div>';
 
+        // ① 结论：健康总览
+        html += ksHealthHtml(health);
+
+        // ② 异常：最近事件 + 活跃告警
+        var alertBody = !r[8].ok ? '<p class="ks-muted ks-line">未接入告警源</p>' : !alerts.length ? '<p class="ks-muted ks-line">当前没有触发中的告警</p>' :
+          '<ul class="ks-ev">' + alerts.slice(0, 5).map(function (a) {
+            var lb = a.labels || {}, an = a.annotations || {};
+            return '<li><span class="ks-pill" style="background:#fef2f2;color:#b91c1c">' + gEsc(a.severity || lb.severity || "P?") + '</span><button type="button" class="x-tlink" data-sre-alert-open="' + gEsc(alertIdOf(a)) + '">' +
+              gEsc(a.summary || an.summary || a.name || lb.alertname || "告警") + '</button><span class="ks-muted">' + gEsc(fmtAgo(a.starts_at || a.created_at)) + '</span></li>';
+          }).join("") + '</ul>';
+        html += '<div class="ks-grid3" style="align-items:start"><section class="ks-panel" data-ks-events>' + ksEventsHtml(r[6], events, el.__ksEv || "all", cluster.id) + '</section>' +
+          '<section class="ks-panel"><h3>活跃告警<span class="ks-r ks-muted">' + (r[8].ok ? alerts.length : "—") + ' 条 · <a href="#/observe/events">告警中心</a></span></h3>' + alertBody + '</section></div>';
+
+        // ③ 趋势：用量环 + 实时曲线 + 24 小时趋势 / Pod 资源消耗 Top 5
         html += '<div class="ks-grid4">' +
           ksRing("CPU 使用", cpuPct, hasUsage ? cpuUse.toFixed(2) + " / " + cpuCap + " 核" : "—", hasUsage ? "占可分配（实时）" : noUsage, clusterResourceHash("cluster", "nodes", cluster.id)) +
           ksRing("内存使用", memPct, hasUsage ? ksBytes(memUse) + " / " + ksBytes(memCap) : "—", hasUsage ? "占可分配（实时）" : noUsage, clusterResourceHash("cluster", "nodes", cluster.id)) +
           ksRing("Pod 容量", podPct, podActive + " / " + podCap, "运行中 Pod 占节点 Pod 上限", clusterResourceHash("cluster", "workloads", cluster.id)) +
           ksRing("节点就绪", nodePct, ready + " / " + nodes.length, "", clusterResourceHash("cluster", "nodes", cluster.id), true) +
           '</div>';
+        if (hasUsage) {
+          html += '<div class="ks-grid2"><section class="ks-panel"><h3>CPU 使用率<span class="ks-r ks-muted">当前 ' + (cpuPct == null ? "—" : cpuPct.toFixed(1) + "%") + '</span></h3>' +
+            '<div data-ks-spark="cpu">' + ksSpark(smp, "cpu", "#2563eb") + '</div></section>' +
+            '<section class="ks-panel"><h3>内存使用率<span class="ks-r ks-muted">当前 ' + (memPct == null ? "—" : memPct.toFixed(1) + "%") + '</span></h3>' +
+            '<div data-ks-spark="mem">' + ksSpark(smp, "mem", "#16a34a") + '</div></section></div>';
+        } else {
+          html += '<p class="ks-muted ks-line ks-note" data-ks-spark-note>实时 CPU / 内存曲线：' + gEsc(noUsage) + '</p>';
+        }
+        var topHtml = ksTopHtml(KS_TOP[key], el.__ksTopBy || "cpu");
+        html += '<div class="' + (topHtml ? "ks-grid3" : "ks-grid1") + '" data-ks-trendrow><section class="ks-panel"><h3>24 小时资源趋势</h3>' +
+          '<div class="x-ochart" data-sre-chart>' + (KS_CHART[key] || '<p class="ks-muted ks-line">正在读取 24 小时趋势…</p>') + '</div></section>' +
+          '<section class="ks-panel" data-ks-top' + (topHtml ? "" : " hidden") + '>' + topHtml + '</section></div>';
 
+        // ④ 明细：资源计数、节点与组件、Pod 状态、公告
         function cnt(label, i, go) {
           var v = L(i); return '<a href="' + gEsc(go) + '"><span>' + label + '</span><strong>' + (v ? v.length : "—") + '</strong></a>';
         }
@@ -1437,7 +1789,7 @@
         // 节点状态 + 组件状态
         var condNames = { MemoryPressure: "内存压力", DiskPressure: "磁盘压力", PIDPressure: "PID 压力", NetworkUnavailable: "网络不可用" };
         var nodePanel = '<section class="ks-panel"><h3>节点状态<span class="ks-r ks-muted">' + ready + ' 就绪 / ' + nodes.length + ' 总数</span></h3>' +
-          ksStack([{ label: "Ready", n: ready - unsched < 0 ? 0 : ready - unsched, color: "#16a34a" }, { label: "禁止调度", n: unsched, color: "#d97706" }, { label: "NotReady", n: nodes.length - ready, color: "#dc2626" }]) +
+          ksStack([{ label: "Ready", n: ready - unsched < 0 ? 0 : ready - unsched, color: STATE_COLORS.ok }, { label: "禁止调度", n: unsched, color: STATE_COLORS.warn }, { label: "NotReady", n: nodes.length - ready, color: STATE_COLORS.bad }]) +
           '<div class="ks-cond">' + Object.keys(condNames).filter(function (k) { return pressure[k] != null; }).map(function (k) {
             return '<span class="' + (pressure[k] ? "bad" : "") + '">' + condNames[k] + (pressure[k] ? " " + pressure[k] + " 个节点" : " 正常") + '</span>';
           }).join("") + '</div></section>';
@@ -1452,10 +1804,11 @@
         var compRows = [{ n: "kube-apiserver", s: apiOk ? "ok" : "bad", t: apiOk ? "可达" : "不可达" }];
         Object.keys(sys).sort().forEach(function (k) { compRows.push({ n: k, s: sys[k].ok === sys[k].all ? "ok" : "bad", t: sys[k].ok + "/" + sys[k].all + " 就绪" }); });
         if (!sys["metrics-server"]) compRows.push({ n: "metrics-server", s: hasUsage ? "ok" : "off", t: hasUsage ? "可用" : "未安装" });
+        compRows.sort(function (a, b) { return (a.s === "bad" ? 0 : 1) - (b.s === "bad" ? 0 : 1); });
         var installed = comps.filter(function (c) { return c.state && c.state !== "missing"; });
         var compPanel = '<section class="ks-panel"><h3>系统组件<span class="ks-r ks-muted">扩展组件 ' + installed.length + ' / ' + comps.length + ' 已安装 · <a href="#/cluster/components">管理</a></span></h3>' +
           '<div class="ks-comp">' + compRows.map(function (c) {
-            var col = c.s === "ok" ? "#16a34a" : c.s === "bad" ? "#dc2626" : "#9ca3af";
+            var col = c.s === "ok" ? STATE_COLORS.ok : c.s === "bad" ? STATE_COLORS.bad : STATE_COLORS.muted;
             return '<div><i class="ks-dot" style="background:' + col + '"></i><span>' + gEsc(c.n) + '</span><em>' + gEsc(c.t) + '</em></div>';
           }).join("") + '</div></section>';
         // 资源使用排行
@@ -1480,49 +1833,24 @@
         nodePanel = nodePanel.replace(/<\/section>$/, rankHtml + "</section>").replace("<h3>节点状态<", "<h3>节点状态与资源使用<");
         html += '<div class="ks-grid3">' + nodePanel + compPanel + '</div>';
 
-
-        // 实时采样曲线 + 24h Prometheus 趋势
-        html += '<div class="ks-grid2"><section class="ks-panel"><h3>CPU 使用率</h3>' +
-          '<div data-ks-spark="cpu">' + ksSpark(smp, "cpu", "#2563eb") + '</div></section>' +
-          '<section class="ks-panel"><h3>内存使用率</h3>' +
-          '<div data-ks-spark="mem">' + ksSpark(smp, "mem", "#16a34a") + '</div></section></div>';
-        html += '<section class="ks-panel" style="margin-bottom:14px"><h3>24 小时资源趋势</h3>' +
-          '<div class="x-ochart" data-sre-chart style="min-height:160px"><p class="ks-muted" style="text-align:center;padding-top:60px">加载中…</p></div></section>';
-
-        // Pod 状态 + Warning 事件
+        // Pod 状态 + 平台公告
         var ph = { Running: 0, Pending: 0, Succeeded: 0, Failed: 0, Unknown: 0 }, restarts = 0, nsCount = {};
         pods.forEach(function (p) { ph[p.phase] = (ph[p.phase] || 0) + 1; restarts += p.restarts || 0; nsCount[p.namespace] = (nsCount[p.namespace] || 0) + 1; });
         var nsTop = Object.keys(nsCount).sort(function (a, b) { return nsCount[b] - nsCount[a]; }).slice(0, 5);
         var maxNs = nsTop.length ? nsCount[nsTop[0]] : 1;
         var podPanel = '<section class="ks-panel"><h3>Pod 状态<span class="ks-r ks-muted">共 ' + pods.length + ' · 累计重启 ' + restarts + ' 次</span></h3>' +
-          ksStack([{ label: "运行中", n: ph.Running, color: "#16a34a" }, { label: "等待中", n: ph.Pending, color: "#d97706" },
-            { label: "已完成", n: ph.Succeeded, color: "#60a5fa" }, { label: "失败", n: ph.Failed, color: "#dc2626" }, { label: "未知", n: ph.Unknown || 0, color: "#9ca3af" }]) +
+          ksStack([{ label: "运行中", n: ph.Running, color: STATE_COLORS.ok }, { label: "等待中", n: ph.Pending, color: STATE_COLORS.warn },
+            { label: "已完成", n: ph.Succeeded, color: "#60a5fa" }, { label: "失败", n: ph.Failed, color: STATE_COLORS.bad }, { label: "未知", n: ph.Unknown || 0, color: STATE_COLORS.muted }]) +
           '<h3 style="margin:18px 0 8px;font-size:13.5px">命名空间 Pod TOP5</h3><table class="ks-rank"><tbody>' + nsTop.map(function (ns) {
             return '<tr><td style="width:40%">' + gEsc(ns) + '</td><td><div class="ks-bar"><i style="width:' + (nsCount[ns] / maxNs * 100) + '%;background:#2563eb"></i></div></td><td style="width:40px;text-align:right">' + nsCount[ns] + '</td></tr>';
           }).join("") + '</tbody></table></section>';
-        var evPanel = '<section class="ks-panel"><h3>最近 Warning 事件<span class="ks-r ks-muted">' + (r[6].ok ? events.length + " 条" : "读取失败") + ' · <a href="#/cluster/events">全部事件</a></span></h3>' +
-          (!r[6].ok ? '<p class="x-aerr">' + gEsc(errText(r[6].err)) + '</p>' : !events.length ? '<p class="x-empty">没有 Warning 事件</p>' :
-            '<ul class="ks-ev">' + events.slice(0, 6).map(function (e) {
-              return '<li><span class="ks-pill">' + gEsc(e.reason) + '</span><strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
-                gEsc((e.namespace ? e.namespace + "/" : "") + (e.object_name || "")) + '</strong><span class="ks-muted">' + gEsc(fmtAgo(e.last_seen)) +
-                (e.count > 1 ? " ×" + e.count : "") + '</span><p title="' + gEsc(e.message) + '">' + gEsc(e.message) + '</p></li>';
-            }).join("") + '</ul>') + '</section>';
-        html += '<div class="ks-grid2">' + podPanel + evPanel + '</div>';
-
-        // 告警 + 公告
-        var alertBody = !r[8].ok ? '<p class="x-empty">未接入告警源</p>' : !alerts.length ? '<p class="x-empty">当前没有触发中的告警</p>' :
-          '<ul class="ks-ev">' + alerts.slice(0, 5).map(function (a) {
-            var lb = a.labels || {}, an = a.annotations || {};
-            return '<li><span class="ks-pill" style="background:#fef2f2;color:#b91c1c">' + gEsc(a.severity || lb.severity || "P?") + '</span><button type="button" class="x-tlink" data-sre-alert-open="' + gEsc(alertIdOf(a)) + '">' +
-              gEsc(a.summary || an.summary || a.name || lb.alertname || "告警") + '</button><span class="ks-muted">' + gEsc(fmtAgo(a.starts_at || a.created_at)) + '</span></li>';
-          }).join("") + '</ul>';
-        html += '<div class="ks-grid2"><section class="ks-panel"><h3>活跃告警<span class="ks-r ks-muted">' + (r[8].ok ? alerts.length : "—") + ' 条 · <a href="#/observe/events">告警中心</a></span></h3>' + alertBody + '</section>' +
+        html += '<div class="ks-grid2">' + podPanel +
           '<section class="ks-panel"><h3>平台公告<span class="ks-r"><button class="x-btn" type="button" data-nadd>+ 发布</button></span></h3>' +
           (notices.length ? notices.slice(0, 4).map(function (n) {
             return '<div style="padding:6px 0;border-bottom:1px solid var(--x-line);display:flex;gap:8px;align-items:center">' + (n.pinned ? '<span class="x-tag x-blue">置顶</span>' : "") +
               '<strong style="font-size:13px">' + gEsc(n.title) + '</strong><span class="x-grow"></span><span class="ks-muted">' + gEsc(fmtAgo(n.created_at)) + '</span>' +
               '<button class="x-btn" type="button" data-ndel="' + gEsc(n.id) + '">删除</button></div>';
-          }).join("") : '<p class="x-empty">暂无公告</p>') + '</section></div>';
+          }).join("") : '<p class="ks-muted ks-line">暂无公告</p>') + '</section></div>';
 
         var scrollY = window.scrollY;
         mount(el, html);
@@ -1537,6 +1865,11 @@
         [].slice.call(el.querySelectorAll("[data-ks-sort]")).forEach(function (b) {
           b.onclick = function () { el.__ksSort = b.getAttribute("data-ks-sort"); renderSreLive(el, true); };
         });
+        [].slice.call(el.querySelectorAll("[data-ks-filter-go]")).forEach(function (a) {
+          a.onclick = function (e) { if (e && e.preventDefault) e.preventDefault(); goFiltered(a.getAttribute("data-ks-filter-go")); };
+        });
+        bindKsEvents(el, r[6], events, cluster.id);
+        applyKsTop(el, cluster.id);
         var sel = el.querySelector("[data-ks-cluster]");
         if (sel) sel.onchange = function () {
           try { localStorage.setItem("xs.overview.cluster", sel.value); } catch (e) {}
@@ -1557,7 +1890,7 @@
           if (!isCurrent()) return;
           if (document.hidden) { setTimeout(tick, 5000); return; }
           renderSreLive(el, true);
-        }, smp.length < 3 ? 4000 : 15000);
+        }, hasUsage && smp.length < 3 ? 4000 : 15000);
       });
     }).catch(function (err) {
       if (!isCurrent()) return;
@@ -1610,7 +1943,15 @@
     var valid = cpuPoints.concat(memPoints).filter(function (point) { return point[1] != null; });
     var noteHtml = notes.length ? '<p class="x-frac" role="status" style="margin:8px 0 0">' + gEsc(notes.join("；")) + '</p>' : "";
     if (!valid.length) {
-      return '<p class="x-frac" style="text-align:center;padding-top:82px">24h 内没有可绘制的 CPU 或内存数据。</p>' + noteHtml;
+      return '<p class="ks-muted ks-line">近 24 小时没有可绘制的 CPU 或内存数据</p>' + noteHtml;
+    }
+    var times0 = {};
+    valid.forEach(function (point) { times0[point[0]] = 1; });
+    if (Object.keys(times0).length < 2) {
+      var lastOf = function (points) { for (var i = points.length - 1; i >= 0; i--) if (points[i][1] != null) return points[i][1]; return null; };
+      var c1 = lastOf(cpuPoints), m1 = lastOf(memPoints);
+      return '<p class="ks-line">当前 CPU <b>' + (c1 == null ? "—" : c1.toFixed(1) + "%") + '</b> · 内存 <b>' + (m1 == null ? "—" : m1.toFixed(1) + "%") +
+        '</b> <span class="ks-muted">（仅 1 个采样点，积累更多后显示趋势）</span></p>' + noteHtml;
     }
     var width = Math.max(420, Math.round(boxWidth || 800)), height = 210, margin = { top: 12, right: 18, bottom: 28, left: 48 };
     var times = valid.map(function (point) { return point[0] * 1000; });
@@ -1639,20 +1980,39 @@
       '<g style="color:var(--x-green)">' + sreChartLine(memPoints, xScale, yScale, "x-sre-line x-sre-line--memory") + '</g></svg>' + noteHtml;
   }
 
+  // Pod 资源消耗 Top 5 的 PromQL（cAdvisor 指标；中央数据源由 scopedPromQuery 注入集群标签）
+  var POD_TOP_SELECTOR = 'container!="",container!="POD",image!=""';
+  function podTopQueries(observe, scope) {
+    var q = {
+      cpu: 'topk(5, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{' + POD_TOP_SELECTOR + '}[5m])))',
+      mem: 'topk(5, sum by (namespace, pod) (container_memory_working_set_bytes{' + POD_TOP_SELECTOR + '}))'
+    };
+    if (!observe || typeof observe.scopedPromQuery !== "function") return scope && scope.scope === "central" ? null : q;
+    try { return { cpu: observe.scopedPromQuery(q.cpu, scope, true), mem: observe.scopedPromQuery(q.mem, scope, true) }; }
+    catch (e) { return null; }
+  }
+
   function loadSreMetrics(cluster, clusters, nodes, el, seq, context, contextSnapshot) {
     var chart = el.querySelector("[data-sre-chart]");
     var observe = window.XSObserve;
+    var key = String(cluster.id);
     function isCurrent() {
       return alive(seq, el) && (!context || typeof context.isCurrent !== "function" || context.isCurrent(contextSnapshot));
+    }
+    function setChart(html) {
+      KS_CHART[key] = html;
+      if (chart && chart.isConnected) chart.innerHTML = html;
     }
     function failAll(err) {
       if (!isCurrent()) return;
       var message = sreMetricError(err);
       setSreMetric(el, "cpu", null, message);
       setSreMetric(el, "mem", null, message);
-      if (chart && chart.isConnected) chart.innerHTML = Number(err && err.status) === 404 ?
-        '<div class="x-empty" style="padding-top:24px;text-align:center"><p style="margin:0 0 12px">未接入 Prometheus</p><button class="x-btn x-btn--pri" type="button" onclick="location.hash=\'#/cluster/integrations\'">接入数据源</button></div>' :
-        '<p class="x-aerr" role="alert" style="text-align:center;padding-top:82px">' + gEsc(message) + '</p>';
+      KS_TOP[key] = null;
+      applyKsTop(el, cluster.id);
+      setChart(Number(err && err.status) === 404 ?
+        '<p class="ks-muted ks-line">未接入 Prometheus，暂无 24 小时趋势 · <a href="#/cluster/integrations">接入数据源</a></p>' :
+        '<p class="x-aerr ks-line" role="alert">' + gEsc(message) + '</p>');
     }
     if (!observe || typeof observe.resolvedDatasource !== "function" || typeof observe.metricQueries !== "function") {
       failAll(new Error("Prometheus 数据源归属校验器不可用"));
@@ -1662,13 +2022,17 @@
       if (!isCurrent()) return null;
       var scope = observe.resolvedDatasource(result, clusters, cluster, "prometheus");
       var queries = observe.metricQueries(nodes, [], "", "", scope);
+      var top = podTopQueries(observe, scope);
       var datasourceId = scope.ds.id;
       var base = "/observability/prometheus/" + encodeURIComponent(datasourceId);
+      var skip = Promise.resolve({ ok: false, data: null, err: null });
       return Promise.all([
         wrap(apiGet(base + "/query", { cluster_id: cluster.id, query: queries.cpu }, { scope: "cluster" })),
         wrap(apiGet(base + "/query", { cluster_id: cluster.id, query: queries.mem }, { scope: "cluster" })),
         wrap(apiGet(base + "/query_range", { cluster_id: cluster.id, query: queries.cpu, start: "now-24h", end: "now", step: "5m" }, { scope: "cluster" })),
-        wrap(apiGet(base + "/query_range", { cluster_id: cluster.id, query: queries.mem, start: "now-24h", end: "now", step: "5m" }, { scope: "cluster" }))
+        wrap(apiGet(base + "/query_range", { cluster_id: cluster.id, query: queries.mem, start: "now-24h", end: "now", step: "5m" }, { scope: "cluster" })),
+        top ? wrap(apiGet(base + "/query", { cluster_id: cluster.id, query: top.cpu }, { scope: "cluster" })) : skip,
+        top ? wrap(apiGet(base + "/query", { cluster_id: cluster.id, query: top.mem }, { scope: "cluster" })) : skip
       ]);
     }).then(function (results) {
       if (!isCurrent() || !results) return;
@@ -1685,7 +2049,12 @@
       else if (!cpuPoints.length) notes.push("CPU 曲线为空");
       if (!results[3].ok) notes.push("内存曲线查询失败：" + sreMetricError(results[3].err));
       else if (!memPoints.length) notes.push("内存曲线为空");
-      if (chart && chart.isConnected) chart.innerHTML = renderSreChart(cpuPoints, memPoints, notes, chart.clientWidth);
+      KS_TOP[key] = {
+        cpu: results[4] && results[4].ok ? podTopConsumers(results[4].data, 5) : [],
+        mem: results[5] && results[5].ok ? podTopConsumers(results[5].data, 5) : []
+      };
+      applyKsTop(el, cluster.id);
+      setChart(renderSreChart(cpuPoints, memPoints, notes, chart ? chart.clientWidth : 0));
     }).catch(function (err) {
       failAll(err);
     });
@@ -2185,6 +2554,21 @@
 
   var HOSTS = [];
   var HOST_TOKENS = [];
+  var HOST_FILTER = "";
+
+  // 主机统计卡：总数 / 在线 / 离线 可点击筛选列表（再次点击当前项取消筛选）
+  function hostFilterCards(cards, current) {
+    var html = '<div class="x-cards x-cards4" data-host-cards>';
+    cards.forEach(function (c) {
+      var inner = "<p>" + gEsc(c.label) + '</p><strong' + (c.color ? ' style="color:' + c.color + '"' : "") + ">" + gEsc(c.value) + "</strong>" +
+        '<small class="x-frac">' + gEsc(c.sub || "") + "</small>";
+      if (c.filter == null) { html += '<div class="x-card">' + inner + "</div>"; return; }
+      var on = String(current || "") === c.filter;
+      html += '<button type="button" class="x-card" data-host-filter="' + gEsc(c.filter) + '" aria-pressed="' + (on ? "true" : "false") + '" title="按' + gEsc(c.label) + '筛选列表"' +
+        ' style="text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%' + (on ? ";border-color:var(--x-blue,#2563eb);box-shadow:0 0 0 1px var(--x-blue,#2563eb) inset" : "") + '">' + inner + "</button>";
+    });
+    return html + "</div>";
+  }
 
   function canAddHost() {
     var api = xs();
@@ -2206,7 +2590,7 @@
       if (!alive(seq, el)) return;
       var hR = rs[0], tR = rs[1];
       if (hR.err && isAuthErr(hR.err)) return kickLogin();
-      var hosts = hR.ok ? itemsOf(hR.data) : [];
+      var hosts = hR.ok ? sortHostsByHealth(itemsOf(hR.data)) : [];
       HOSTS = hosts;
       HOST_TOKENS = tR.ok ? itemsOf(tR.data) : [];
       var online = hosts.filter(function (h) { return h.online; }).length;
@@ -2217,21 +2601,22 @@
       if (!hR.ok) {
         hostBody = '<p class="x-aerr" role="alert" style="margin:0">' + gEsc(errText(hR.err)) + "</p>";
       } else if (!hosts.length) {
-        hostBody = '<div class="x-nodata"><strong>添加第一台主机</strong><p class="x-frac">' +
-          (canWrite ? '创建令牌 → 准备代理程序 → 在目标主机执行 → 确认心跳。' : '还没有纳管主机，请联系有主机管理权限的管理员添加。') +
-          '</p>' + hostAddButton() + '</div>';
+        var hostEmptyDesc = canWrite ? '创建令牌 → 准备代理程序 → 在目标主机执行 → 确认心跳。' : '还没有纳管主机，请联系有主机管理权限的管理员添加。';
+        hostBody = (typeof window.XSEmpty !== "undefined" && window.XSEmpty && typeof window.XSEmpty.html === "function")
+          ? window.XSEmpty.html({ kind: "host", title: "添加第一台主机", desc: hostEmptyDesc, actionsHTML: hostAddButton() })
+          : '<div class="x-nodata"><strong>添加第一台主机</strong><p class="x-frac">' + hostEmptyDesc + '</p>' + hostAddButton() + '</div>';
       } else {
         hostBody = tableHtml(["主机", "环境", "系统", "规格", "Agent", "状态", "最后心跳", "操作"], hosts.map(function (h) {
           var f = h.facts || {};
           return [
             '<span class="x-name">' + gEsc(h.name || "—") + "</span>" +
-              (h.enrolled ? "" : ' <span class="x-tag x-grey">未注册</span>') +
+              (h.enrolled || !h.online ? "" : ' <span class="x-tag x-grey">未注册</span>') +
               '<br /><span class="x-mono">' + gEsc(h.ip || "—") + "</span>",
             gEsc(h.env || "—"),
             gEsc(f.os || f.platform || "—") + (f.arch ? " / " + gEsc(f.arch) : ""),
             gEsc((f.cpu_cores || "?") + "C") + "   " + gEsc(fmtBytes(f.mem_total)),
             mono(h.agent_version || "—"),
-            h.online ? tagHtml("在线", "ok") : tagHtml("离线", "muted"),
+            (function (st) { return tagHtml(st.text, st.tone); })(hostState(h)),
             '<span class="x-frac">' + gEsc(fmtAgo(h.last_seen_at)) + "</span>",
             '<span class="x-kacts">' + actBtn("执行命令", "host-exec", h.id) + actBtn("任务", "host-tasks", h.id) + actBtn("删除", "host-del", h.id) + "</span>"
           ];
@@ -2258,15 +2643,16 @@
       }
 
       mount(el, shell("主机纳管", "主机清单、注册令牌与批量任务", hostAddButton()) +
-        statCards([
-          { label: "主机总数", value: hR.ok ? String(hosts.length) : "—", sub: "已纳管" },
-          { label: "在线主机", value: hR.ok ? String(online) : "—", sub: "agent 心跳 90s 内" },
+        hostFilterCards([
+          { label: "主机总数", value: hR.ok ? String(hosts.length) : "—", sub: "已纳管", filter: hR.ok ? "" : null },
+          { label: "在线主机", value: hR.ok ? String(online) : "—", sub: "agent 心跳 90s 内", filter: hR.ok ? "online" : null, color: hR.ok && online ? STATE_COLORS.ok : "" },
           { label: "注册令牌", value: canWrite && tR.ok ? String(HOST_TOKENS.length) : "—", sub: canWrite ? "一次性接入凭证" : "需主机管理权限" },
-          { label: "离线主机", value: hR.ok ? String(hosts.length - online) : "—", sub: "待排查" }
-        ]) +
+          { label: "离线主机", value: hR.ok ? String(hosts.length - online) : "—", sub: hosts.length - online ? "已置顶，待排查" : "待排查", filter: hR.ok ? "offline" : null, color: hR.ok && hosts.length - online ? STATE_COLORS.bad : "" }
+        ], HOST_FILTER) +
         toolbarHtml(
           searchInput("搜索主机 / IP / 环境") +
           selectHtml(envOptions(envs), "", 'data-live-filter data-attr="env" aria-label="按环境筛选"') +
+          selectHtml([{ v: "", t: "全部状态" }, { v: "online", t: "在线" }, { v: "offline", t: "离线" }], HOST_FILTER, 'data-live-filter data-attr="status" data-host-status aria-label="按状态筛选"') +
           '<span class="x-frac" data-live-none hidden>无匹配主机</span>' +
           '<button type="button" class="x-btn" style="margin-left:auto" data-act="host-batch" data-id="">批量执行</button>'
         ) +
@@ -2276,9 +2662,29 @@
 
       Array.prototype.forEach.call(el.querySelectorAll("[data-live-tablewrap] tbody tr"), function (tr, i) {
         var h = hosts[i];
-        if (h) tr.setAttribute("data-f-env", String(h.env || ""));
+        if (h) { tr.setAttribute("data-f-env", String(h.env || "")); tr.setAttribute("data-f-status", hostState(h).filter); }
       });
       filterTable(el);
+      var statusSel = el.querySelector("[data-host-status]");
+      var paintCards = function () {
+        Array.prototype.forEach.call(el.querySelectorAll("[data-host-filter]"), function (b) {
+          var on = b.getAttribute("data-host-filter") === HOST_FILTER;
+          b.setAttribute("aria-pressed", on ? "true" : "false");
+          if (b.style) { b.style.borderColor = on ? "var(--x-blue,#2563eb)" : ""; b.style.boxShadow = on ? "0 0 0 1px var(--x-blue,#2563eb) inset" : ""; }
+        });
+      };
+      if (statusSel) {
+        var runFilter = statusSel.onchange;
+        statusSel.onchange = function () { HOST_FILTER = statusSel.value; paintCards(); if (runFilter) runFilter(); };
+      }
+      Array.prototype.forEach.call(el.querySelectorAll("[data-host-filter]"), function (b) {
+        b.onclick = function () {
+          var want = b.getAttribute("data-host-filter");
+          HOST_FILTER = HOST_FILTER === want ? "" : want;
+          if (statusSel) { statusSel.value = HOST_FILTER; if (statusSel.onchange) statusSel.onchange(); }
+          else paintCards();
+        };
+      });
       bindActs(el, function (act, id) {
         if (act === "host-batch") return batchExecDialog(HOSTS);
         if (act === "host-add" || act === "token-new") return openHostTokenForm();
@@ -2546,7 +2952,7 @@
   var CLUSTERS = [];
   var CL_SELECTED = null;
   var CLUSTER_PAGE_MOUNT = null;
-  var CLSTATE = { kind: "deployments", ns: "", evtype: "", logNs: "", logPod: "", logTail: "500" };
+  var CLSTATE = { kind: "deployments", ns: "", evtype: "", logNs: "", logPod: "", logTail: "500", wlStatus: "", nodeStatus: "" };
 
   var CLUSTER_TITLES = {
     list: "集群列表",
@@ -2612,6 +3018,7 @@
 
   function renderClusterLive(el) {
     destroyClusterPage();
+    consumeHashFilters();
     var r = routeOf();
     var sub = r.sub || "nodes";
     if (sub === "list") return clListPage(el);
@@ -2907,10 +3314,13 @@
       var query = priorSearch ? priorSearch.value : "";
       apiGet("/clusters/" + cur.id + "/nodes").then(function (data) {
         if (!alive(seq, el) || !box) return;
-        var items = itemsOf(data);
+        var allNodes = itemsOf(data);
+        var onlyBad = CLSTATE.nodeStatus === "abnormal";
+        var items = onlyBad ? allNodes.filter(function (n) { return !n.ready || n.unschedulable || nodePressured(n); }) : allNodes;
         var metricsOk = !!(data && data.metrics_available);
+        var sparkOn = !!window.XSSpark;
         var body = items.length ? tableHtml(
-          ["节点", "状态", "角色", "IP", "版本", "CPU / 可分配", "内存 / 可分配", "操作"],
+          ["节点", "状态", "角色", "IP", "版本", "CPU / 可分配", "内存 / 可分配"].concat(sparkOn ? ["近 30 分钟"] : [], ["操作"]),
           items.map(function (n) {
             var usage = n.usage || null;
             return [
@@ -2920,18 +3330,23 @@
               mono(n.internal_ip || "—"),
               mono(n.kubelet_version || "—"),
               barHtml(usage ? usage.cpu_percent : null),
-              barHtml(usage ? usage.memory_percent : null),
+              barHtml(usage ? usage.memory_percent : null)
+            ].concat(sparkOn ? [window.XSSpark.placeholder(n.name, { ip: n.internal_ip })] : [], [
               '<span class="x-kacts">' +
                 actBtn("详情", "node-detail", n.name, { title: "查看节点详情" }) +
                 (n.unschedulable ? actBtn("解除封锁", "node-uncordon", n.name) : actBtn("封锁", "node-cordon", n.name)) +
                 actBtn("驱逐", "node-drain", n.name) + "</span>"
-            ];
+            ]);
           })
-        ) : '<p class="x-frac" style="margin:0">该集群没有节点数据。</p>';
-        box.innerHTML = panelHtml("节点", items.length + " 个" + (metricsOk ? " · 每 15 秒更新" : " · metrics-server 不可用"),
-          toolbarHtml(searchInput("搜索节点名称 / IP / 角色").replace('data-live-q', 'data-live-q value="' + gEsc(query) + '"') +
+        ) : '<p class="x-frac" style="margin:0">' + (onlyBad && allNodes.length ? "当前没有异常节点。" : "该集群没有节点数据。") + '</p>';
+        box.innerHTML = panelHtml("节点", (onlyBad ? items.length + " / " + allNodes.length : items.length) + " 个" + (metricsOk ? " · 每 15 秒更新" : " · metrics-server 不可用"),
+          toolbarHtml(selectHtml([{ v: "", t: "全部状态" }, { v: "abnormal", t: "仅异常" }], CLSTATE.nodeStatus, 'data-live-nodestatus aria-label="节点状态"') +
+            searchInput("搜索节点名称 / IP / 角色").replace('data-live-q', 'data-live-q value="' + gEsc(query) + '"') +
             '<span class="x-frac" data-live-none hidden>无匹配节点</span>') + body);
         filterTable(box);
+        var nodeStatusSel = box.querySelector("[data-live-nodestatus]");
+        if (nodeStatusSel) nodeStatusSel.onchange = function () { CLSTATE.nodeStatus = nodeStatusSel.value; loadNodes(); };
+        if (sparkOn && items.length) window.XSSpark.attach(box, { clusterId: cur.id, kind: "node" });
         [].slice.call(el.querySelectorAll("[data-node]")).forEach(function (a) {
           a.onclick = function () { clNodeDetail(cur, a.getAttribute("data-node")); };
         });
@@ -2979,7 +3394,7 @@
               return '<span class="x-tag x-grey x-tag--s">' + gEsc(k) + "</span>";
             }).join(" ") || "—") + "</span>",
             '<span class="x-frac">' + gEsc(fmtTime(ns.created_at)) + "</span>",
-            '<span class="x-kacts">' + actBtn("详情", "ns-detail", ns.name) + actBtn("查看工作负载", "ns-workloads", ns.name) +
+            '<span class="x-kacts">' + actBtn("详情", "ns-detail", ns.name) + actBtn("查看工作负载", "ns-workloads", ns.name) + (window.XSTopo ? actBtn("拓扑", "ns-topo", ns.name) : "") +
               (NS_PROTECTED[ns.name] ? '<span class="x-frac" title="系统命名空间">系统</span>' : actBtn("删除", "ns-del", ns.name)) + "</span>"
           ];
         })
@@ -3004,6 +3419,7 @@
       };
       bindActs(el, function (act, id) {
         if (act === "ns-workloads") { CLSTATE.ns = id; return goHash("#/cluster/workloads/" + cur.id); }
+        if (act === "ns-topo") { CLSTATE.ns = id; if (window.XSTopo) window.XSTopo.setView("topo"); return goHash("#/cluster/workloads/" + cur.id); }
         var item = null;
         items.forEach(function (x) { if (x.name === id) item = x; });
         if (act === "ns-detail" && item) {
@@ -3049,10 +3465,18 @@
       var nsR = rs[0], wR = rs[1];
       if (wR.err && isAuthErr(wR.err)) return kickLogin();
       var namespaces = nsR.ok ? itemsOf(nsR.data) : [];
-      var items = wR.ok ? itemsOf(wR.data) : [];
+      var allItems = wR.ok ? itemsOf(wR.data) : [];
+      var onlyBad = CLSTATE.wlStatus === "abnormal";
+      var items = onlyBad ? allItems.filter(function (w) {
+        if (kind === "pods") return isAbnormalPod(w) || isRestartingPod(w);
+        if (kind === "jobs") return String(w.status || "") === "Failed";
+        return isUnreadyWorkload(w);
+      }) : allItems;
       var cols, rows;
+      var sparkOn = !!window.XSSpark && kind !== "cronjobs";
+      function sparkCell(name, wns) { return sparkOn ? [window.XSSpark.placeholder((wns || ns) + "/" + name)] : []; }
       if (kind === "pods") {
-        cols = ["Pod", "命名空间", "状态", "就绪", "重启", "节点", "镜像", "操作"];
+        cols = ["Pod", "命名空间", "状态", "就绪", "重启", "节点", "镜像"].concat(sparkOn ? ["近 30 分钟"] : [], ["操作"]);
         rows = items.map(function (p) {
           return [
             '<span class="x-name">' + gEsc(p.name) + "</span>",
@@ -3061,13 +3485,14 @@
             gEsc(p.ready || "—"),
             gEsc(p.restarts == null ? "—" : p.restarts),
             gEsc(p.node || "—"),
-            '<span class="x-mono" title="' + gEsc((p.images || []).join(", ")) + '">' + gEsc(truncate((p.images || []).join(", "), 42)) + "</span>",
+            '<span class="x-mono" title="' + gEsc((p.images || []).join(", ")) + '">' + gEsc(truncate((p.images || []).join(", "), 42)) + "</span>"
+          ].concat(sparkCell(p.name, p.namespace), [
             '<span class="x-kacts">' + actBtn("详情", "wl-yaml", p.name + "|" + (p.namespace || "")) +
               actBtn("日志", "wl-logs", p.name + "|" + (p.namespace || "")) + "</span>"
-          ];
+          ]);
         });
       } else {
-        cols = ["名称", "类型", "命名空间", "就绪", "状态", "镜像", "创建时间", "操作"];
+        cols = ["名称", "类型", "命名空间", "就绪", "状态", "镜像", "创建时间"].concat(sparkOn ? ["近 30 分钟"] : [], ["操作"]);
         rows = items.map(function (w) {
           var st = String(w.status || "");
           return [
@@ -3077,28 +3502,50 @@
             gEsc(w.ready || "—"),
             tagHtml(w.status || "—", (st === "Available" || st === "Ready" || st === "Running" || st === "Complete") ? "ok" : "warn"),
             '<span class="x-mono" title="' + gEsc((w.images || []).join(", ")) + '">' + gEsc(truncate((w.images || []).join(", "), 42)) + "</span>",
-            '<span class="x-frac">' + gEsc(fmtTime(w.created_at)) + "</span>",
+            '<span class="x-frac">' + gEsc(fmtTime(w.created_at)) + "</span>"
+          ].concat(sparkCell(w.name, w.namespace), [
             '<span class="x-kacts">' + actBtn("详情", "wl-yaml", w.name + "|" + (w.namespace || "")) +
               (kind === "deployments" || kind === "statefulsets" ? actBtn("扩缩容", "wl-scale", w.name + "|" + (w.namespace || "")) : "") +
               (kind === "deployments" || kind === "statefulsets" || kind === "daemonsets" ? actBtn("重启", "wl-restart", w.name + "|" + (w.namespace || "")) : "") +
               actBtn("删除", "wl-del", w.name + "|" + (w.namespace || "")) + "</span>"
-          ];
+          ]);
         });
       }
       var kindSel = selectHtml(WORKLOAD_KINDS, kind, 'data-live-kind aria-label="工作负载类型"');
       var nsSel = selectHtml([{ v: "", t: "全部命名空间" }].concat(namespaces.map(function (n) { return { v: n.name, t: n.name }; })),
         ns, 'data-live-ns aria-label="命名空间"');
+      var kindName = (WORKLOAD_KINDS.filter(function (k) { return k.v === kind; })[0] || {}).t;
       var emptyText = wR.ok
-        ? ((ns ? "命名空间 " + ns + " 中" : "该集群中") + "没有 " + (WORKLOAD_KINDS.filter(function (k) { return k.v === kind; })[0] || {}).t + " 资源。")
+        ? ((ns ? "命名空间 " + ns + " 中" : "该集群中") + (onlyBad && allItems.length ? "没有异常的 " + kindName + "。" : "没有 " + kindName + " 资源。"))
         : errText(wR.err);
-      box.innerHTML = panelHtml("工作负载", wR.ok ? items.length + " 个" : "",
-        toolbarHtml(kindSel + nsSel + searchInput("搜索名称 / 镜像 / 状态") +
+      var statusSel = selectHtml([{ v: "", t: "全部状态" }, { v: "abnormal", t: "仅异常" }], CLSTATE.wlStatus, 'data-live-wlstatus aria-label="状态"');
+      box.innerHTML = panelHtml("工作负载", wR.ok ? (onlyBad ? items.length + " / " + allItems.length : items.length) + " 个" : "",
+        toolbarHtml(kindSel + nsSel + statusSel + searchInput("搜索名称 / 镜像 / 状态") +
           '<span class="x-frac" data-live-none hidden>无匹配工作负载</span>') +
         (items.length ? tableHtml(cols, rows) : '<p class="x-frac" style="margin:0">' + gEsc(emptyText) + "</p>"));
+      if (sparkOn && items.length) {
+        window.XSSpark.attach(box, kind === "pods"
+          ? { clusterId: cur.id, kind: "pod" }
+          : { clusterId: cur.id, kind: "workload", workloadKind: kind });
+      }
       if (window.XSClusterExtensions && typeof window.XSClusterExtensions.decorateWorkloads === "function") {
         window.XSClusterExtensions.decorateWorkloads({
           el: el, seq: seq, cluster: cur, box: box, kind: kind, namespace: ns,
           namespaces: namespaces, kinds: WORKLOAD_KINDS
+        });
+      }
+      if (window.XSTopo && typeof window.XSTopo.decorateWorkloads === "function") {
+        window.XSTopo.decorateWorkloads({
+          box: box, cluster: cur, namespace: ns, namespaces: namespaces, repaint: repaint,
+          navigate: function (t) {
+            if (t.workloadKind) CLSTATE.kind = t.workloadKind;
+            if (t.namespace) CLSTATE.ns = t.namespace;
+            if (t.action === "logs") { CLSTATE.logPod = t.name; CLSTATE.logNs = t.namespace; }
+            if (t.hash.indexOf("#/cluster/workloads/") === 0) window.XSTopo.setView("list");
+            var same = typeof location !== "undefined" && location.hash === t.hash;
+            goHash(t.hash);
+            if (same) repaint();
+          }
         });
       }
       var createWorkload = box.querySelector("[data-wl-create]");
@@ -3111,6 +3558,8 @@
       if (ks) ks.onchange = function () { CLSTATE.kind = ks.value; repaint(); };
       var nsEl = el.querySelector("[data-live-ns]");
       if (nsEl) nsEl.onchange = function () { CLSTATE.ns = nsEl.value; repaint(); };
+      var wlStatusEl = el.querySelector("[data-live-wlstatus]");
+      if (wlStatusEl) wlStatusEl.onchange = function () { CLSTATE.wlStatus = wlStatusEl.value; repaint(); };
       filterTable(el);
       bindActs(el, function (act, id) {
         var parts = String(id).split("|"), name = parts[0], wns = parts[1] || ns, base = "/clusters/" + cur.id + "/namespaces/" + wns + "/" + kind + "/" + encodeURIComponent(name);

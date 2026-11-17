@@ -10,6 +10,11 @@
  */
 (function (root) {
   "use strict";
+  // emptyHTML：统一空状态（XSEmpty）；未加载 xs-empty.js 时回退为原来的一行文字 fallbackHTML。
+  function emptyHTML(o, fallbackHTML) {
+    var X = root.XSEmpty;
+    return typeof X !== "undefined" && X && typeof X.html === "function" ? X.html(o) : fallbackHTML;
+  }
   var POLL_MS = 5000;
   var DEFAULT_STEPS = [{ weight: 10, pause_sec: 300, manual: false }, { weight: 30, pause_sec: 300, manual: false },
     { weight: 50, pause_sec: 0, manual: true }, { weight: 100, pause_sec: 0, manual: true }];
@@ -259,7 +264,12 @@
         '<p class="xrc-sub">新版本先承接一小部分流量，按步骤逐步放量；任一步可暂停或回滚，确认无误后全量替换主版本。</p>';
       if (st.loading && !st.list.length) return head + note + '<p class="xrc-empty">正在加载…</p>';
       var err = st.error ? '<p class="xrc-alert" role="alert">' + esc(st.error) + "</p>" : "";
-      if (!st.list.length) return head + note + err + '<p class="xrc-empty">还没有金丝雀发布记录。</p>';
+      if (!st.list.length) {
+        var canCreate = canDeploy && env && !helmEnv();
+        return head + note + err + emptyHTML({ kind: "canary", title: "还没有金丝雀发布记录",
+          desc: helmEnv() ? "" : canCreate ? "发起后新版本先承接少量流量，确认无误再逐步放量到全量。" : env ? "需要该环境的发布权限才能发起金丝雀发布。" : "请先选择一个环境。",
+          actions: canCreate ? [{ text: "发起金丝雀", act: "create", primary: true, attrs: { "data-xrc-click": "create" } }] : [] }, '<p class="xrc-empty">还没有金丝雀发布记录。</p>');
+      }
       var rows = st.list.map(function (c) {
         return "<tr><td>#" + esc(c.id) + "</td><td>" + esc(c.env) + '</td><td class="xrc-mono">' + esc(c.image) + "</td><td>" + statusTag(c.status) +
           "</td><td>" + esc(Number(c.weight) || 0) + "%</td><td>" + esc(stepText(c)) + "</td><td>" + esc(c.created_by || "—") + "</td><td>" + esc(fmtTime(c.created_at)) +

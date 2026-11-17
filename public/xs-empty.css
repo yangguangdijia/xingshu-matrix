@@ -1,0 +1,21 @@
+/* 星枢 Matrix 统一空状态与四色状态标签（配合 xs-empty.js） */
+.xse{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px 16px;color:var(--x-sub,#6b7280);box-sizing:border-box;width:100%}
+.xse-art{display:block;width:120px;height:90px;margin:0 auto 12px;flex:none}
+.xse-art .xse-a{stroke:var(--x-blue,#1677ff)}
+.xse--error .xse-art .xse-a{stroke:#dc2626}
+.xse-title{margin:0;font-size:14px;font-weight:600;line-height:1.5;color:var(--x-text,#1d2129)}
+.xse-desc{margin:6px 0 0;max-width:440px;font-size:13px;line-height:1.7;color:var(--x-sub,#6b7280)}
+.xse-acts{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:14px}
+.xse-acts a.x-btn{text-decoration:none;display:inline-flex;align-items:center}
+.xse--s{padding:18px 12px}
+.xse--s .xse-art{width:80px;height:60px;margin-bottom:8px}
+.xse--s .xse-title{font-size:13px}
+.xse--s .xse-acts{margin-top:10px}
+
+/* 四色状态标签：正常 绿 / 警告 橙 / 异常 红 / 未知(停用) 灰 */
+.xse-tag{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border:1px solid;border-radius:4px;font-size:12px;line-height:20px;white-space:nowrap;vertical-align:middle;box-sizing:border-box}
+.xse-tag i{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.xse-tag--ok{color:#16a34a;background:#f0fdf4;border-color:#bbf7d0}
+.xse-tag--warn{color:#d97706;background:#fffbeb;border-color:#fde68a}
+.xse-tag--bad{color:#dc2626;background:#fef2f2;border-color:#fecaca}
+.xse-tag--unknown{color:#6b7280;background:#f3f4f6;border-color:#e5e7eb}

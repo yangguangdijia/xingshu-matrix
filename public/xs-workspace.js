@@ -9,6 +9,11 @@
  */
 (function (root) {
   "use strict";
+  // emptyHTML：统一空状态（XSEmpty）；未加载 xs-empty.js 时回退为原来的一行文字 fallbackHTML。
+  function emptyHTML(o, fallbackHTML) {
+    var X = root.XSEmpty;
+    return typeof X !== "undefined" && X && typeof X.html === "function" ? X.html(o) : fallbackHTML;
+  }
   var ROLES = [["owner", "所有者"], ["admin", "管理员"], ["member", "成员"], ["viewer", "只读"]];
   var ROLE_TEXT = { owner: "所有者", admin: "管理员", member: "成员", viewer: "只读" };
   var SCOPE_TEXT = { global: "全平台", env: "环境", cluster: "集群", workspace: "本空间", project: "项目" };
@@ -241,8 +246,12 @@
       if (st.error) return '<section class="xws-card">' + head + '<p class="xws-err" data-wsp-error>' + esc(st.error) + "</p></section>";
       var q = st.q.trim().toLowerCase();
       var rows = st.items.filter(function (w) { return !q || String(w.name || "").toLowerCase().indexOf(q) >= 0 || String(w.description || "").toLowerCase().indexOf(q) >= 0; });
-      if (!st.items.length) return '<section class="xws-card">' + head + '<p class="xws-empty">暂无企业空间' + (canManage ? "，可点击「新建企业空间」创建" : "") + "</p></section>";
-      if (!rows.length) return '<section class="xws-card">' + head + '<p class="xws-empty">没有匹配的企业空间</p></section>';
+      if (!st.items.length) return '<section class="xws-card">' + head + emptyHTML({ kind: "workspace", title: "暂无企业空间",
+        desc: canManage ? "企业空间把多个集群中的命名空间作为项目统一管理，先新建一个空间吧。" : "需要企业空间管理权限才能新建，请联系管理员。",
+        actions: canManage ? [{ text: "新建企业空间", act: "new", primary: true, attrs: { "data-wsp-click": "new" } }] : [] },
+        '<p class="xws-empty">暂无企业空间' + (canManage ? "，可点击「新建企业空间」创建" : "") + "</p>") + "</section>";
+      if (!rows.length) return '<section class="xws-card">' + head + emptyHTML({ kind: "search", title: "没有匹配的企业空间", desc: "换个关键词，或清除搜索查看全部企业空间。",
+        actions: [{ text: "清除搜索", act: "clearSearch", attrs: { "data-wsp-click": "clearSearch" } }] }, '<p class="xws-empty">没有匹配的企业空间</p>') + "</section>";
       return '<section class="xws-card">' + head +
         '<table class="xws-table"><thead><tr><th>名称</th><th>描述</th><th>管理员</th><th>成员数</th><th>项目数</th><th>配额</th><th style="width:150px">操作</th></tr></thead><tbody>' +
         rows.map(function (w) {
@@ -262,7 +271,8 @@
     function membersHTML() {
       var D = st.detail;
       var head = '<div class="xws-head"><h3>成员</h3>' + (canManage ? '<button type="button" class="x-btn x-btn--pri" data-wsp-click="addMember">添加成员</button>' : "") + "</div>";
-      if (!D.members.length) return head + '<p class="xws-empty">暂无成员</p>';
+      if (!D.members.length) return head + emptyHTML({ kind: "member", size: "s", title: "暂无成员", desc: canManage ? "添加用户或用户组，并分配空间内的角色。" : "",
+        actions: canManage ? [{ text: "添加成员", act: "addMember", primary: true, attrs: { "data-wsp-click": "addMember" } }] : [] }, '<p class="xws-empty">暂无成员</p>');
       return head + '<table class="xws-table"><thead><tr><th>成员</th><th style="width:180px">空间角色</th><th>加入时间</th>' + (canManage ? '<th style="width:90px">操作</th>' : "") + "</tr></thead><tbody>" +
         D.members.map(function (m) {
           var role = canManage
@@ -275,7 +285,9 @@
     function projectsHTML() {
       var D = st.detail;
       var head = '<div class="xws-head"><h3>项目</h3>' + (canManage ? '<button type="button" class="x-btn x-btn--pri" data-wsp-click="addProject">绑定项目</button>' : "") + "</div>";
-      if (!D.projects.length) return head + '<p class="xws-empty">暂无项目' + (canManage ? "，可把集群中的命名空间绑定到本空间" : "") + "</p>";
+      if (!D.projects.length) return head + emptyHTML({ kind: "cluster", size: "s", title: "暂无项目", desc: canManage ? "可把集群中的命名空间绑定到本空间。" : "",
+        actions: canManage ? [{ text: "绑定项目", act: "addProject", primary: true, attrs: { "data-wsp-click": "addProject" } }] : [] },
+        '<p class="xws-empty">暂无项目' + (canManage ? "，可把集群中的命名空间绑定到本空间" : "") + "</p>");
       return head + '<table class="xws-table"><thead><tr><th>集群</th><th>命名空间</th><th>绑定时间</th>' + (canManage ? '<th style="width:90px">操作</th>' : "") + "</tr></thead><tbody>" +
         D.projects.map(function (p) {
           var cn = clusterName(p.cluster_id, p);
@@ -288,7 +300,8 @@
       var head = '<div class="xws-head"><div><h3>角色绑定</h3><p class="xws-sub">把平台角色限定在本空间或空间内某个项目范围内授予用户或用户组。</p></div>' +
         (canManage && !D.bindErr ? '<button type="button" class="x-btn x-btn--pri" data-wsp-click="addBinding">添加绑定</button>' : "") + "</div>";
       if (D.bindErr) return head + '<p class="xws-err" data-wsp-binderr>' + esc(D.bindErr) + "</p>";
-      if (!D.bindings.length) return head + '<p class="xws-empty">暂无范围化角色绑定</p>';
+      if (!D.bindings.length) return head + emptyHTML({ kind: "member", size: "s", title: "暂无范围化角色绑定", desc: canManage ? "把平台角色限定在本空间或其中某个项目内授予用户或用户组。" : "",
+        actions: canManage ? [{ text: "添加绑定", act: "addBinding", primary: true, attrs: { "data-wsp-click": "addBinding" } }] : [] }, '<p class="xws-empty">暂无范围化角色绑定</p>');
       return head + '<table class="xws-table"><thead><tr><th>授权对象</th><th>角色</th><th>范围</th><th>创建时间</th>' + (canManage ? '<th style="width:90px">操作</th>' : "") + "</tr></thead><tbody>" +
         D.bindings.map(function (b) {
           return '<tr data-wsp-binding="' + esc(b.id) + '"><td>' + subjectHTML(b) + "</td><td>" + esc(roleName(b.role_id, b)) + "</td><td>" + esc(scopeText(b)) + '</td><td class="xws-muted">' + esc(fmtTime(b.created_at)) + "</td>" +
@@ -486,6 +499,7 @@
         return loadDetail();
       },
       tab: function (t) { st.tab = t.getAttribute("data-tab") || "members"; paint(); },
+      clearSearch: function () { st.q = ""; paint(); },
       new: function () { if (canManage) openModal({ type: "ws", id: null, form: { name: "", description: "", manager_id: "", cpu: "", memory: "" } }); },
       edit: function (t) {
         if (!canManage) return;

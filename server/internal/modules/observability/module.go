@@ -102,6 +102,9 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 
 	g.POST("/logs/query", rbac.RequirePerm(PermLogsRead), m.logsQuery)
 
+	// 列表行内迷你趋势图（近 30 分钟 CPU/内存，批量）。节点另需 node:read（处理函数内校验）。
+	g.GET("/metrics/sparklines", rbac.RequirePerm(permSparkWorkloadRead), m.sparklines)
+
 	al := g.Group("/alerts")
 	al.GET("", rbac.RequirePerm(PermAlertRead), m.listAlerts)
 	al.GET("/:id", rbac.RequirePerm(PermAlertRead), m.getAlert)

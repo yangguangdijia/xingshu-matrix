@@ -7,6 +7,11 @@
  */
 (function (root) {
   "use strict";
+  // emptyHTML：统一空状态（XSEmpty）；未加载 xs-empty.js 时回退为原来的一行文字 fallbackHTML。
+  function emptyHTML(o, fallbackHTML) {
+    var X = root.XSEmpty;
+    return typeof X !== "undefined" && X && typeof X.html === "function" ? X.html(o) : fallbackHTML;
+  }
   var PAGE_SIZE = 20;
   var POLL_MS = 5000;
   var STATUS = {
@@ -164,7 +169,13 @@
         '<p class="xjb-muted" style="margin:-8px 0 14px;font-size:13px">平台在后台异步执行的任务。失败的任务会按间隔自动重试，重试次数用尽后进入死信，需人工处理。</p>' + filtersHTML();
       if (st.loading && !st.items.length) return '<section class="xjb-card">' + head + '<p class="xjb-empty">正在加载…</p></section>';
       if (st.error) return '<section class="xjb-card">' + head + '<p class="xjb-err" data-jobs-error>' + esc(st.error) + "</p></section>";
-      if (!st.items.length) return '<section class="xjb-card">' + head + '<p class="xjb-empty">' + (st.status || st.type ? "没有符合筛选条件的任务" : "暂无后台任务") + "</p></section>";
+      if (!st.items.length) {
+        var filtered = !!(st.status || st.type);
+        return '<section class="xjb-card">' + head + emptyHTML(filtered
+          ? { kind: "search", title: "没有符合筛选条件的任务", desc: "换个状态或任务类型再查，或清除筛选查看全部任务。", actions: [{ text: "清除筛选", act: "clear", attrs: { "data-jobs-click": "clear" } }] }
+          : { kind: "job", title: "暂无后台任务", desc: "备份、扫描等由平台异步执行的任务会出现在这里，失败的任务可在此重试。", actions: [{ text: "刷新", act: "reload", attrs: { "data-jobs-click": "reload" } }] },
+          '<p class="xjb-empty">' + (filtered ? "没有符合筛选条件的任务" : "暂无后台任务") + "</p>") + "</section>";
+      }
       var pages = Math.max(1, Math.ceil(st.total / PAGE_SIZE));
       return '<section class="xjb-card">' + head +
         '<table class="xjb-table"><thead><tr><th>编号</th><th>类型</th><th>状态</th><th>尝试次数</th><th>下次执行</th><th>最近错误</th><th>创建时间</th><th style="width:140px">操作</th></tr></thead><tbody>' +

@@ -438,3 +438,47 @@ Go `text/template`。变量：`.AlertName` `.Severity`（critical/warning/info�
 - 只读取 Secret 中的叶子证书，不检查中间证书到期；不扫描 cert-manager `Certificate` 资源状态；不支持 SNI 与连接地址不同的探测；通配符域名不能直接探测（需填写具体子域名）。
 - 列表过滤在服务端内存中完成（最多 20000 行），无分页。
 - 删除集群后，该集群证书快照在下次扫描时清理；去重记录 `obs_cert_notices` 不自动清理。
+
+## 9. 列表行内迷你趋势图（v1.31 u-spark）
+
+### GET /observability/metrics/sparklines　`workload:read`（`kind=node` 另需 `node:read`）
+批量返回近 30 分钟 CPU / 内存曲线，供工作负载、Pod、节点列表的「近 30 分钟」列使用。代码：`sparklines.go`。
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `cluster_id` | 是 | 集群 ID（正整数） |
+| `kind` | 是 | `pod` \| `node` \| `workload` |
+| `workload_kind` | `kind=workload` 时 | `deployments`（默认）\| `statefulsets` \| `daemonsets` \| `jobs` \| `cronjobs` |
+| `namespace` | pod/workload 时二选一 | 默认命名空间；`names` 中也可写 `命名空间/名称`（跨命名空间列表） |
+| `names` | 是 | 逗号分隔，去重后 ≤ 50 个；名称按 DNS-1123 校验（节点允许大写与下划线），不接受正则 |
+| `ips` | 否 | 仅 `kind=node`：与 `names` 等长的节点 IP 列表（可留空项），用于匹配 node_exporter 的 `instance` |
+
+固定窗口：结束时间按分钟取整，`start = end - 30m`，步长 60 秒（最多 31 点）。整次查询超时 10 秒（另受数据源 `timeout_sec` 限制）。
+
+数据源解析与总览 24 小时趋势一致（`selectSource`：集群专属源优先，其次唯一的中央源；中央源自动为每个选择器追加精确集群标签）。PromQL 不使用 `by()/on()`，原始序列取回后在服务端聚合：
+
+| kind | CPU | 内存 | 单位 `unit` |
+|---|---|---|---|
+| `pod` | `rate(container_cpu_usage_seconds_total{namespace,pod,container!="",container!="POD"}[5m])` 按 Pod 求和 | `container_memory_working_set_bytes{…}` 按 Pod 求和 | `cores` / `bytes` |
+| `workload` | 同上，`pod=~"(?:名称…)<控制器后缀>"`，再按 Pod 名映射回工作负载（名称互为前缀时取最长匹配） | 同上 | `cores` / `bytes` |
+| `node` | `rate(node_cpu_seconds_total{mode="idle"}[5m])` 各核均值换算为使用率 | `100 * (1 - MemAvailable / MemTotal)` | `percent` / `percent` |
+
+节点映射顺序：`ips` 与 `instance` 主机部分 → 序列上的 `node`/`nodename`/`kubernetes_node` 标签 → `node_uname_info{nodename}`。
+
+响应：
+```json
+{"source":"prometheus","kind":"workload","workload_kind":"deployments","start":1763346600,"end":1763348400,"step":60,
+ "unit":{"cpu":"cores","mem":"bytes"},
+ "items":[{"name":"api","cpu":[[1763346600,0.12],[1763346660,0.13]],"mem":[[1763346600,73400320]]},
+          {"name":"web","cpu":[],"mem":[]}]}
+```
+- `items` 与请求名称一一对应、顺序一致，`name` 原样回显（含 `命名空间/名称` 写法）；无采样的对象返回空数组。
+- 集群未绑定 Prometheus：HTTP 200，`source:"none"`，全部空数组，`note:"集群未接入监控数据源"`。
+
+错误码：400（参数无效、超过 50 个、缺命名空间、IP 数量不一致）；401；403（无集群/命名空间权限、节点趋势缺 `node:read`、环境范围不符）；404（集群不存在）；409（集群绑定了多个同级数据源）；502（Prometheus 不可达或 CPU、内存查询均失败）。只有一条查询失败时返回成功的那条，另一条为空数组。
+
+未验证 / 限制：
+- 未连真实 Prometheus 联调（单测用假 Prometheus 服务）；cAdvisor / node_exporter 标签按 kube-prometheus-stack 默认假设。
+- 工作负载按 Pod 命名规则匹配，未读取 ownerReferences；自定义 Pod 名（如裸 Pod 或改写名称的控制器）不会计入。
+- 同一容器被多个抓取任务重复采集时，Pod 级求和会偏大（节点内存已取均值规避）。
+- 不读取审计（只读查询）；平台没有历史采样存储，无 Prometheus 时不回退 metrics-server。

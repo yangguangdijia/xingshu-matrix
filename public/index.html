@@ -1766,6 +1766,8 @@
     <link rel="stylesheet" href="xs-component-center.css" />
     <link rel="stylesheet" href="xs-cluster-integrations.css" />
     <link rel="stylesheet" href="xs-cicd-pipeline.css" />
+    <link rel="stylesheet" href="xs-topology.css" />
+    <link rel="stylesheet" href="xs-empty.css" />
     <link rel="stylesheet" href="xs-login-reference.css" />
   </head>
   <body>
@@ -1871,6 +1873,7 @@
     <script src="hark-charts.js"></script>
     <script src="xs-cluster-context.js"></script>
     <script src="xs-api.js"></script>
+    <script src="xs-empty.js"></script>
     <script src="xs-observability.js"></script>
     <script src="vendor-js-yaml.min.js"></script>
     <script src="xs-formkit.js"></script>
@@ -16369,7 +16372,7 @@ spec:
       const rk = (h) => h.slice(2).split("/")[0];
       // The menu item for the current page: its own test, else the longest matching hash, else any item on the same route
       function curLeaf() {
-        const k = current(), h = hashNow().replace(/^#\/observe\/alerts(?=\/|$)/, "#/observe/events"), c = LEAVES.filter((l) => rk(l.h) === k);
+        const k = current(), h = hashNow().split("?")[0].replace(/^#\/observe\/alerts(?=\/|$)/, "#/observe/events"), c = LEAVES.filter((l) => rk(l.h) === k);
         return c.find((l) => l.a && l.a()) || c.filter((l) => !l.a && (h === l.h || h.startsWith(l.h + "/"))).sort((x, y) => y.h.length - x.h.length)[0] || c.find((l) => !l.a) || c[0] || null;
       }
       const mobile = () => matchMedia("(max-width: 767px)").matches;
@@ -16752,6 +16755,7 @@ spec:
       // Every page of both consoles, grouped by console; opening one switches to its console
       const pages = () => LEAVES.flatMap((l) => (l.xs ? l.xs.map((s) => ({ t: s.t, m: l.t, g: l.w.t, i: s.i, h: secHash(s) })) : [{ t: l.t, m: l.p ? l.p.t : l.w.t, g: l.w.t, i: l.i, h: l.h }]));
       function drawCmdk() {
+        if (window.XSCmdk && XSCmdk.ready) return XSCmdk.onOpen();
         const q = cmdIn.value.trim().toLowerCase();
         cmdList = pages().filter((p) => !q || (p.t + " " + p.m + " " + p.g).toLowerCase().includes(q));
         cmdSel = Math.min(cmdSel, Math.max(0, cmdList.length - 1));
@@ -16778,6 +16782,9 @@ spec:
       };
       cmdUl.onclick = (e) => { const a = e.target.closest("a"); if (a) { e.preventDefault(); navGo(a.getAttribute("href")); } };
       $("kbtn").onclick = openCmdk;
+      // 全局搜索增强（xs-cmdk.js）：最近访问、常用操作与资源搜索
+      window.XSCmdkHost = { el: cmdk, input: cmdIn, list: cmdUl, pages, navGo, ic, esc, closeAll,
+        demo: () => ({ clusters: clAll(), hosts: HOSTS, apps: APPS, reqs: state.reqs }) };
       if ($("aibtn")) $("aibtn").onclick = () => { setOpen(false); aiDrawer(); };
 
       document.querySelectorAll("[data-ic]").forEach((el) => el.insertAdjacentHTML("afterbegin", ic(el.dataset.ic)));
@@ -16852,6 +16859,8 @@ spec:
     <script src="xs-component-center.js"></script>
     <script src="xs-cluster-integrations.js"></script>
     <script src="xs-login-gl.js"></script>
+    <script src="xs-sparkline.js"></script>
+    <script src="xs-topology.js"></script>
     <script src="xs-live-core.js"></script>
     <script src="xs-monitoring.js"></script>
     <script src="xs-topo-cards.js"></script>
@@ -16874,6 +16883,7 @@ spec:
     <script src="xs-notify-center.js"></script>
     <script src="xs-cluster-registries.js"></script>
     <script src="xs-kubectl.js"></script>
+    <script src="xs-cmdk.js"></script>
     <script src="xs-identity.js"></script>
     <script src="xs-bastion-aidraft.js"></script>
     <script src="xs-apidoc.js"></script>

@@ -62,8 +62,15 @@
   function head(t, sub, acts) {
     return '<div class="xb-head"><div><h2>' + E(t) + "</h2>" + (sub ? "<p>" + E(sub) + "</p>" : "") + '</div><div class="xb-head-act">' + (acts || "") + "</div></div>";
   }
+  // emptyBox：统一空状态（XSEmpty）；未加载 xs-empty.js 时回退为原来的一行文字。
+  // o: { kind, title, desc, actions, size, fallback }，fallback 为回退时显示的原文案。
+  function emptyBox(o, cls, style) {
+    var X = root.XSEmpty;
+    if (typeof X !== "undefined" && X && typeof X.html === "function") return X.html(o);
+    return '<p class="' + (cls || "xb-empty") + '"' + (style ? ' style="' + style + '"' : "") + ">" + E(o.fallback || o.title) + "</p>";
+  }
   function table(cols, rows, empty) {
-    if (!rows.length) return '<p class="xb-empty">' + E(empty || "暂无数据") + "</p>";
+    if (!rows.length) return typeof empty === "object" && empty ? emptyBox(empty) : '<p class="xb-empty">' + E(empty || "暂无数据") + "</p>";
     return '<div class="xb-table"><table><thead><tr>' + cols.map(function (c) { return "<th>" + c + "</th>"; }).join("") + "</tr></thead><tbody>" + rows.map(function (r) { return "<tr>" + r.map(function (c) { return "<td>" + c + "</td>"; }).join("") + "</tr>"; }).join("") + "</tbody></table></div>";
   }
   function failBox(e) { return '<p class="x-aerr">读取失败：' + E(errText(e)) + "</p>"; }
@@ -446,7 +453,8 @@
       '<select class="x-input" data-fl="iter" aria-label="迭代"><option value="">全部迭代</option></select></div>' +
       '<div data-body><p class="x-frac">正在加载…</p></div></div>';
     var reload = function () { listPage(el, k, opts); };
-    el.querySelector("[data-new]").onclick = function () { itemForm(k, null, function (res) { reload(); if (res && res.id) openDetail(k, res.id, reload); }, st.iter ? { values: { iteration_id: st.iter } } : null); };
+    var newItem = function () { itemForm(k, null, function (res) { reload(); if (res && res.id) openDetail(k, res.id, reload); }, st.iter ? { values: { iteration_id: st.iter } } : null); };
+    el.querySelector("[data-new]").onclick = newItem;
     el.querySelector("[data-refresh]").onclick = reload;
     [].forEach.call(el.querySelectorAll("[data-tab]"), function (b) { b.onclick = function () { st.tab = b.getAttribute("data-tab"); st.off = 0; reload(); }; });
     [].forEach.call(el.querySelectorAll("[data-fl]"), function (s) { s.onchange = function () { st[s.getAttribute("data-fl")] = s.value; st.off = 0; reload(); }; });
@@ -474,8 +482,13 @@
       });
       var extraCol = k === "bugs" ? "严重程度" : k === "tests" ? "关联需求" : "迭代";
       var filtered = st.q || st.pri || st.iter || st.type;
-      el.querySelector("[data-body]").innerHTML = table(["编号", "标题", "状态", "优先级", extraCol, "处理人", "更新时间", "操作"], rows,
-        filtered ? "没有符合筛选条件的" + KIND[k].name + "。" : st.tab === "accepting" ? "没有待验收的需求。" : st.tab === "mine" ? "没有指派给你的未完成" + KIND[k].name + "。" : "还没有" + KIND[k].name + "，点右上角新建。") +
+      var ekind = { requirements: "requirement", bugs: "bug", tests: "test" }[k];
+      var newAct = { text: "新建" + KIND[k].name, act: "new", primary: true };
+      var empty = filtered ? { kind: "search", title: "没有符合筛选条件的" + KIND[k].name, desc: "换个关键词，或清除筛选条件后再看看。", actions: [{ text: "清除筛选", act: "clear" }], fallback: "没有符合筛选条件的" + KIND[k].name + "。" }
+        : st.tab === "accepting" ? { kind: ekind, title: "没有待验收的需求", desc: "需求进入「待验收」后会出现在这里，由提出人确认是否达成验收标准。", actions: [{ text: "查看进行中的需求", act: "tabOpen" }], fallback: "没有待验收的需求。" }
+          : st.tab === "mine" ? { kind: ekind, title: "没有指派给你的未完成" + KIND[k].name, desc: "可以新建一条并指派给自己，或在全部" + KIND[k].name + "中认领。", actions: [newAct, { text: "查看全部", act: "tabAll" }], fallback: "没有指派给你的未完成" + KIND[k].name + "。" }
+            : { kind: ekind, title: "还没有" + KIND[k].name, desc: { requirements: "从一条需求开始，跟踪评审、开发、测试到验收的全过程。", bugs: "发现问题后在这里登记缺陷，修复后由提出人验证关闭。", tests: "为需求编写测试用例，记录每次执行结果。" }[k], actions: [newAct], fallback: "还没有" + KIND[k].name + "，点右上角新建。" };
+      el.querySelector("[data-body]").innerHTML = table(["编号", "标题", "状态", "优先级", extraCol, "处理人", "更新时间", "操作"], rows, empty) +
         '<div class="xd-pager"><span class="x-frac">共 ' + total + " 条" + (total > PAGE ? "，第 " + (Math.floor(st.off / PAGE) + 1) + " / " + Math.ceil(total / PAGE) + " 页" : "") + "</span>" +
         (total > PAGE ? '<span><button class="x-btn x-btn--s" data-pg="-1"' + (st.off <= 0 ? " disabled" : "") + '>上一页</button> <button class="x-btn x-btn--s" data-pg="1"' + (st.off + PAGE >= total ? " disabled" : "") + ">下一页</button></span>" : "") + "</div>";
       var byId = function (id) { return list.filter(function (x) { return String(x.id) === String(id); })[0]; };
@@ -486,6 +499,10 @@
       on(el, "[data-next]", function (b) { setStatus(k, byId(b.getAttribute("data-next")), b.getAttribute("data-to"), reload); });
       on(el, "[data-accept]", function (b) { acceptDialog(byId(b.getAttribute("data-accept")), reload); });
       on(el, "[data-pg]", function (b) { st.off = Math.max(0, st.off + Number(b.getAttribute("data-pg")) * PAGE); reload(); });
+      on(el, '[data-xse-act="new"]', newItem);
+      on(el, '[data-xse-act="clear"]', function () { st.q = ""; st.pri = ""; st.iter = ""; st.type = ""; st.off = 0; reload(); });
+      on(el, '[data-xse-act="tabOpen"]', function () { st.tab = "open"; st.off = 0; if (st._acc) { st._acc = false; location.hash = "#/requirements"; } else reload(); });
+      on(el, '[data-xse-act="tabAll"]', function () { st.tab = "all"; st.off = 0; reload(); });
     }).catch(function (e) { el.querySelector("[data-body]").innerHTML = failBox(e); });
   }
 
@@ -504,7 +521,8 @@
     el.innerHTML = head(greeting(new Date().getHours()) + "，" + (u.display_name || u.username || ""), "指派给你的需求、缺陷和测试，你创建和参与的事项，以及相关的最近构建。", '<button class="x-btn" data-refresh>刷新</button><button class="x-btn x-btn--pri" data-newreq>+ 新建需求</button>') + '<div data-body><p class="x-frac">正在加载…</p></div>';
     var reload = function () { workbench(el); };
     el.querySelector("[data-refresh]").onclick = reload;
-    el.querySelector("[data-newreq]").onclick = function () { itemForm("requirements", null, function (res) { reload(); if (res && res.id) openDetail("requirements", res.id, reload); }); };
+    var newReq = function () { itemForm("requirements", null, function (res) { reload(); if (res && res.id) openDetail("requirements", res.id, reload); }); };
+    el.querySelector("[data-newreq]").onclick = newReq;
     var tq = { todo: null, created: null, involved: null };
     Promise.all([
       xs().get("/devcenter/summary"),
@@ -531,14 +549,19 @@
       el.querySelector("[data-body]").innerHTML = '<div class="xb-stats">' + cards.map(function (c) { return '<a class="xb-stat" href="' + c[2] + '" style="text-decoration:none;color:inherit"><span>' + c[0] + "</span><b>" + E(c[1]) + "</b><em>查看 →</em></a>"; }).join("") + "</div>" +
         '<div class="xd-wb"><div><section class="xb-main"><div class="x-tabs" role="tablist" style="margin-bottom:8px">' +
         [["todo", "待办 " + tq.todo.length], ["created", "我创建的"], ["involved", "我参与的"]].map(function (t) { return '<button type="button" data-wt="' + t[0] + '"' + (WB.tab === t[0] ? ' class="on"' : "") + ">" + E(t[1]) + "</button>"; }).join("") +
-        '</div><div data-wlist></div></section></div><div><section class="xb-main"><h3>进行中的迭代<a class="xd-link" href="#/project/sprint">全部迭代</a></h3><div data-iters>' + (iters.length ? '<p class="x-frac">正在计算进度…</p>' : '<p class="xb-empty" style="padding:16px 0">没有进行中的迭代。</p>') + '</div></section>' +
+        '</div><div data-wlist></div></section></div><div><section class="xb-main"><h3>进行中的迭代<a class="xd-link" href="#/project/sprint">全部迭代</a></h3><div data-iters>' + (iters.length ? '<p class="x-frac">正在计算进度…</p>' : emptyBox({ kind: "requirement", size: "s", title: "没有进行中的迭代", actions: [{ text: "前往迭代", href: "#/project/sprint" }], fallback: "没有进行中的迭代。" }, "xb-empty", "padding:16px 0")) + '</div></section>' +
         '<section class="xb-main"><h3>最近构建<a class="xd-link" href="#/cicd/pipeline">流水线</a></h3><div data-builds><p class="x-frac">正在加载…</p></div></section></div></div>';
       var drawList = function () {
         var list = tq[WB.tab] || [];
         var box = el.querySelector("[data-wlist]");
         box.innerHTML = list.length ? list.map(function (p) { var k = p[0], x = p[1]; return '<div class="xd-row" data-k="' + k + '" data-id="' + x.id + '"><span class="x-mono">' + ({ bugs: "缺陷", tests: "用例" }[k] || "") + "#" + x.id + "</span>" + stTag(k, x.status) + typeTag(x) + '<span class="xd-grow">' + E(x.title) + "</span>" + priTag(x.priority) + '<span class="x-frac">' + E(ago(x.updated_at)) + "</span></div>"; }).join("")
-          : '<p class="xb-empty">' + { todo: "没有指派给你的未完成事项。", created: "你还没有创建需求。", involved: "还没有你参与（处理、评论或变更过）的需求。" }[WB.tab] + "</p>";
+          : emptyBox({
+            todo: { kind: "requirement", title: "没有指派给你的未完成事项", desc: "手头的事都处理完了。可以新建需求，或到需求列表认领。", actions: [{ text: "新建需求", act: "newreq", primary: true }, { text: "查看需求列表", href: "#/requirements" }], fallback: "没有指派给你的未完成事项。" },
+            created: { kind: "requirement", title: "你还没有创建需求", actions: [{ text: "新建需求", act: "newreq", primary: true }], fallback: "你还没有创建需求。" },
+            involved: { kind: "requirement", title: "还没有你参与的需求", desc: "你处理、评论或变更过的需求会出现在这里。", actions: [{ text: "查看需求列表", href: "#/requirements" }], fallback: "还没有你参与（处理、评论或变更过）的需求。" }
+          }[WB.tab]);
         [].forEach.call(box.querySelectorAll("[data-k]"), function (row) { row.onclick = function () { openDetail(row.getAttribute("data-k"), row.getAttribute("data-id"), reload); }; });
+        on(box, '[data-xse-act="newreq"]', newReq);
       };
       drawList();
       [].forEach.call(el.querySelectorAll("[data-wt]"), function (b) { b.onclick = function () { WB.tab = b.getAttribute("data-wt"); [].forEach.call(el.querySelectorAll("[data-wt]"), function (x) { x.classList.toggle("on", x === b); }); drawList(); }; });
@@ -564,7 +587,7 @@
       var list = (related.length ? related : runs).slice(0, 6);
       box.innerHTML = (list.length ? (related.length ? "" : '<p class="x-frac" style="margin:0 0 4px">暂无与你相关的构建，以下为团队最近构建。</p>') + list.map(function (x) {
         return '<a class="xd-row" style="text-decoration:none;color:inherit" href="#/cicd/pipeline/' + encodeURIComponent(x.pipeline_id) + '">' + runTag(x.status) + '<span class="xd-grow">' + E(pname[x.pipeline_id] || "流水线 #" + x.pipeline_id) + ' <span class="x-frac">#' + E(x.id) + " · " + E(x.branch || "—") + "</span></span><span class=\"x-frac\">" + E(ago(x.created_at)) + "</span></a>";
-      }).join("") : '<p class="xb-empty" style="padding:16px 0">还没有构建记录。</p>');
+      }).join("") : emptyBox({ kind: "pipeline", size: "s", title: "还没有构建记录", actions: [{ text: "前往流水线", href: "#/cicd/pipeline" }], fallback: "还没有构建记录。" }, "xb-empty", "padding:16px 0"));
     }).catch(function (e) { box.innerHTML = '<p class="x-frac">' + (e && e.status === 403 ? "没有查看构建记录的权限。" : "读取构建记录失败：" + E(errText(e))) + "</p>"; });
   }
 
@@ -572,7 +595,8 @@
   function sprints(el) {
     el.innerHTML = head("迭代", "按迭代规划需求与缺陷，跟踪完成进度和燃尽情况。", '<button class="x-btn" data-refresh>刷新</button><button class="x-btn x-btn--pri" data-new>+ 新建迭代</button>') + '<div data-body><p class="x-frac">正在加载…</p></div>';
     var reload = function () { sprints(el); };
-    el.querySelector("[data-new]").onclick = function () { itemForm("iterations", null, reload); };
+    var newIter = function () { itemForm("iterations", null, reload); };
+    el.querySelector("[data-new]").onclick = newIter;
     el.querySelector("[data-refresh]").onclick = reload;
     Promise.all([xs().get("/devcenter/iterations", { page_size: 200 }), xs().get("/devcenter/requirements", { page_size: 500 }), xs().get("/devcenter/bugs", { page_size: 500 })]).then(function (r) {
       var reqs = items(r[1]), bugs = items(r[2]), list = items(r[0]);
@@ -585,13 +609,14 @@
           '<div style="display:flex;align-items:center;gap:8px;min-width:160px"><span class="xd-prog"><i style="width:' + pct + '%"></i></span><span class="x-frac">' + done + "/" + rs.length + "</span></div>",
           bs.length ? bs.filter(function (b) { return DONE.bugs.indexOf(b.status) < 0; }).length + " / " + bs.length : "0", '<span class="xb-ops">' + acts + "</span>"];
       });
-      el.querySelector("[data-body]").innerHTML = '<div class="xb-main">' + table(["迭代", "状态", "周期", "负责人", "需求完成", "未解决缺陷", "操作"], rows, "还没有迭代，点右上角新建。") + "</div>";
+      el.querySelector("[data-body]").innerHTML = '<div class="xb-main">' + table(["迭代", "状态", "周期", "负责人", "需求完成", "未解决缺陷", "操作"], rows, { kind: "requirement", title: "还没有迭代", desc: "按迭代规划需求与缺陷，跟踪完成进度和燃尽情况。", actions: [{ text: "新建迭代", act: "new", primary: true }], fallback: "还没有迭代，点右上角新建。" }) + "</div>";
       var byId = function (id) { return list.filter(function (x) { return String(x.id) === String(id); })[0]; };
       on(el, "[data-edit]", function (b) { itemForm("iterations", byId(b.getAttribute("data-edit")), reload); });
       on(el, "[data-open]", function (b) { openDetail("iterations", b.getAttribute("data-open"), reload); });
       on(el, "[data-del]", function (b) { confirmDel("iterations", byId(b.getAttribute("data-del")), reload); });
       on(el, "[data-st]", function (b) { setStatus("iterations", byId(b.getAttribute("data-st")), b.getAttribute("data-to"), reload); });
       on(el, "[data-board]", function (b) { BOARD.iter = b.getAttribute("data-board"); location.hash = "#/project/board"; });
+      on(el, '[data-xse-act="new"]', newIter);
     }).catch(function (e) { el.querySelector("[data-body]").innerHTML = failBox(e); });
   }
 
@@ -601,7 +626,8 @@
       '<div class="xd-filters"><select class="x-input" data-iter aria-label="迭代"><option value="">全部迭代</option></select><select class="x-input" data-type aria-label="类型"><option value="">需求和任务</option><option value="story"' + (BOARD.type === "story" ? " selected" : "") + '>只看需求</option><option value="task"' + (BOARD.type === "task" ? " selected" : "") + '>只看任务</option></select><label class="x-frac" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-mine style="width:auto"' + (BOARD.mine ? " checked" : "") + ">只看我负责的</label></div>" +
       '<div data-body><p class="x-frac">正在加载…</p></div>';
     var reload = function () { board(el); };
-    el.querySelector("[data-new]").onclick = function () { itemForm("requirements", null, reload, BOARD.iter ? { values: { iteration_id: BOARD.iter } } : null); };
+    var newReq = function () { itemForm("requirements", null, reload, BOARD.iter ? { values: { iteration_id: BOARD.iter } } : null); };
+    el.querySelector("[data-new]").onclick = newReq;
     el.querySelector("[data-type]").onchange = function (e) { BOARD.type = e.target.value; reload(); };
     el.querySelector("[data-mine]").onchange = function (e) { BOARD.mine = e.target.checked; reload(); };
     var q = { page_size: 500, iteration_id: BOARD.iter, type: BOARD.type, assignee: BOARD.mine ? "me" : "" };
@@ -614,7 +640,11 @@
         var cs = reqs.filter(function (x) { return x.status === c[0]; });
         return '<section class="xd-col" data-col="' + c[0] + '"><header><span class="x-tag x-tag--s ' + c[2] + '">' + c[1] + "</span><b>" + cs.length + "</b></header>" +
           cs.map(function (x) { return '<article class="xd-card" draggable="true" tabindex="0" data-card="' + x.id + '"><div class="xd-card-t">' + typeTag(x) + E(x.title) + '</div><div class="xd-card-m"><span class="x-mono">#' + x.id + "</span>" + priTag(x.priority) + '<span class="x-frac">' + E(x.assignee || "未指派") + "</span></div></article>"; }).join("") + "</section>";
-      }).join("") + "</div>" + (reqs.length ? "" : '<p class="xb-empty">没有符合条件的需求。</p>');
+      }).join("") + "</div>" + (reqs.length ? "" : emptyBox(BOARD.iter || BOARD.mine || BOARD.type
+        ? { kind: "search", size: "s", title: "没有符合条件的需求", actions: [{ text: "清除筛选", act: "clear" }], fallback: "没有符合条件的需求。" }
+        : { kind: "requirement", size: "s", title: "还没有需求", actions: [{ text: "新建需求", act: "new", primary: true }], fallback: "没有符合条件的需求。" }));
+      on(el, '[data-xse-act="new"]', newReq);
+      on(el, '[data-xse-act="clear"]', function () { BOARD.iter = ""; BOARD.mine = false; BOARD.type = ""; reload(); });
       var byId = function (id) { return reqs.filter(function (x) { return String(x.id) === String(id); })[0]; };
       [].forEach.call(el.querySelectorAll("[data-card]"), function (c) {
         c.ondragstart = function (e) { e.dataTransfer.setData("text/plain", c.getAttribute("data-card")); c.classList.add("drag"); };
@@ -669,7 +699,7 @@
       var dist = '<div class="xd-grid2"><div class="xb-main"><h3>需求状态分布</h3>' + hbars(r.requirements_by_status || {}, "requirements", KIND.requirements.st) + '</div><div class="xb-main"><h3>缺陷状态分布</h3>' + hbars(r.bugs_by_status || {}, "bugs", KIND.bugs.st) +
         '<h3 style="margin-top:16px">未解决缺陷严重程度</h3>' + hbars(r.open_bugs_by_severity || {}, "", null) + "</div></div>";
       var who = '<div class="xd-grid2"><div class="xb-main"><h3>成员负载</h3>' + table(["处理人", "在手需求", "在手缺陷", "区间内完成"], (r.assignees || []).map(function (a) { return [E(a.assignee), a.open_requirements, a.open_bugs, a.done_in_range]; }), "没有数据") + "</div>" +
-        '<div class="xb-main"><h3>测试执行</h3>' + (ttotal ? '<p style="margin:0 0 8px;font-size:13px">通过率 <b style="font-size:20px">' + Math.round((tests.passed || 0) * 100 / ttotal) + "%</b>（" + (tests.passed || 0) + "/" + ttotal + "）</p>" + hbars(tests, "tests", KIND.tests.st) : '<p class="x-frac">还没有测试用例。</p>') + "</div></div>";
+        '<div class="xb-main"><h3>测试执行</h3>' + (ttotal ? '<p style="margin:0 0 8px;font-size:13px">通过率 <b style="font-size:20px">' + Math.round((tests.passed || 0) * 100 / ttotal) + "%</b>（" + (tests.passed || 0) + "/" + ttotal + "）</p>" + hbars(tests, "tests", KIND.tests.st) : emptyBox({ kind: "test", size: "s", title: "还没有测试用例", actions: [{ text: "前往测试管理", href: "#/testing" }], fallback: "还没有测试用例。" }, "x-frac")) + "</div></div>";
       el.querySelector("[data-body]").innerHTML = kp + chart + dist + who +
         '<p class="x-frac xb-note">口径说明：吞吐为区间内进入「已完成」（需求）或「已验证 / 已关闭」（缺陷）的数量，已关闭的需求不计入；周期时长从首次进入「开发中 / 处理中」算起；交付时长从创建算起；被重新打开的事项不计为完成。启用变更记录之前的历史数据以最后更新时间近似。</p>';
     }).catch(function (e) { el.querySelector("[data-body]").innerHTML = failBox(e); });
@@ -729,8 +759,9 @@
       var list = items(r[1]);
       el.querySelector("[data-body]").innerHTML = '<div class="xb-main">' + table(["编号", "需求", "状态", "模型", "发起人", "发起时间", "操作"], list.map(function (t) {
         return ['<span class="x-mono">#' + t.id + "</span>", t.requirement_title ? '<a class="xd-link" data-req="' + t.requirement_id + '">#' + t.requirement_id + " " + E(t.requirement_title) + "</a>" : '<span class="x-frac">需求已删除</span>', aiTag(t.status), E(t.model_name || "—"), E(t.created_by || "—"), fmt(t.created_at), '<a class="x-act" href="' + base + "/" + t.id + '">查看</a>'];
-      }), "还没有 AI 开发记录。点右上角「发起 AI 开发」，或在需求详情中点「AI 开发」。") + "</div>";
+      }), { kind: "requirement", title: "还没有 AI 开发记录", desc: "选择一条需求，由大模型生成实施方案和任务拆解；也可以在需求详情中点「AI 开发」。", actions: [{ text: "发起 AI 开发", act: "new", primary: true }], fallback: "还没有 AI 开发记录。点右上角「发起 AI 开发」，或在需求详情中点「AI 开发」。" }) + "</div>";
       on(el, "[data-req]", function (b) { openDetail("requirements", b.getAttribute("data-req"), reload); });
+      on(el, '[data-xse-act="new"]', function () { aiLaunch(null); });
       if (list.some(function (t) { return t.status === "running"; })) { var h = (location.hash || "").split("?")[0]; AI_TIMER = setTimeout(function () { if (stillOn(h)) reload(); }, 4000); }
     }).catch(function (e) { el.querySelector("[data-body]").innerHTML = failBox(e); });
   }
@@ -798,7 +829,7 @@
           lr ? '<a class="xd-link" href="#/cicd/pipeline/' + encodeURIComponent(lr.pipeline_id) + '">' + runTag(lr.status) + "</a> <span class=\"x-frac\">" + E(ago(lr.created_at)) + "</span>" : '<span class="x-frac">暂无</span>',
           ls.length ? '<a class="xd-link" data-app="' + a.id + '">' + ls.length + " 项（未完成 " + open + "）</a>" : '<span class="x-frac">未关联</span>'];
       });
-      el.querySelector("[data-body]").innerHTML = '<div class="xb-main">' + table(["应用", "仓库地址", "默认分支", "流水线", "最近构建", "关联需求 / 缺陷"], rows, "还没有接入代码仓库。到 CI/CD 应用中接入后，这里会显示仓库与需求的关联。") + '</div><div data-rel style="margin-top:16px"></div>';
+      el.querySelector("[data-body]").innerHTML = '<div class="xb-main">' + table(["应用", "仓库地址", "默认分支", "流水线", "最近构建", "关联需求 / 缺陷"], rows, { kind: "app", title: "还没有接入代码仓库", desc: "到 CI/CD 应用中接入后，这里会显示仓库与需求的关联。", actions: [{ text: "接入代码仓库", href: "#/delivery/apps", primary: true }], fallback: "还没有接入代码仓库。到 CI/CD 应用中接入后，这里会显示仓库与需求的关联。" }) + '</div><div data-rel style="margin-top:16px"></div>';
       on(el, "[data-app]", function (b) {
         var id = Number(b.getAttribute("data-app")), ps = {};
         pipes.forEach(function (p) { if (p.app_id === id) ps[p.id] = 1; });
