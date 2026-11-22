@@ -159,3 +159,46 @@
 .x-btn--sm { padding: 2px 8px; font-size: 12px; min-height: 0; }
 @media (max-width: 900px) { .x-cicd-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .x-cicd-templates { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
+
+/* v1.32 p2-pipeline-live：四色阶段图（正常绿/进行橙/异常红/未知灰）、运行中呼吸点（无光效）、运行历史筛选与列、日志错误高亮 */
+.x-cicd-state--ok::before { background: #16a34a; }
+.x-cicd-state--bad::before { background: #dc2626; }
+.x-cicd-state--busy::before { background: #d97706; }
+.x-cicd-state--neutral::before { background: #6b7280; }
+.x-cicd-node--ok button { border-left-color: #16a34a; }
+.x-cicd-node--busy button { border-left-color: #d97706; }
+.x-cicd-node--bad button { border-left-color: #dc2626; background: #fff; }
+.x-cicd-node--neutral button { border-left-color: #6b7280; }
+.x-cicd-node--ok + .x-cicd-node::before { background: #16a34a; }
+.x-cicd-node.is-running button { animation: none; }
+.x-cicd-node.is-active button { border-top-color: #94a3b8; border-right-color: #94a3b8; border-bottom-color: #94a3b8; box-shadow: none; background: #f8fafc; }
+.x-cicd-node button:hover { box-shadow: none; border-top-color: #cbd5e1; border-right-color: #cbd5e1; border-bottom-color: #cbd5e1; }
+.x-cicd-node--ok.is-active button { border-left-color: #16a34a; }
+.x-cicd-node--busy.is-active button { border-left-color: #d97706; }
+.x-cicd-node--bad.is-active button { border-left-color: #dc2626; }
+.x-cicd-node--neutral.is-active button { border-left-color: #6b7280; }
+.x-cicd-node-err { color: #dc2626; }
+.x-cicd-pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #d97706; margin-right: 6px; vertical-align: 1px; animation: xCicdBreath 1.4s ease-in-out infinite; }
+@keyframes xCicdBreath { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .x-cicd-pulse { animation: none; } }
+.x-cicd-live { font-size: 12px; color: var(--x-sub); margin-right: 4px; }
+.x-cicd-live--bad { color: #d97706; }
+.x-cicd-hfilter { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+.x-cicd-hfilter .x-select { flex: 1; min-width: 0; }
+.x-cicd-hfilter .x-cicd-check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+.x-cicd-hhead, .x-cicd-history li button .x-cicd-hrow { display: grid !important; grid-template-columns: 44px minmax(0, 1fr) 64px; gap: 6px; align-items: center; }
+.x-cicd-hhead { font-size: 11px; color: var(--x-sub); padding: 0 8px 6px; border-bottom: 1px solid var(--x-line); }
+.x-cicd-hhead span:last-child, .x-cicd-history li button .x-cicd-hdur { text-align: right; font-variant-numeric: tabular-nums; }
+.x-cicd-history li button .x-cicd-hrow { font-size: 12px !important; }
+.x-cicd-history li button .x-cicd-hmid { display: flex !important; align-items: center; gap: 8px; min-width: 0; font-size: 12px; }
+.x-cicd-history li button .x-cicd-hwhen { display: inline !important; color: var(--x-sub); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.x-cicd-history li button .x-cicd-hdur { font-size: 12px; white-space: nowrap; }
+.x-cicd-history li button .x-cicd-hsub { color: var(--x-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.x-cicd-log-fail { margin: 0 0 8px; padding: 8px 10px; border: 1px solid #fecaca; border-left: 3px solid #dc2626; border-radius: 6px; background: #fef2f2; color: #7f1d1d; font-size: 12px; overflow-wrap: anywhere; }
+.x-cicd-log-fail strong { color: #b91c1c; }
+.x-cicd-log-fail .x-btn { margin-left: 6px; }
+.x-cicd-log-line--err { background: rgba(220, 38, 38, .28); color: #fecaca; }
+.x-cicd-dot--ok { background: #16a34a; }
+.x-cicd-dot--bad { background: #dc2626; }
+.x-cicd-dot--busy { background: #d97706; }
+.x-cicd-dot--neutral { background: #9ca3af; }

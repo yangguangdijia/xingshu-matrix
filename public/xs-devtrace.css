@@ -1,0 +1,79 @@
+/* 研发中心 · 交付价值流（xs-devtrace.js）。浅色企业风，四色状态，无渐变光效。 */
+.xdt { font-size: 13px; color: var(--x-text, #1f2a37); }
+.xdt-loading, .xdt-empty { color: var(--x-sub, #6b7785); font-size: 13px; margin: 4px 0; }
+.xdt-err { color: #dc2626; font-size: 13px; margin: 4px 0 8px; }
+.xdt-err[hidden] { display: none; }
+.xdt-sub { color: var(--x-sub, #6b7785); font-size: 12px; }
+.xdt-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.xdt-top .x-btn { margin-left: auto; }
+.xdt-label { font-size: 12px; color: var(--x-sub, #6b7785); margin-right: 4px; }
+
+/* 进度线 */
+.xdt-line { list-style: none; margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; }
+.xdt-stage { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 0 4px; text-align: center; }
+.xdt-bar { position: absolute; top: 7px; right: 50%; width: 100%; height: 2px; z-index: 0; }
+.xdt-dot { position: relative; z-index: 1; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #6b7280; background: #fff; }
+.xdt-name { font-weight: 600; font-size: 13px; margin-top: 2px; }
+.xdt-at { font-size: 12px; color: var(--x-sub, #6b7785); }
+.xdt-none { font-size: 12px; color: #9ca3af; }
+.xdt-more { border: 0; background: none; color: #1664ff; cursor: pointer; font-size: 12px; padding: 0; }
+.xdt-more:hover { text-decoration: underline; }
+.xdt-stage.on .xdt-name { color: #1664ff; }
+
+.xdt-st { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+.xdt-st i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+
+/* 明细 */
+.xdt-detail, .xdt-sec { border: 1px solid #eef1f5; border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; background: #fafbfc; }
+.xdt-detail h5, .xdt-sec h5 { margin: 0 0 4px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.xdt-sec h5 .x-btn { margin-left: auto; font-weight: 400; }
+.xdt-detail ul, .xdt-sec ul { list-style: none; margin: 0; padding: 0; }
+.xdt-detail li, .xdt-sec li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid #eef1f5; flex-wrap: wrap; }
+.xdt-detail li:first-child, .xdt-sec li:first-child { border-top: 0; }
+.xdt-kind { font-size: 11px; padding: 0 6px; line-height: 18px; border-radius: 4px; background: #f2f3f5; color: #4e5969; }
+.xdt-ref { font-family: var(--x-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; color: #4e5969; }
+.xdt-title { flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--x-text, #1f2a37); text-decoration: none; }
+a.xdt-title, .xdt-linkbtn { color: #1664ff; }
+a.xdt-title:hover, .xdt-linkbtn:hover { text-decoration: underline; }
+.xdt-linkbtn { border: 0; background: none; padding: 0; text-align: left; cursor: pointer; font: inherit; }
+.xdt-envtag { font-size: 11px; padding: 0 6px; line-height: 18px; border-radius: 4px; border: 1px solid #e5e9f0; color: #4e5969; }
+.xdt-manual { font-size: 11px; color: #d97706; }
+.xdt-confirm { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #dc2626; }
+
+/* 环境 */
+.xdt-envs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 12px; }
+.xdt-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid #e5e9f0; border-radius: 14px; background: #fff; color: var(--x-text, #1f2a37); text-decoration: none; font-size: 12px; }
+a.xdt-chip:hover { border-color: #1664ff; }
+.xdt-chip code { font-size: 11px; color: #4e5969; }
+.xdt-noenv { margin: 4px 0 12px; }
+
+/* 手动关联 */
+.xdt-form { border: 1px solid #e5e9f0; border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; background: #fff; }
+.xdt-form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 8px; }
+.xdt-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--x-sub, #6b7785); }
+.xdt-form .x-input { height: 32px; }
+.xdt-form-foot { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* 提示 */
+.xdt-hint { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px dashed #d0d7e2; border-radius: 8px; color: #4e5969; font-size: 12px; line-height: 1.7; }
+.xdt-hint span { flex: 1; }
+.xdt-hint code, .xdt-key code { background: #f2f3f5; border-radius: 4px; padding: 0 4px; font-size: 12px; }
+.xdt-key { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; }
+.xdt-key .xdt-copy { border: 0; background: none; color: #1664ff; cursor: pointer; font-size: 12px; padding: 0 2px; }
+
+/* 发布内容 */
+.xdt-sum { display: grid; grid-template-columns: 56px minmax(0, 1fr) 56px minmax(0, 1fr); gap: 6px 12px; margin: 0 0 14px; font-size: 13px; }
+.xdt-sum dt { color: var(--x-sub, #6b7785); }
+.xdt-sum dd { margin: 0; min-width: 0; }
+.xdt-break { word-break: break-all; font-size: 12px; }
+.xdt-md { background: #fff; border: 1px solid #eef1f5; border-radius: 6px; padding: 8px 12px; line-height: 1.7; }
+.xdt-md h4, .xdt-md h5, .xdt-md h6 { margin: 8px 0 4px; font-size: 13px; }
+.xdt-md ul, .xdt-md ol { margin: 4px 0; padding-left: 20px; }
+.xdt-md ul li, .xdt-md ol li { display: list-item; border: 0; padding: 1px 0; }
+.xdt-md pre { background: #f6f8fa; padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+.xdt-md p { margin: 4px 0; }
+
+@media (max-width: 640px) {
+  .xdt-line { grid-template-columns: repeat(5, minmax(56px, 1fr)); overflow-x: auto; }
+  .xdt-form-row, .xdt-sum { grid-template-columns: 1fr; }
+}

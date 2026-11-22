@@ -267,7 +267,15 @@
     var q = low(S.q.trim()), out = [];
     function push(g, it) { it.g = g; it.key = it.key || g + "|" + (it.h || "") + "|" + it.t; out.push(it); }
     if (!q) {
-      recentRead().forEach(function (r) { push("最近访问", { t: r.t, m: r.m, i: "clock", h: r.h, target: { h: r.h, f: r.f }, recent: true }); });
+      var favs = [], favH = {};
+      try { favs = root.XSFav && typeof root.XSFav.list === "function" ? root.XSFav.list() || [] : []; } catch (e) { favs = []; }
+      favs.forEach(function (r) {
+        var h = safeHash(r && r.h);
+        if (!h || !r.t) return;
+        favH[h] = 1;
+        push("收藏", { t: String(r.t), m: r.m || "", i: "star", svg: root.XSFav.STAR_SVG || "", h: h, target: { h: h }, fav: true });
+      });
+      recentRead().forEach(function (r) { if (favH[r.h] && !r.f) return; push("最近访问", { t: r.t, m: r.m, i: "clock", h: r.h, target: { h: r.h, f: r.f }, recent: true }); });
       actionsFor("").forEach(function (a) { push("常用操作", { t: a.t, m: a.m, i: a.i, h: a.h || "", action: a }); });
       if (!out.length) pagesAll().forEach(function (p) { push("页面", { t: p.t, m: p.m === p.t ? p.g : p.m, i: p.i, h: p.h, target: { h: p.h } }); });
       return out;
@@ -295,7 +303,7 @@
       if (it.g !== prev) { html += '<li class="x-cmdg" role="presentation">' + esc(it.g) + (it.g === "最近访问" ? '<button type="button" class="xck-clear" data-xck-clear>清除</button>' : "") + "</li>"; prev = it.g; }
       var sel = i === S.sel;
       html += '<li><a href="' + esc(it.h || "#") + '" role="option" id="xck-' + i + '" data-ix="' + i + '" aria-selected="' + sel + '"' + (sel ? ' class="sel"' : "") + ">" +
-        ic(it.i) + (it.dot ? '<i class="xck-dot" style="background:' + esc(it.dot) + '" aria-hidden="true"></i>' : "") +
+        (it.svg || ic(it.i)) + (it.dot ? '<i class="xck-dot" style="background:' + esc(it.dot) + '" aria-hidden="true"></i>' : "") +
         '<span class="xck-t">' + esc(it.t) + "</span>" + (it.m ? "<small>" + esc(it.m) + "</small>" : "") + "</a></li>";
     });
     var q = S.q.trim();
@@ -465,6 +473,7 @@
     ready: false,
     attach: attach,
     onOpen: onOpen,
+    titleFor: titleFor,
     // 测试与调试用
     _t: { S: S, search: search, runLive: runLive, build: build, draw: draw, move: move, choose: choose, recentRead: recentRead, recentPush: recentPush, recentClear: recentClear,
       actionsFor: actionsFor, titleFor: titleFor, demoResults: demoResults, onHash: onHash, statusDot: statusDot, safeHash: safeHash, applyFilter: applyFilter, ACTIONS: ACTIONS, GROUPS: GROUPS, isOpen: isOpen }

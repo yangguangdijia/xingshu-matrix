@@ -1917,7 +1917,7 @@
           '<span class="ops-nowrap"><button class="x-btn" type="button" data-claim="' + i + '"' + (closed ? " disabled" : "") + ">认领</button>" +
           '<button class="x-btn" type="button" data-closea="' + i + '"' + (closed ? " disabled" : "") + ">关闭</button>" +
           '<button class="x-btn" type="button" data-tl="' + i + '">时间线</button>' +
-          '<button class="x-btn" type="button" data-toinc="' + i + '">转故障</button></span>'];
+          '<button class="x-btn" type="button" data-toinc="' + i + '">转故障</button>' + (window.XSAlert2Bug ? window.XSAlert2Bug.buttonHTML(a) : "") + '</span>'];
       });
       var alertPanel = panelHTML("告警列表", filters + (items.length ? tbl(["状态", "级别", "告警", "环境", "摘要", "开始", "处理", "处理人", "操作"], rows) : emptyHTML("当前没有告警记录。Alertmanager Webhook 触发后会自动写入。")));
       return alertPanel + silencePanel();
@@ -1941,6 +1941,7 @@
       if (run) run.onclick = function () { F.q = fq.value.trim(); load(); };
       if (fq) fq.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); F.q = fq.value.trim(); load(); } };
       function pick(i) { return items[+i] || {}; }
+      if (window.XSAlert2Bug) window.XSAlert2Bug.bind(p.box, function (id) { return items.filter(function (x) { return String(x.id) === String(id); })[0]; });
       [].slice.call(p.box.querySelectorAll("[data-toinc]")).forEach(function (b) {
         b.onclick = function () { alertToIncident(pick(b.getAttribute("data-toinc"))); };
       });
@@ -3469,7 +3470,7 @@
         var configRows = (app.envs || []).map(function (item) { return [E(item.name), E(item.namespace || "—"), E(item.deployment || (item.helm && item.helm.release) || "—"), E("#" + item.target_id),
           '<span class="ops-nowrap"><button class="x-btn" type="button" data-app-deploy="' + E(item.name) + '">部署</button>' + (item.helm || !window.XSReleaseCanary ? "" : '<button class="x-btn" type="button" data-app-canary="' + E(item.name) + '">金丝雀</button>') + '<button class="x-btn" type="button" data-app-rollback="' + E(item.name) + '">回滚</button></span>']; });
         var releaseRows = releases.map(function (r) { return [mono("#" + r.id), E(r.env), tag(r.kind || "deploy", r.kind === "rollback" ? "x-orange" : "x-blue"), code(r.image || "—", 42),
-          stTag(r.status), fmtMin(r.created_at), '<button class="x-btn" type="button" data-app-relrb="' + E(r.id) + '" data-app-relenv="' + E(r.env) + '">回滚到此</button>']; });
+          stTag(r.status), fmtMin(r.created_at), '<span class="ops-nowrap">' + ((window.XSDevTrace && window.XS && typeof window.XS.can === "function" && window.XS.can("devcenter:read")) ? '<button class="x-btn" type="button" data-app-relitems="' + E(r.id) + '" data-app-relenv="' + E(r.env) + '">包含需求</button>' : "") + '<button class="x-btn" type="button" data-app-relrb="' + E(r.id) + '" data-app-relenv="' + E(r.env) + '">回滚到此</button></span>']; });
         return envBar() + '<div class="x-sethead"><h2 class="x-h2">部署目标</h2></div>' + tbl(["环境", "命名空间", "工作负载", "执行集群", "操作"], configRows) +
           '<div class="x-sethead" style="margin-top:20px"><h2 class="x-h2">发布记录</h2><span class="x-frac">' + releases.length + " 条</span></div>" +
           (releaseRows.length ? tbl(["发布", "环境", "类型", "镜像", "状态", "创建时间", "操作"], releaseRows) : emptyHTML("该环境没有发布记录。"));
@@ -3541,6 +3542,9 @@
         button.onclick = function () { var env = button.getAttribute("data-app-rollback"); confirmDo("回滚应用", "确认回滚「" + E(app.name) + "」环境 <b>" + E(env) + "</b>？", "回滚", function () {
           write(POST("/cicd/applications/" + encodeURIComponent(app.id) + "/rollback", { env: env }), "回滚请求已提交").then(function (result) { if (result) load(); });
         }); };
+      });
+      [].slice.call(p.box.querySelectorAll("[data-app-relitems]")).forEach(function (button) {
+        button.onclick = function () { if (window.XSDevTrace) window.XSDevTrace.openRelease(button.getAttribute("data-app-relitems"), { subtitle: app.name + " · " + button.getAttribute("data-app-relenv") }); };
       });
       [].slice.call(p.box.querySelectorAll("[data-app-relrb]")).forEach(function (button) {
         button.onclick = function () { var env = button.getAttribute("data-app-relenv"), id = button.getAttribute("data-app-relrb"); confirmDo("回滚到指定发布", "确认将环境 <b>" + E(env) + "</b> 重新部署发布 #" + E(id) + " 的镜像？", "回滚", function () {
@@ -3614,7 +3618,7 @@
         var rows = visibleReleases.map(function (r) {
           return [mono("#" + r.id), E(r.env), tag(r.kind || "deploy", r.kind === "rollback" ? "x-orange" : "x-blue"), code(r.image, 42), code(r.previous_image, 30),
             stTag(r.status), E(r.created_by || "—"), fmtMin(r.created_at), fmtMin(r.finished_at),
-            '<button class="x-btn" type="button" data-rrb="' + E(r.id) + '" data-rrb2="' + E(r.env) + '">回滚到此</button>'];
+            '<span class="ops-nowrap">' + ((window.XSDevTrace && window.XS && typeof window.XS.can === "function" && window.XS.can("devcenter:read")) ? '<button class="x-btn" type="button" data-rritems="' + E(r.id) + '" data-rrb2="' + E(r.env) + '">包含需求</button>' : "") + '<button class="x-btn" type="button" data-rrb="' + E(r.id) + '" data-rrb2="' + E(r.env) + '">回滚到此</button></span>'];
         });
         var html = banner("发布单页按应用聚合展示后端发布记录（POST /cicd/applications/:id/deploy|rollback）；后端暂未提供发布单聚合实体。") +
           panelHTML("发布记录", barHTML([appSel, envSel, '<input class="x-input" type="search" data-relsearch aria-label="搜索发布记录" placeholder="搜索发布、环境、镜像、状态或操作人" value="' + E(REL.query) + '" />', '<span class="x-frac" style="margin-left:auto">' + visibleReleases.length + " / " + RELS.length + " 条</span>"]) + (visibleReleases.length ? tbl(["ID", "环境", "类型", "镜像", "上一镜像", "状态", "操作人", "创建", "完成", "操作"], rows) : emptyHTML(RELS.length ? "没有符合当前文本搜索的发布记录。" : "该应用暂无发布记录")));
@@ -3631,6 +3635,9 @@
         paintRels(null, releaseApps);
         restoreSearchFocus(p.box, "[data-relsearch]", cursor);
       };
+      [].slice.call(p.box.querySelectorAll("[data-rritems]")).forEach(function (b) {
+        b.onclick = function () { if (window.XSDevTrace) window.XSDevTrace.openRelease(b.getAttribute("data-rritems"), { subtitle: APP.name + " · " + b.getAttribute("data-rrb2") }); };
+      });
       [].slice.call(p.box.querySelectorAll("[data-rrb]")).forEach(function (b) {
         b.onclick = function () {
           var env = b.getAttribute("data-rrb2"), rel = b.getAttribute("data-rrb");
@@ -4843,13 +4850,14 @@
         var actions = '<span class="ops-nowrap">' +
           (x.status === "declared" ? '<button class="x-btn x-btn--pri" type="button" data-ack>认领</button>' : "") +
           (x.status !== "resolved" ? '<button class="x-btn" type="button" data-res>标记解决</button>' : "") +
-          '<button class="x-btn" type="button" data-note>添加记录</button></span>';
+          '<button class="x-btn" type="button" data-note>添加记录</button><span data-xa2b-incident></span></span>';
         var html = '<p style="margin:0 0 12px"><a class="x-tlink" href="#/oncall/inc">← 返回故障列表</a><span style="float:right">' + actions + "</span></p>" + info +
           panelHTML("时间线", tlRows.length ? tbl(["时间", "事件", "操作人", "说明"], tlRows) : emptyHTML("暂无时间线"));
         if (!p.paint(t, html)) return;
         var ack = p.box.querySelector("[data-ack]"); if (ack) ack.onclick = function () { ackModal(id, function () { renderOncallLive(el); }); };
         var res = p.box.querySelector("[data-res]"); if (res) res.onclick = function () { resolveModal(id, function () { renderOncallLive(el); }); };
         var note = p.box.querySelector("[data-note]"); if (note) note.onclick = function () { noteModal(id, function () { renderOncallLive(el); }); };
+        if (window.XSAlert2Bug) window.XSAlert2Bug.mountIncident(p.box.querySelector("[data-xa2b-incident]"), id);
       }).catch(function (err) { p.error(t, err); });
     }
     p.retry = load;

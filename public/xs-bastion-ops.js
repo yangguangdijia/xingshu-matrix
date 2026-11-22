@@ -30,29 +30,40 @@
     Promise.all([list("/bastion/my/assets"), soft("/bastion/my/databases")]).then(function (r) {
       var hosts = r[0], dbs = r[1] || [];
       var draw = function () {
-        var q = MY.q.toLowerCase(), f = function (g) { return !q || [g.asset_name, g.host, g.username, g.env].join(" ").toLowerCase().indexOf(q) >= 0; };
+        var q = MY.q.toLowerCase(), f = function (g) { return !q || [g.asset_name, g.host, g.host + ":" + g.port, g.username, g.account_name, g.env, U.envName(g.env)].join(" ").toLowerCase().indexOf(q) >= 0; };
+        var R = B.recent, sorted = function (arr) { return R ? R.sort(arr, function (g) { return g.asset_id; }) : arr; };
+        // 主机状态只能来自本机最近一次连接 / 测试结果（「我的资产」没有探活数据），文案如实
+        var state = function (g) {
+          var r = R && R.get(g.asset_id);
+          if (!r || r.ok == null || !r.t) return B.dot ? B.dot("unknown", "未知") : "";
+          if (Date.now() - r.t > 7 * 864e5) return B.dot("warn", r.ok ? "待确认" : "可能离线");
+          return r.ok ? B.dot("ok", "在线") : B.dot("bad", "不可达");
+        };
+        var stateTitle = function (g) { var r = R && R.get(g.asset_id); return r && r.t && r.ok != null ? (r.ok ? "最近一次连接成功：" : "最近一次连接失败：") + fmtTime(r.t) : "本机还没有连接过该资产"; };
+        var recentTag = function (g) { return R && R.isRecent(g.asset_id) ? " " + tag("最近连接", "x-blue") : ""; };
         var acts = function (g) { return (g.actions || []).map(function (a) { return tag(ACT_ZH[a] || a, a === "connect" ? "x-blue" : "x-grey"); }).join(" "); };
         var exp = function (g) { return g.expires_at ? E(fmtTime(g.expires_at)) + " 到期" : '<span class="x-frac">长期</span>'; };
-        var h = hosts.filter(f).map(function (g, i) {
-          return ["<b>" + E(g.asset_name) + '</b><div class="x-frac x-mono">' + E(g.host) + ":" + E(g.port) + "</div>", tag(U.envName(g.env), U.ENV_CLS[g.env]), '<span class="x-mono">' + E(g.username) + "</span>", acts(g), exp(g),
+        var h = sorted(hosts.filter(f)).map(function (g, i) {
+          return ["<b>" + E(g.asset_name) + "</b>" + recentTag(g) + '<div class="x-frac x-mono">' + E(g.host) + ":" + E(g.port) + "</div>", '<span title="' + E(stateTitle(g)) + '">' + state(g) + "</span>", tag(U.envName(g.env), U.ENV_CLS[g.env]), '<span class="x-mono">' + E(g.username) + "</span>", acts(g), exp(g),
             '<button class="x-btn x-btn--pri x-btn--s" data-ssh="' + hosts.indexOf(g) + '">连接</button>'];
         });
-        var d = dbs.filter(f).map(function (g) {
-          return ["<b>" + E(g.asset_name) + '</b><div class="x-frac x-mono">' + E(g.host) + ":" + E(g.port) + "</div>", E(U.PROTO_NAME[g.protocol] || g.protocol), tag(U.envName(g.env), U.ENV_CLS[g.env]),
+        var d = sorted(dbs.filter(f)).map(function (g) {
+          return ["<b>" + E(g.asset_name) + "</b>" + recentTag(g) + '<div class="x-frac x-mono">' + E(g.host) + ":" + E(g.port) + "</div>", E(U.PROTO_NAME[g.protocol] || g.protocol), tag(U.envName(g.env), U.ENV_CLS[g.env]),
             '<span class="x-mono">' + E(g.username) + "</span>", exp(g), '<button class="x-btn x-btn--pri x-btn--s" data-db="' + dbs.indexOf(g) + '">打开控制台</button>'];
         });
-        el.querySelector(".xb-body").innerHTML = '<div class="xb-toolbar"><input class="x-input" data-q placeholder="搜索资产、地址、账号" value="' + E(MY.q) + '"><span class="x-frac">主机 ' + hosts.length + " · 数据库 " + dbs.length + "</span></div>" +
-          '<section class="xb-card"><h3>主机</h3>' + table(["资产", "环境", "账号", "允许的动作", "有效期", ""], h, hosts.length ? "没有符合条件的主机" : "还没有被授权的主机，可以点右上角「申请访问」") + "</section>" +
+        el.querySelector(".xb-body").innerHTML = '<div class="xb-toolbar"><input class="x-input" data-q placeholder="搜索资产、地址、账号、环境" value="' + E(MY.q) + '"><span class="x-frac">主机 ' + hosts.length + " · 数据库 " + dbs.length + "</span></div>" +
+          '<section class="xb-card"><h3>主机</h3>' + table(["资产", "状态", "环境", "账号", "允许的动作", "有效期", ""], h, hosts.length ? "没有符合条件的主机" : "还没有被授权的主机，可以点右上角「申请访问」") + "</section>" +
           '<section class="xb-card"><h3>数据库</h3>' + table(["资产", "类型", "环境", "账号", "有效期", ""], d, dbs.length ? "没有符合条件的数据库" : "还没有被授权的数据库") + "</section>";
         var qi = el.querySelector("[data-q]");
         qi.oninput = function () { MY.q = qi.value; clearTimeout(qi._t); qi._t = setTimeout(function () { draw(); var n = el.querySelector("[data-q]"); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); };
         on(el, "data-ssh", function (i) {
           var g = hosts[+i];
+          if (B.recent) B.recent.touch(g.asset_id);
           if (hooks && hooks.ssh) hooks.ssh(g);
           else if (hooks && hooks.connect) hooks.connect({ id: g.asset_id, name: g.asset_name, host: g.host });
           else toast("Web 终端不可用");
         });
-        on(el, "data-db", function (i) { var g = dbs[+i]; U.handoff("dbc", { asset_id: g.asset_id, account_id: g.account_id }); go("dbc"); });
+        on(el, "data-db", function (i) { var g = dbs[+i]; if (B.recent) B.recent.touch(g.asset_id); U.handoff("dbc", { asset_id: g.asset_id, account_id: g.account_id }); go("dbc"); });
       };
       draw();
     }).catch(function (e) { el.querySelector(".xb-body").innerHTML = U.failBox(e); });

@@ -124,10 +124,53 @@ func isPushEvent(event string) bool {
 }
 
 type pushEvent struct {
-	Ref         string `json:"ref"`
-	After       string `json:"after"`
-	CheckoutSHA string `json:"checkout_sha"`
-	Deleted     bool   `json:"deleted"`
+	Ref         string       `json:"ref"`
+	After       string       `json:"after"`
+	CheckoutSHA string       `json:"checkout_sha"`
+	Deleted     bool         `json:"deleted"`
+	Commits     []pushCommit `json:"commits"`
+}
+
+// pushCommit is one commit of a push payload (GitHub / GitLab / Gitee / Gitea share these fields).
+type pushCommit struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
+	URL     string `json:"url"`
+	Author  struct {
+		Name     string `json:"name"`
+		Username string `json:"username"`
+	} `json:"author"`
+}
+
+// commitsJSON keeps the newest 20 commits of a push ({sha,message,author,url}, message <= 1000 bytes)
+// so the devcenter value stream can link REQ-/BUG- keys in commit messages to runs.
+func commitsJSON(cs []pushCommit) []byte {
+	if len(cs) > 20 {
+		cs = cs[len(cs)-20:]
+	}
+	type item struct {
+		SHA     string `json:"sha"`
+		Message string `json:"message"`
+		Author  string `json:"author"`
+		URL     string `json:"url"`
+	}
+	out := make([]item, 0, len(cs))
+	for _, c := range cs {
+		msg := c.Message
+		if len(msg) > 1000 {
+			msg = msg[:1000]
+		}
+		author := c.Author.Name
+		if author == "" {
+			author = c.Author.Username
+		}
+		if len(c.ID) > 64 || len(c.URL) > 500 {
+			continue
+		}
+		out = append(out, item{SHA: c.ID, Message: msg, Author: author, URL: c.URL})
+	}
+	b, _ := json.Marshal(out)
+	return b
 }
 
 func (m *Module) webhook(c *gin.Context) {
@@ -198,6 +241,13 @@ func (m *Module) webhook(c *gin.Context) {
 		return
 	}
 
+	commits := commitsJSON(ev.Commits)
+	if len(ev.Commits) > 0 {
+		if _, err := m.db.Exec(c, `UPDATE cicd_webhook_deliveries SET commits=$2 WHERE id=$1`, rowID, commits); err != nil {
+			m.log.Warn("webhook store commits", "app", appID, "err", err)
+		}
+	}
+
 	if !isPushEvent(event) {
 		m.finishDelivery(rowID, "ignored", "event "+event, nil)
 		httpx.OK(c, gin.H{"ignored": "event " + event})
@@ -242,6 +292,11 @@ func (m *Module) webhook(c *gin.Context) {
 			m.log.Error("webhook start run", "pipeline", id, "err", err)
 			failures = append(failures, fmt.Sprintf("pipeline %d: %v", id, err))
 			continue
+		}
+		if len(ev.Commits) > 0 {
+			if _, err := m.db.Exec(c, `UPDATE cicd_runs SET commits=$2 WHERE id=$1`, r.ID, commits); err != nil {
+				m.log.Warn("webhook store run commits", "run", r.ID, "err", err)
+			}
 		}
 		runs = append(runs, r.ID)
 		refs = append(refs, WebhookRunRef{PipelineID: id, RunID: r.ID})

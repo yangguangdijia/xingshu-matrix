@@ -1,8 +1,8 @@
 /*
  * 星枢 Matrix 研发中心（实时模式）
- * 页面：工作台、需求 / 任务（列表 + 详情抽屉：状态流转、指派、评论、变更记录、关联代码仓库与流水线、拆分任务）、
+ * 页面：工作台（我的交付：开发中 / 构建中 / 已上线 / 受阻 计数，事项的价值流阶段条与最新环境，受阻置顶，近 7 天上线）、需求 / 任务（列表 + 详情抽屉：状态流转、指派、评论、变更记录、关联代码仓库与流水线、拆分任务）、
  *       需求验收、迭代（燃尽图）、看板、缺陷、测试用例、代码仓库关联、需求 → AI 开发（实施方案与任务拆解）、统计报表。
- * 数据全部来自研发中心与 CI/CD 的真实接口；没有数据时显示空状态，不使用演示数据。
+ * 数据全部来自研发中心与 CI/CD 的真实接口；没有数据时显示空状态。仅工作台「我的交付」在演示模式（XS.mode !== "live"）下使用内置演示数据。
  * 新建与编辑统一使用 XSFormKit；删除均需二次确认，删除迭代需输入迭代名称。
  */
 (function (root) {
@@ -295,6 +295,7 @@
           body += '<div class="xd-sec"><h4>拆分任务 <span class="x-frac">' + doneKids + "/" + kids.length + '</span><button class="x-btn x-btn--s" data-addtask>+ 拆分任务</button></h4>' +
             (kids.length ? '<ul class="xd-list">' + kids.map(function (c) { return '<li><span class="x-mono">#' + c.id + "</span>" + stTag("requirements", c.status) + '<a class="xd-link xd-grow" data-kid="' + c.id + '">' + E(c.title) + '</a><span class="x-frac">' + E(c.assignee || "未指派") + "</span></li>"; }).join("") + "</ul>" : '<p class="x-frac" style="margin:0">还没有拆分任务。可以手动拆分，或用「AI 开发」生成任务拆解。</p>') + "</div>";
         }
+        if (linkable && root.XSDevTrace) body += '<div class="xd-sec"><h4>交付进度</h4><div data-trace></div></div>';
         if (linkable) body += '<div class="xd-sec"><h4>代码仓库与流水线<button class="x-btn x-btn--s" data-addlink>+ 关联</button></h4><div data-links>' + (links.length ? '<p class="x-frac">正在读取构建状态…</p>' : '<p class="x-frac" style="margin:0">还没有关联。关联后可在这里看到最近一次构建结果。</p>') + "</div></div>";
       }
       body += '<div class="xd-sec"><div class="xd-tabs"><button type="button" data-tab="comments"' + (DR.tab === "comments" ? ' class="on"' : "") + ">评论 " + comments.length + '</button><button type="button" data-tab="acts"' + (DR.tab === "acts" ? ' class="on"' : "") + ">变更记录 " + acts.length + "</button></div>" +
@@ -302,7 +303,7 @@
           '<div class="xd-cbox"><textarea class="x-input" data-cm placeholder="写下评论，最多 4000 字" maxlength="4000"></textarea><p class="xd-err" data-cmerr hidden></p><div class="xd-cbox-f"><button class="x-btn x-btn--pri" data-sendcm>发表评论</button></div></div>'
           : (acts.length ? acts.map(function (a) { return '<div class="xd-act"><time>' + fmt(a.created_at) + "</time><span><b>" + E(a.actor || "系统") + "</b> " + actText(k, a, iterName) + "</span></div>"; }).join("") : '<p class="x-frac">暂无变更记录。</p>')) + "</div>";
 
-      el.innerHTML = '<div class="xd-dh"><div class="xd-dh-main"><span class="x-mono x-frac">' + E(kindName) + " #" + x.id + "</span> " + stTag(k, x.status) + (k !== "iterations" ? " " + priTag(x.priority) : "") + "<h3>" + E(x.title) + '</h3></div><div class="xd-dh-act">' + acts1 + '</div></div><div class="xd-db">' + flow + meta + body + "</div>";
+      el.innerHTML = '<div class="xd-dh"><div class="xd-dh-main"><span class="x-mono x-frac">' + E(kindName) + " #" + x.id + "</span> " + (linkable && root.XSDevTrace ? root.XSDevTrace.keyChip(k === "bugs" ? "bug" : "requirement", x.id) + " " : "") + stTag(k, x.status) + (k !== "iterations" ? " " + priTag(x.priority) : "") + "<h3>" + E(x.title) + '</h3></div><div class="xd-dh-act">' + acts1 + '</div></div><div class="xd-db">' + flow + meta + body + "</div>";
 
       var redraw = function () { changed(); };
       el.querySelector("[data-close]").onclick = closeDrawer;
@@ -342,6 +343,7 @@
       var addLink = el.querySelector("[data-addlink]");
       if (addLink) addLink.onclick = function () { linkDialog(k, x, redraw); };
       if (linkable && links.length) drawLinks(el.querySelector("[data-links]"), links, redraw);
+      if (linkable && root.XSDevTrace) { root.XSDevTrace.bindCopy(el.querySelector(".xd-dh")); root.XSDevTrace.render(el.querySelector("[data-trace]"), { type: k === "bugs" ? "bug" : "requirement", id: x.id }); }
       if (k === "iterations") { drawBurndown(el.querySelector("[data-burn]"), x.id); drawIterItems(el.querySelector("[data-iteritems]"), x.id); }
     }).catch(function (e) { if (DR === my) el.innerHTML = '<div class="xd-dh"><div class="xd-dh-main"><h3>' + E(KIND[k].name) + " #" + E(id) + '</h3></div><div class="xd-dh-act"><button class="x-btn" data-close>关闭</button></div></div><div class="xd-db">' + failBox(e) + "</div>"; var c = el.querySelector("[data-close]"); if (c) c.onclick = closeDrawer; });
   }
@@ -506,7 +508,7 @@
     }).catch(function (e) { el.querySelector("[data-body]").innerHTML = failBox(e); });
   }
 
-  /* ---------------------------------------------------------------- 工作台 */
+  /* ---------------------------------------------------------------- 工作台 · 我的交付 */
   function greeting(h) {
     if (h < 5) return "夜深了";
     if (h < 9) return "早上好";
@@ -515,80 +517,155 @@
     if (h < 18) return "下午好";
     return "晚上好";
   }
-  var WB = { tab: "todo" };
+  // 价值流阶段与四色：完成 绿、进行中 橙、失败 红、未到达 灰。
+  var MW_STAGES = [["code", "代码"], ["build", "构建"], ["artifact", "制品"], ["release", "发布"], ["env", "环境"]];
+  var MW_COLOR = { done: "#16a34a", running: "#d97706", failed: "#dc2626", none: "#6b7280" };
+  var MW_STATE = { done: "已完成", running: "进行中", failed: "失败", none: "未到达" };
+  var MW_BUCKETS = [["dev", "开发中", "#1f2937"], ["build", "构建中", "#d97706"], ["released", "已上线", "#16a34a"], ["blocked", "受阻", "#dc2626"]];
+  var MW = { filter: "" };
+  var MW_DAY = 86400000;
+
+  (function ensureMyWorkCss() {
+    if (typeof document === "undefined" || !document.createElement || document.getElementById("xs-mywork-css")) return;
+    var s = document.createElement("style");
+    s.id = "xs-mywork-css";
+    s.textContent = ".xmw-stats .xb-stat{cursor:pointer;border:1px solid transparent;text-align:left;font:inherit;background:#fff}" +
+      ".xmw-stats .xb-stat.on{border-color:#1664ff}.xmw-stats .xb-stat b{font-variant-numeric:tabular-nums}" +
+      ".xmw-row{display:flex;gap:10px;align-items:center;padding:9px 8px;border-top:1px solid #eef1f5;font-size:13px;cursor:pointer;border-left:3px solid transparent}" +
+      ".xmw-row:first-child{border-top:0}.xmw-row:hover .xmw-title{color:#1664ff}.xmw-row--blocked{border-left-color:#dc2626;background:#fef2f2}" +
+      ".xmw-main{flex:1;min-width:0}.xmw-title{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+      ".xmw-reason{display:block;color:#dc2626;font-size:12px;margin-top:2px}.xmw-key{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#4b5563;min-width:58px}" +
+      ".xmw-strip{flex:none;display:block}.xmw-env{flex:none;font-size:12px;color:#4b5563;min-width:64px;text-align:right}" +
+      ".xmw-legend{display:flex;gap:12px;font-size:12px;color:#6b7280;margin:0 0 6px}.xmw-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle}" +
+      ".xmw-filter{font-size:12px;color:#4b5563;margin-left:auto;font-weight:400}";
+    (document.head || document.documentElement).appendChild(s);
+  })();
+
+  function mwKey(k, id) {
+    var T = root.XSDevTrace;
+    if (T && typeof T.keyOf === "function") return T.keyOf(k === "bugs" ? "bug" : "requirement", id);
+    return (k === "bugs" ? "BUG-" : "REQ-") + String(id == null ? "" : id).replace(/[^\d]/g, "");
+  }
+  // bucketOf：后端已给出 bucket 时直接用，否则按受阻 / 阶段推断（与后端规则一致）。
+  function bucketOf(k, x) {
+    if (x.bucket) return x.bucket;
+    if (x.blocked) return "blocked";
+    if (x.status === "rejected") return "closed";
+    if ((x.stage === "env" && x.stage_state === "done") || DONE[k].indexOf(x.status) >= 0) return "released";
+    if (x.stage === "build" || x.stage === "artifact" || x.stage === "release") return "build";
+    return "dev";
+  }
+  function stagesOf(x) {
+    var s = x.stages && typeof x.stages === "object" ? x.stages : null, out = {};
+    if (s) { MW_STAGES.forEach(function (st) { out[st[0]] = MW_COLOR[s[st[0]]] ? s[st[0]] : "none"; }); return out; }
+    // 旧接口没有逐段状态：按最远阶段补齐（之前的段视为完成）。
+    var idx = MW_STAGES.map(function (st) { return st[0]; }).indexOf(x.stage);
+    MW_STAGES.forEach(function (st, i) { out[st[0]] = i < idx ? "done" : i === idx ? (MW_COLOR[x.stage_state] ? x.stage_state : "done") : "none"; });
+    return out;
+  }
+  // stageStrip：紧凑的五段阶段条（内联 SVG），每段一个四色圆点，未到达为空心灰点。
+  function stageStrip(x) {
+    var s = stagesOf(x), W = 14, label = MW_STAGES.map(function (st) { return st[1] + "：" + MW_STATE[s[st[0]]]; }).join("，");
+    var line = '<line x1="5" y1="6" x2="' + (5 + W * 4) + '" y2="6" stroke="#d1d5db" stroke-width="1"/>';
+    var dots = MW_STAGES.map(function (st, i) {
+      var v = s[st[0]], c = MW_COLOR[v], cx = 5 + i * W;
+      return '<circle data-stage="' + st[0] + '" data-state="' + v + '" cx="' + cx + '" cy="6" r="4" fill="' + (v === "none" ? "#fff" : c) + '" stroke="' + c + '" stroke-width="1.5"><title>' + E(st[1] + " · " + MW_STATE[v]) + "</title></circle>";
+    }).join("");
+    return '<svg class="xmw-strip" width="' + (10 + W * 4) + '" height="12" viewBox="0 0 ' + (10 + W * 4) + ' 12" role="img" aria-label="' + E(label) + '">' + line + dots + "</svg>";
+  }
+  function recentReleased(list, now) {
+    now = now || Date.now();
+    return list.filter(function (p) { var t = p[1].released_at ? new Date(p[1].released_at).getTime() : NaN; return !isNaN(t) && now - t <= 7 * MW_DAY && now - t >= -MW_DAY; })
+      .sort(function (a, b) { return new Date(b[1].released_at) - new Date(a[1].released_at); });
+  }
+  function myDemo() {
+    var now = Date.now(), at = function (h) { return new Date(now - h * 3600000).toISOString(); };
+    var st = function (a) { var o = {}; MW_STAGES.forEach(function (s, i) { o[s[0]] = a[i]; }); return o; };
+    return {
+      requirements: [
+        { id: 128, title: "订单导出支持按租户筛选", status: "doing", priority: "P1", stage: "build", stage_state: "failed", stages: st(["done", "failed", "done", "none", "none"]), env_latest: "", blocked: true, blocked_reason: "最近一次构建失败", bucket: "blocked", updated_at: at(1) },
+        { id: 121, title: "登录支持企业 SSO", status: "testing", priority: "P0", stage: "release", stage_state: "running", stages: st(["done", "done", "done", "running", "none"]), env_latest: "test", bucket: "build", updated_at: at(3) },
+        { id: 117, title: "账单页增加月度趋势图", status: "doing", priority: "P2", stage: "code", stage_state: "running", stages: st(["running", "none", "none", "none", "none"]), env_latest: "", bucket: "dev", updated_at: at(5) },
+        { id: 109, title: "消息中心支持批量已读", status: "done", priority: "P2", stage: "env", stage_state: "done", stages: st(["done", "done", "done", "done", "done"]), env_latest: "prod", released_at: at(26), bucket: "released", updated_at: at(26) }
+      ],
+      bugs: [
+        { id: 57, title: "移动端首页偶发白屏", status: "doing", priority: "P1", stage: "release", stage_state: "failed", stages: st(["done", "done", "done", "failed", "none"]), env_latest: "test", blocked: true, blocked_reason: "最近一次发布失败（prod）", bucket: "blocked", updated_at: at(2) },
+        { id: 52, title: "导出文件名中文乱码", status: "verified", priority: "P2", stage: "env", stage_state: "done", stages: st(["done", "done", "done", "done", "done"]), env_latest: "prod", released_at: at(70), bucket: "released", updated_at: at(70) }
+      ],
+      reviews: [],
+      counts: { in_dev: 1, in_build: 1, released: 2, blocked: 2 }
+    };
+  }
   function workbench(el) {
-    var u = xs().user || {};
-    el.innerHTML = head(greeting(new Date().getHours()) + "，" + (u.display_name || u.username || ""), "指派给你的需求、缺陷和测试，你创建和参与的事项，以及相关的最近构建。", '<button class="x-btn" data-refresh>刷新</button><button class="x-btn x-btn--pri" data-newreq>+ 新建需求</button>') + '<div data-body><p class="x-frac">正在加载…</p></div>';
+    var u = (xs() && xs().user) || {}, live = !!(xs() && xs().mode === "live");
+    el.innerHTML = head(greeting(new Date().getHours()) + "，" + (u.display_name || u.username || ""), "我的交付：你负责或创建的需求与缺陷走到了哪一步（代码 → 构建 → 制品 → 发布 → 环境），哪些受阻，最近上线了什么。",
+      '<button class="x-btn" data-refresh>刷新</button>' + (live ? '<button class="x-btn x-btn--pri" data-newreq>+ 新建需求</button>' : "")) + '<div data-body><p class="x-frac">正在加载…</p></div>';
     var reload = function () { workbench(el); };
     el.querySelector("[data-refresh]").onclick = reload;
     var newReq = function () { itemForm("requirements", null, function (res) { reload(); if (res && res.id) openDetail("requirements", res.id, reload); }); };
-    el.querySelector("[data-newreq]").onclick = newReq;
-    var tq = { todo: null, created: null, involved: null };
-    Promise.all([
-      xs().get("/devcenter/summary"),
-      xs().get("/devcenter/requirements", { assignee: "me", status: openStatuses("requirements").join(","), page_size: 50 }),
-      xs().get("/devcenter/bugs", { assignee: "me", status: openStatuses("bugs").join(","), page_size: 50 }),
-      xs().get("/devcenter/tests", { assignee: "me", status: "todo,failed,blocked", page_size: 50 }),
-      xs().get("/devcenter/iterations", { status: "doing", page_size: 10 }),
-      xs().get("/devcenter/requirements", { created_by: "me", page_size: 20 }),
-      xs().get("/devcenter/requirements", { involved: "me", page_size: 20 })
-    ]).then(function (r) {
-      var s = r[0] || {}, rq = s.requirements || { by_status: {} }, bg = s.bugs || { by_status: {} }, ts = s.tests || { by_status: {} };
-      tq.todo = items(r[1]).map(function (x) { return ["requirements", x]; }).concat(items(r[2]).map(function (x) { return ["bugs", x]; }), items(r[3]).map(function (x) { return ["tests", x]; }));
-      tq.todo.sort(function (a, b) { return a[1].priority === b[1].priority ? (new Date(b[1].updated_at) - new Date(a[1].updated_at)) : (a[1].priority < b[1].priority ? -1 : 1); });
-      tq.created = items(r[5]).map(function (x) { return ["requirements", x]; });
-      tq.involved = items(r[6]).map(function (x) { return ["requirements", x]; });
-      var sum = function (o, ks) { return ks.reduce(function (a, k) { return a + ((o.by_status || {})[k] || 0); }, 0); };
-      var cards = [
-        ["我的待办", tq.todo.length, "#/requirements"],
-        ["团队待验收", (rq.by_status || {}).accepting || 0, "#/requirements/accept"],
-        ["团队未解决缺陷", sum(bg, ["todo", "doing", "reopened"]), "#/bugs"],
-        ["测试通过率", ts.total ? Math.round(((ts.by_status || {}).passed || 0) * 100 / ts.total) + "%" : "—", "#/testing"]
-      ];
-      var iters = items(r[4]);
-      el.querySelector("[data-body]").innerHTML = '<div class="xb-stats">' + cards.map(function (c) { return '<a class="xb-stat" href="' + c[2] + '" style="text-decoration:none;color:inherit"><span>' + c[0] + "</span><b>" + E(c[1]) + "</b><em>查看 →</em></a>"; }).join("") + "</div>" +
-        '<div class="xd-wb"><div><section class="xb-main"><div class="x-tabs" role="tablist" style="margin-bottom:8px">' +
-        [["todo", "待办 " + tq.todo.length], ["created", "我创建的"], ["involved", "我参与的"]].map(function (t) { return '<button type="button" data-wt="' + t[0] + '"' + (WB.tab === t[0] ? ' class="on"' : "") + ">" + E(t[1]) + "</button>"; }).join("") +
-        '</div><div data-wlist></div></section></div><div><section class="xb-main"><h3>进行中的迭代<a class="xd-link" href="#/project/sprint">全部迭代</a></h3><div data-iters>' + (iters.length ? '<p class="x-frac">正在计算进度…</p>' : emptyBox({ kind: "requirement", size: "s", title: "没有进行中的迭代", actions: [{ text: "前往迭代", href: "#/project/sprint" }], fallback: "没有进行中的迭代。" }, "xb-empty", "padding:16px 0")) + '</div></section>' +
-        '<section class="xb-main"><h3>最近构建<a class="xd-link" href="#/cicd/pipeline">流水线</a></h3><div data-builds><p class="x-frac">正在加载…</p></div></section></div></div>';
+    var nb = el.querySelector("[data-newreq]");
+    if (nb) nb.onclick = newReq;
+    var open = function (k, id) {
+      if (!live) { toast("当前为演示数据，接入平台后可查看详情"); return; }
+      openDetail(k, id, reload);
+    };
+    var load = live ? Promise.all([xs().get("/devcenter/my/delivery"), xs().get("/devcenter/iterations", { status: "doing", page_size: 10 }).then(items).catch(function () { return []; })])
+      : Promise.resolve([myDemo(), []]);
+    load.then(function (r) {
+      var d = r[0] || {}, iters = r[1] || [];
+      var all = items(d.requirements).map(function (x) { return ["requirements", x]; }).concat(items(d.bugs).map(function (x) { return ["bugs", x]; }));
+      all.forEach(function (p) { p[1]._bucket = bucketOf(p[0], p[1]); });
+      // 受阻置顶，其余按更新时间倒序
+      all.sort(function (a, b) { var ab = a[1]._bucket === "blocked", bb = b[1]._bucket === "blocked"; return ab !== bb ? (ab ? -1 : 1) : new Date(b[1].updated_at || 0) - new Date(a[1].updated_at || 0); });
+      var cnt = d.counts || {}, cmap = { dev: cnt.in_dev, build: cnt.in_build, released: cnt.released, blocked: cnt.blocked };
+      MW_BUCKETS.forEach(function (b) { if (cmap[b[0]] == null) cmap[b[0]] = all.filter(function (p) { return p[1]._bucket === b[0]; }).length; });
+      var recent = recentReleased(all);
+      var reviews = items(d.reviews);
+      el.querySelector("[data-body]").innerHTML = '<div class="xb-stats xmw-stats" role="group" aria-label="按交付阶段筛选">' + MW_BUCKETS.map(function (b) {
+        return '<button type="button" class="xb-stat' + (MW.filter === b[0] ? " on" : "") + '" data-mf="' + b[0] + '" aria-pressed="' + (MW.filter === b[0]) + '"><span>' + b[1] + '</span><b style="color:' + b[2] + '">' + E(cmap[b[0]] || 0) + "</b><em>" + (MW.filter === b[0] ? "再次点击显示全部" : "点击筛选") + "</em></button>";
+      }).join("") + "</div>" +
+        '<div class="xd-wb"><div><section class="xb-main"><h3>我的需求与缺陷<span class="xmw-filter" data-mflabel></span></h3>' +
+        '<div class="xmw-legend">' + ["done", "running", "failed", "none"].map(function (s) { return '<span><i style="background:' + (s === "none" ? "#fff" : MW_COLOR[s]) + ";border:1.5px solid " + MW_COLOR[s] + '"></i>' + MW_STATE[s] + "</span>"; }).join("") + '<span>阶段：代码 · 构建 · 制品 · 发布 · 环境</span></div>' +
+        '<div data-mlist></div></section></div><div>' +
+        '<section class="xb-main"><h3>最近上线<span class="x-frac" style="font-weight:400">近 7 天</span></h3><div data-recent>' +
+        (recent.length ? recent.map(function (p) { var k = p[0], x = p[1]; return '<div class="xd-row" data-k="' + k + '" data-id="' + E(x.id) + '"><span class="xmw-key">' + E(mwKey(k, x.id)) + '</span><span class="xd-grow">' + E(x.title) + '</span><span class="x-tag x-tag--s x-green">' + E(x.env_latest || "已上线") + '</span><span class="x-frac">' + E(ago(x.released_at)) + "</span></div>"; }).join("")
+          : emptyBox({ kind: "release", size: "s", title: "近 7 天没有上线的事项", fallback: "近 7 天没有上线的事项。" }, "xb-empty", "padding:16px 0")) + "</div></section>" +
+        (reviews.length ? '<section class="xb-main"><h3>待我评审</h3>' + reviews.map(function (v) { return '<div class="xd-row"><span class="xd-grow">' + E(v.title || v.ref || "") + '</span><span class="x-frac">' + E(v.author || "") + "</span></div>"; }).join("") + "</section>" : "") +
+        (live && iters.length ? '<section class="xb-main"><h3>进行中的迭代<a class="xd-link" href="#/project/sprint">全部迭代</a></h3><div data-iters><p class="x-frac">正在计算进度…</p></div></section>' : "") +
+        "</div></div>";
       var drawList = function () {
-        var list = tq[WB.tab] || [];
-        var box = el.querySelector("[data-wlist]");
-        box.innerHTML = list.length ? list.map(function (p) { var k = p[0], x = p[1]; return '<div class="xd-row" data-k="' + k + '" data-id="' + x.id + '"><span class="x-mono">' + ({ bugs: "缺陷", tests: "用例" }[k] || "") + "#" + x.id + "</span>" + stTag(k, x.status) + typeTag(x) + '<span class="xd-grow">' + E(x.title) + "</span>" + priTag(x.priority) + '<span class="x-frac">' + E(ago(x.updated_at)) + "</span></div>"; }).join("")
-          : emptyBox({
-            todo: { kind: "requirement", title: "没有指派给你的未完成事项", desc: "手头的事都处理完了。可以新建需求，或到需求列表认领。", actions: [{ text: "新建需求", act: "newreq", primary: true }, { text: "查看需求列表", href: "#/requirements" }], fallback: "没有指派给你的未完成事项。" },
-            created: { kind: "requirement", title: "你还没有创建需求", actions: [{ text: "新建需求", act: "newreq", primary: true }], fallback: "你还没有创建需求。" },
-            involved: { kind: "requirement", title: "还没有你参与的需求", desc: "你处理、评论或变更过的需求会出现在这里。", actions: [{ text: "查看需求列表", href: "#/requirements" }], fallback: "还没有你参与（处理、评论或变更过）的需求。" }
-          }[WB.tab]);
-        [].forEach.call(box.querySelectorAll("[data-k]"), function (row) { row.onclick = function () { openDetail(row.getAttribute("data-k"), row.getAttribute("data-id"), reload); }; });
+        var list = MW.filter ? all.filter(function (p) { return p[1]._bucket === MW.filter; }) : all.filter(function (p) { return p[1]._bucket !== "closed"; });
+        var fb = MW_BUCKETS.filter(function (b) { return b[0] === MW.filter; })[0];
+        el.querySelector("[data-mflabel]").textContent = fb ? "筛选：" + fb[1] : "";
+        var box = el.querySelector("[data-mlist]");
+        box.innerHTML = list.length ? list.map(function (p) {
+          var k = p[0], x = p[1], blocked = x._bucket === "blocked";
+          return '<div class="xmw-row' + (blocked ? " xmw-row--blocked" : "") + '" tabindex="0" data-k="' + k + '" data-id="' + E(x.id) + '"><span class="xmw-key">' + E(mwKey(k, x.id)) + '</span><span class="xmw-main"><span class="xmw-title">' + E(x.title) + "</span>" +
+            (blocked ? '<span class="xmw-reason">受阻：' + E(x.blocked_reason || "已标记为受阻") + "</span>" : "") + "</span>" + stTag(k, x.status) + priTag(x.priority) + stageStrip(x) +
+            '<span class="xmw-env">' + (x.env_latest ? E(x.env_latest) : '<span class="x-frac">未上线</span>') + '</span><span class="x-frac">' + E(ago(x.updated_at)) + "</span></div>";
+        }).join("")
+          : MW.filter ? emptyBox({ kind: "search", size: "s", title: "没有「" + fb[1] + "」的事项", actions: [{ text: "显示全部", act: "mwall" }], fallback: "没有「" + fb[1] + "」的事项。" }, "xb-empty", "padding:16px 0")
+            : emptyBox({ kind: "requirement", title: "还没有你负责或创建的需求与缺陷", desc: "指派给你或由你创建的需求、缺陷会在这里显示交付进度。", actions: live ? [{ text: "新建需求", act: "newreq", primary: true }, { text: "查看需求列表", href: "#/requirements" }] : [{ text: "查看需求列表", href: "#/requirements" }], fallback: "还没有你负责或创建的需求与缺陷。" });
+        [].forEach.call(box.querySelectorAll("[data-k]"), function (row) {
+          row.onclick = function () { open(row.getAttribute("data-k"), row.getAttribute("data-id")); };
+          row.onkeydown = function (e) { if (e.key === "Enter") open(row.getAttribute("data-k"), row.getAttribute("data-id")); };
+        });
         on(box, '[data-xse-act="newreq"]', newReq);
+        on(box, '[data-xse-act="mwall"]', function () { MW.filter = ""; reload(); });
       };
       drawList();
-      [].forEach.call(el.querySelectorAll("[data-wt]"), function (b) { b.onclick = function () { WB.tab = b.getAttribute("data-wt"); [].forEach.call(el.querySelectorAll("[data-wt]"), function (x) { x.classList.toggle("on", x === b); }); drawList(); }; });
-      if (iters.length) Promise.all(iters.map(function (i) { return xs().get("/devcenter/requirements", { iteration_id: i.id, page_size: 500 }).then(items).catch(function () { return []; }); })).then(function (lists) {
-        el.querySelector("[data-iters]").innerHTML = iters.map(function (i, n) {
-          var rs = lists[n].filter(function (x) { return x.status !== "rejected"; }), done = rs.filter(function (x) { return x.status === "done"; }).length, pct = rs.length ? Math.round(done * 100 / rs.length) : 0, d = data(i);
-          return '<div class="xd-row" data-it="' + i.id + '"><span class="xd-grow"><b>' + E(i.title) + '</b><br><span class="x-frac">' + E((d.start || "—") + " → " + (d.end || "—")) + '</span></span><span class="xd-prog" style="max-width:120px"><i style="width:' + pct + '%"></i></span><span class="x-frac">' + done + "/" + rs.length + "</span></div>";
+      on(el, "[data-mf]", function (b) { var f = b.getAttribute("data-mf"); MW.filter = MW.filter === f ? "" : f; reload(); });
+      [].forEach.call(el.querySelector("[data-recent]").querySelectorAll("[data-k]"), function (row) { row.onclick = function () { open(row.getAttribute("data-k"), row.getAttribute("data-id")); }; });
+      if (live && iters.length) Promise.all(iters.map(function (i) { return xs().get("/devcenter/requirements", { iteration_id: i.id, page_size: 500 }).then(items).catch(function () { return []; }); })).then(function (lists) {
+        var box = el.querySelector("[data-iters]");
+        if (!box) return;
+        box.innerHTML = iters.map(function (i, n) {
+          var rs = lists[n].filter(function (x) { return x.status !== "rejected"; }), done = rs.filter(function (x) { return x.status === "done"; }).length, pct = rs.length ? Math.round(done * 100 / rs.length) : 0, dd = data(i);
+          return '<div class="xd-row" data-it="' + i.id + '"><span class="xd-grow"><b>' + E(i.title) + '</b><br><span class="x-frac">' + E((dd.start || "—") + " → " + (dd.end || "—")) + '</span></span><span class="xd-prog" style="max-width:120px"><i style="width:' + pct + '%"></i></span><span class="x-frac">' + done + "/" + rs.length + "</span></div>";
         }).join("");
-        [].forEach.call(el.querySelectorAll("[data-it]"), function (row) { row.onclick = function () { openDetail("iterations", row.getAttribute("data-it"), reload); }; });
+        [].forEach.call(box.querySelectorAll("[data-it]"), function (row) { row.onclick = function () { openDetail("iterations", row.getAttribute("data-it"), reload); }; });
       });
-      drawBuilds(el.querySelector("[data-builds]"), tq.todo.concat(tq.involved));
     }).catch(function (e) { el.querySelector("[data-body]").innerHTML = failBox(e); });
-  }
-
-  // 最近构建：优先显示与我相关的（我触发的，或我负责 / 参与事项关联的代码仓库、流水线的构建），没有时显示团队最近构建。
-  function drawBuilds(box, mine) {
-    Promise.all([xs().get("/cicd/runs", { page_size: 50 }), xs().get("/devcenter/links").catch(function () { return { items: [] }; }), xs().get("/cicd/pipelines", { page_size: 200 }).then(items).catch(function () { return []; })]).then(function (r) {
-      var runs = items(r[0]), keys = {}, apps = {}, pipes = {}, pname = {};
-      mine.forEach(function (p) { keys[p[0] + "#" + p[1].id] = 1; });
-      items(r[1]).forEach(function (l) { if (keys[l.kind + "#" + l.item_id]) { if (l.ref_type === "app") apps[l.ref_id] = 1; else pipes[l.ref_id] = 1; } });
-      r[2].forEach(function (p) { pname[p.id] = p.name; });
-      var related = runs.filter(function (x) { return x.triggered_by === me() || apps[x.app_id] || pipes[x.pipeline_id]; });
-      var list = (related.length ? related : runs).slice(0, 6);
-      box.innerHTML = (list.length ? (related.length ? "" : '<p class="x-frac" style="margin:0 0 4px">暂无与你相关的构建，以下为团队最近构建。</p>') + list.map(function (x) {
-        return '<a class="xd-row" style="text-decoration:none;color:inherit" href="#/cicd/pipeline/' + encodeURIComponent(x.pipeline_id) + '">' + runTag(x.status) + '<span class="xd-grow">' + E(pname[x.pipeline_id] || "流水线 #" + x.pipeline_id) + ' <span class="x-frac">#' + E(x.id) + " · " + E(x.branch || "—") + "</span></span><span class=\"x-frac\">" + E(ago(x.created_at)) + "</span></a>";
-      }).join("") : emptyBox({ kind: "pipeline", size: "s", title: "还没有构建记录", actions: [{ text: "前往流水线", href: "#/cicd/pipeline" }], fallback: "还没有构建记录。" }, "xb-empty", "padding:16px 0"));
-    }).catch(function (e) { box.innerHTML = '<p class="x-frac">' + (e && e.status === 403 ? "没有查看构建记录的权限。" : "读取构建记录失败：" + E(errText(e))) + "</p>"; });
   }
 
   /* ---------------------------------------------------------------- 迭代 & 看板 */
@@ -865,5 +942,5 @@
       return repos(el, sub);
     }
   }
-  root.XSDev = { render: render, openDetail: openDetail, _greeting: greeting };
+  root.XSDev = { render: render, openDetail: openDetail, myDelivery: workbench, _greeting: greeting, _mywork: { stageStrip: stageStrip, bucketOf: bucketOf, recentReleased: recentReleased, demo: myDemo, key: mwKey } };
 })(window);

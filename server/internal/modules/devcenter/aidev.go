@@ -296,7 +296,7 @@ func (m *Module) createAITask(c *gin.Context) {
 		return
 	}
 	var links []string
-	if rows, err := m.d.DB.Query(c, "SELECT ref_type,ref_name FROM devcenter_links WHERE kind='requirements' AND item_id=$1 ORDER BY id LIMIT 20", id); err == nil {
+	if rows, err := m.d.DB.Query(c, "SELECT ref_type,ref_name FROM devcenter_repo_links WHERE kind='requirements' AND item_id=$1 ORDER BY id LIMIT 20", id); err == nil {
 		for rows.Next() {
 			var t, n string
 			if rows.Scan(&t, &n) == nil {

@@ -1768,6 +1768,7 @@
     <link rel="stylesheet" href="xs-cicd-pipeline.css" />
     <link rel="stylesheet" href="xs-topology.css" />
     <link rel="stylesheet" href="xs-empty.css" />
+    <link rel="stylesheet" href="xs-favorites.css" />
     <link rel="stylesheet" href="xs-login-reference.css" />
   </head>
   <body>
@@ -2001,7 +2002,8 @@
         const orig = routes[k].render;
         routes[k].render = (el) => {
           const live = window.XS && XS.mode === "live" && window.XSDev;
-          if (!live) return orig(el);
+          if (k === "project" && (location.hash || "").split("?")[0] === "#/project/dora" && window.XSDora) return window.XSDora.render(el);
+          if (!live && !(k === "workbench" && window.XSDev && window.XSDev.myDelivery)) return orig(el);
           return window.XSDev.render(el, k);
         };
       });
@@ -7295,7 +7297,9 @@
           screen: [[]], cx: 0, cy: 0, ws: null, cols: 120, rows: 32,
         };
         BAS.tabs.push(s); BAS.cur = BAS.tabs.length - 1;
-        try {
+        const XT = window.XSBastion && XSBastion.term;
+        if (XT) XT.connect(s, g, { feed: basTermFeed, paint: basTermPaint, rerender: () => { if (location.hash === "#/bastion/term") renderTerm($("view")); } });
+        else try {
           const ws = XS.ws("/bastion/sessions/ssh/ws", { asset: g.asset_id, account: g.account_id, cols: 120, rows: 32 });
           s.ws = ws;
           ws.onopen = () => { s.conn = "open"; s.open = true; basTermPaint(s); renderTerm($("view")); };
@@ -7337,6 +7341,7 @@
       }
       function basClose(s, why) {
         if (!s) return;
+        if (s.live && window.XSBastion && XSBastion.term) XSBastion.term.dispose(s);
         if (s.ws) { try { s.ws.close(); } catch (e) {} s.ws = null; }
         const i = BAS.tabs.indexOf(s);
         if (i >= 0) { BAS.tabs.splice(i, 1); if (i < BAS.cur) BAS.cur--; }
@@ -7486,9 +7491,10 @@
       }
       // 真实会话标签：输出由 WebSocket 推送，输入逐键发回后端
       function basLiveTerm(el, s, head, T) {
+        const XT = window.XSBastion && XSBastion.term;
         const st = { connecting: ["连接中", "x-orange"], open: ["已连接", "x-green"], closed: ["已关闭", "x-grey"], failed: ["连接失败", "x-red"] }[s.conn] || ["未知", "x-grey"];
         el.innerHTML = head + `<section class="x-panel"><div class="x-btabs" role="tablist">${T.map((t, i) => `<div class="x-btab${i === BAS.cur ? " on" : ""}"><button role="tab" aria-selected="${i === BAS.cur}" data-btab="${i}"><i class="${t.open ? "" : "off"}"></i>${esc(t.host)}   ${t.proto}</button><button data-bx="${i}" aria-label="关闭会话 ${esc(t.host)}">×</button></div>`).join("")}</div>
-          <div class="x-bwrap"><div class="x-btool">${pillTag(st[0], st[1])}<span class="x-frac">真实 WebSocket 通道：命令由后端「命令过滤」拦截，会话与录像写入 bastion_sessions</span><button class="x-btn" data-lt="clear" style="margin-left:auto">清屏</button><button class="x-btn x-bdanger" data-lt="off">断开</button></div>
+          <div class="x-bwrap">${XT ? XT.toolbar(s) + XT.statusBar(s) : `<div class="x-btool">${pillTag(st[0], st[1])}<span class="x-frac">真实 WebSocket 通道：命令由后端「命令过滤」拦截，会话与录像写入 bastion_sessions</span><button class="x-btn" data-lt="clear" style="margin-left:auto">清屏</button><button class="x-btn x-bdanger" data-lt="off">断开</button></div>`}
           <pre class="x-lterm-out" data-lterm="${s.id}" tabindex="0" aria-label="${esc(s.acct)}@${esc(s.host)} 终端输出">${esc(basTermText(s))}</pre>
           <div data-lapv="${s.id}">${window.XSBastion ? XSBastion.approvalBanner(s.approval) : ""}</div>
           ${s.err ? `<p class="x-aerr" role="alert" style="margin:8px 0 0">${esc(s.err)}</p>` : ""}
@@ -7519,7 +7525,7 @@
           else if (k.length === 1 && !e.altKey && !e.metaKey) d = k;
           if (!d) return;
           e.preventDefault();
-          if (!send(d)) toast("会话未连接，无法发送");
+          if (!send(d)) toast(s.conn === "reconnecting" ? "正在重连，连接恢复后再输入" : "会话未连接，无法发送");
         };
         inp.onpaste = (e) => {
           const t = (e.clipboardData || window.clipboardData).getData("text");
@@ -7534,6 +7540,7 @@
         }));
         el.querySelectorAll("[data-btab]").forEach((b) => (b.onclick = () => { BAS.cur = +b.dataset.btab; renderTerm(el); }));
         el.querySelectorAll("[data-bx]").forEach((b) => (b.onclick = () => { basClose(T[+b.dataset.bx]); renderTerm(el); }));
+        if (XT) { XT.bind(el, s, { close: (x) => { basClose(x); renderTerm(el); }, rerender: () => renderTerm(el) }); return; }
         // 按可视宽度同步 PTY 尺寸，避免长行错位
         requestAnimationFrame(() => {
           if (!s.ws || s.ws.readyState !== 1) return;
@@ -7551,6 +7558,7 @@
         const s = cur, head = phead("Web 终端", "经堡垒机打开的 SSH 与远程桌面会话，命令按「命令过滤」实时拦截，每个会话记入运维审计", tag + '<a class="x-btn x-bfile" href="#/bastion/assets">从资产连接</a>');
         if (!s) return basWorkbench(el, head);
         if (s.live) return basLiveTerm(el, s, head, T);
+        if (window.XSBastion && XSBastion.term) XSBastion.term.unbind();
         const ssh = s.proto === "SSH", alt = ssh && BAS.split ? T.find((t) => t.id === BAS.altId && t !== s && t.proto === "SSH") : null, panes = alt ? [s, alt] : [s];
         if (!panes.some((p) => p.id === BAS.fid)) BAS.fid = s.id;
         const act = () => panes.find((p) => p.id === BAS.fid) || s;
@@ -12658,6 +12666,7 @@
           $("modal").classList.add("x-alert-detail");
           const modal = $("modal");
           if (window.XSAIOps) window.XSAIOps.mount(modal, a);
+          if (window.XSAlert2Bug) window.XSAlert2Bug.mount(modal, a);
         } catch (e) { toast("告警详情读取失败：" + e.message); }
       }
       window.XSOpenAlertDetail = obOpenAlert;
@@ -13334,10 +13343,10 @@
               `${esc(e.app)} <span class="x-tag x-grey x-tag--s">${e.env}</span>`, `<b>${esc(e.val)}</b>`,
               `<span class="x-tags">${live ? tfTag("告警中", "x-red") : tfTag("已恢复", "x-green")}${e.ack ? '<span class="x-tag x-green x-tag--s">已确认</span>' : ""}${s ? `<span class="x-tag x-grey x-tag--s">静默至 ${hm(new Date(s))}</span>` : ""}</span>${live ? "" : `<span class="x-frac">恢复于 ${e.end}</span>`}`,
               `<span style="white-space:nowrap">${e.t}</span>`, e.who ? esc(e.who) : '<span class="x-frac">未指派</span>',
-              `<span style="white-space:nowrap">${live ? `${e.ack ? "" : `<button class="x-act" data-eack="${i}">确认</button>`}<button class="x-act" data-easn="${i}">指派</button><button class="x-act" data-esil="${i}">${s ? "取消静默" : "静默"}</button>` : ""}${e.mw ? `<a class="x-act" href="${e.mw}" aria-label="查看中间件实例 ${esc(e.app)}">查看实例</a>` : ""}${TR_SVCS.includes(e.app) ? `<a class="x-act" href="${trHref(e.app)}" aria-label="查看 ${esc(e.app)} 的链路">链路</a>` : live ? "" : '<span class="x-frac">—</span>'}</span>`];
+              `<span style="white-space:nowrap">${live ? `${e.ack ? "" : `<button class="x-act" data-eack="${i}">确认</button>`}<button class="x-act" data-easn="${i}">指派</button><button class="x-act" data-esil="${i}">${s ? "取消静默" : "静默"}</button>` : ""}${window.XSAlert2Bug ? window.XSAlert2Bug.buttonHTML(e, { cls: "x-act" }) : ""}${e.mw ? `<a class="x-act" href="${e.mw}" aria-label="查看中间件实例 ${esc(e.app)}">查看实例</a>` : ""}${TR_SVCS.includes(e.app) ? `<a class="x-act" href="${trHref(e.app)}" aria-label="查看 ${esc(e.app)} 的链路">链路</a>` : live ? "" : '<span class="x-frac">—</span>'}</span>`];
           })) : `<p class="x-empty">暂无${ob.evf === "全部" ? "" : ob.evf}的告警事件</p>`}</section>`;
       };
-      OB_AFTER.events = (el) => bindBar(el, "#/observe/events");
+      OB_AFTER.events = (el) => { bindBar(el, "#/observe/events"); if (window.XSAlert2Bug) window.XSAlert2Bug.bind(el, (id) => ob.ev.find((x) => String(x.id) === String(id))); };
       OB_BODY.certificates = () => '<section class="x-panel"><p class="x-empty">证书到期页面加载失败，请刷新页面后重试</p></section>';
 
       // 链路追踪只展示实际检索到的 OpenTelemetry 数据。
@@ -16311,6 +16320,7 @@ spec:
             { t: "迭代", i: "loop", h: "#/project/sprint", s: "按两周一个迭代规划需求与缺陷，跟踪燃尽与交付。" },
             { t: "看板", i: "board", h: "#/project/board", s: "按状态列拖动卡片，团队进展一目了然。" },
             { t: "统计报表", i: "chart", h: "#/project/stats", s: "需求吞吐、周期时长、缺陷与测试的真实统计。" },
+            { t: "交付效能", i: "pulse", h: "#/project/dora", s: "部署频率、变更前置时间、变更失败率与故障恢复时间四项交付指标。" },
           ] },
           { t: "团队协作", i: "users", h: "#/team" },
           { t: "缺陷总览", i: "bug", h: "#/bugs" },
@@ -16474,6 +16484,7 @@ spec:
           ${col ? "" : `<input class="x-input x-subq" type="search" placeholder="搜索菜单" aria-label="搜索${w.t}菜单" value="${esc(nav.q)}" />`}
           <nav class="x-nav" aria-label="${w.t}">${w.items.filter((e) => !e.foot).map((e) => entryHTML(e, on)).join("")}<p class="x-subnone" hidden>无匹配菜单</p></nav>
           <div class="x-sfoot">${w.items.filter((e) => e.foot).map((e) => entryHTML(e, on)).join("") || `<a class="x-ni${set ? " on" : ""}" href="#/settings"${cur(set)}${tip("系统设置")} aria-label="系统设置"><i class="x-nic">${ic("gear")}</i><span>设置</span></a>`}<button class="x-ni" data-tog${tip("展开菜单")} aria-label="${col ? "展开菜单" : "收起菜单"}" aria-expanded="${!col}"><i class="x-nic">${ic("panel")}</i><span>收起菜单</span></button></div>`;
+        if (window.XSFav) XSFav.mount();
         const q = $("nav").querySelector(".x-subq");
         if (q) q.oninput = () => { nav.q = q.value.trim().toLowerCase(); filterNav(); };
         filterNav();
@@ -16600,6 +16611,7 @@ spec:
         const env = ENVS_ALL().find((e) => e[0] === nav.env) || ENVS_ALL()[0];
         $("envbtn").innerHTML = `<i class="x-edot" style="--d:${env[1]}"></i><b>${env[0] === "全部" ? "全部环境" : esc(env[0])}</b>${ic("chev")}`;
         $("envbtn").setAttribute("aria-label", "环境：" + env[0]);
+        if (window.XSFav) XSFav.syncStar();
         drawClusterContext();
         const n = nav.read ? 0 : notes().length;
         $("badge").textContent = n; $("badge").hidden = !n;
@@ -16871,7 +16883,10 @@ spec:
     <script src="xs-cicd-forms.js"></script>
     <script src="xs-bastion.js"></script>
     <script src="xs-branding.js"></script>
+    <script src="xs-devtrace.js"></script>
     <script src="xs-devcenter.js"></script>
+    <script src="xs-alert2bug.js"></script>
+    <script src="xs-dora.js"></script>
     <script src="xs-cicd-pipeline.js"></script>
     <script src="xs-release-canary.js"></script>
     <script src="xs-image-scan.js"></script>
@@ -16883,6 +16898,7 @@ spec:
     <script src="xs-notify-center.js"></script>
     <script src="xs-cluster-registries.js"></script>
     <script src="xs-kubectl.js"></script>
+    <script src="xs-favorites.js"></script>
     <script src="xs-cmdk.js"></script>
     <script src="xs-identity.js"></script>
     <script src="xs-bastion-aidraft.js"></script>

@@ -58,7 +58,7 @@ func devTestDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal("cannot open test pool")
 	}
 	t.Cleanup(pool.Close)
-	names, _ := fs.Glob(migFS, "migrations/*.sql")
+	names, _ := fs.Glob(migFS, "migrations/*.up.sql")
 	for _, n := range names {
 		body, _ := migFS.ReadFile(n)
 		if _, err := pool.Exec(ctx, string(body)); err != nil {
@@ -170,7 +170,7 @@ func TestDevcenterFlowPostgres(t *testing.T) {
 		t.Fatalf("delete %d", code)
 	}
 	var n int
-	_ = db.QueryRow(context.Background(), "SELECT (SELECT count(*) FROM devcenter_comments)+(SELECT count(*) FROM devcenter_activities WHERE kind='requirements' AND item_id=$1)+(SELECT count(*) FROM devcenter_links)+(SELECT count(*) FROM devcenter_requirements WHERE data ? 'parent_id')", id).Scan(&n)
+	_ = db.QueryRow(context.Background(), "SELECT (SELECT count(*) FROM devcenter_comments)+(SELECT count(*) FROM devcenter_activities WHERE kind='requirements' AND item_id=$1)+(SELECT count(*) FROM devcenter_repo_links)+(SELECT count(*) FROM devcenter_links)+(SELECT count(*) FROM devcenter_requirements WHERE data ? 'parent_id')", id).Scan(&n)
 	if n != 0 {
 		t.Fatalf("orphans left: %d", n)
 	}

@@ -253,14 +253,18 @@
       if (A.node === "none" && a.node_id && ix.byId[a.node_id]) return false;
       if (A.node.indexOf("n:") === 0 && !inNode[a.node_id]) return false;
       if (A.env && a.env !== A.env) return false;
-      return !q || [a.name, a.host, a.description, group(a), ix.path(a.node_id)].concat(tags(a)).join(" ").toLowerCase().indexOf(q) >= 0;
+      return !q || [a.name, a.host, a.host + ":" + a.port, a.description, group(a), ix.path(a.node_id), PROTO_NAME[a.protocol] || a.protocol, envName(a.env)]
+        .concat(tags(a), (accBy[a.id] || []).map(function (x) { return x.username; })).join(" ").toLowerCase().indexOf(q) >= 0;
     });
+    shown = recentSort(shown, function (a) { return a.id; });
     var rows = shown.map(function (a) {
       var acc = accBy[a.id] || [], p = plat[a.platform_id], isDB = a.protocol === "mysql" || a.protocol === "postgres";
+      var hl = assetHealth(a, acc, ctx.sessions);
       var conn = isDB
         ? '<button class="x-btn x-btn--pri x-btn--s" data-dbc="' + a.id + '"' + (acc.length ? "" : ' disabled title="先托管一个数据库账号"') + ">控制台</button>"
         : '<button class="x-btn x-btn--pri x-btn--s" data-conn="' + a.id + '"' + (acc.length ? "" : ' disabled title="先托管一个登录账号"') + ">连接</button>";
-      return ['<b class="x-name">' + E(a.name) + '</b><div class="x-frac x-mono">' + E(a.host) + ":" + E(a.port) + "</div>",
+      return ['<b class="x-name">' + E(a.name) + "</b>" + (isRecent(a.id) ? " " + tag("最近连接", "x-blue") : "") + '<div class="x-frac x-mono">' + E(a.host) + ":" + E(a.port) + "</div>",
+        '<span title="' + E(hl.why) + '">' + dot(hl.level, hl.text) + "</span>",
         E(p ? p.name : PROTO_NAME[a.protocol] || a.protocol) + '<div class="x-frac">' + E(PROTO_NAME[a.protocol] || a.protocol) + "</div>",
         a.node_id && ix.byId[a.node_id] ? E(ix.path(a.node_id)) : '<span class="x-frac">未分配</span>',
         tag(envName(a.env), ENV_CLS[a.env]) + (tags(a).length ? '<div class="x-tags">' + tags(a).map(function (t) { return tag(t); }).join("") + "</div>" : ""),
@@ -273,10 +277,10 @@
     var body = el.querySelector(".xb-body");
     body.innerHTML = '<div class="xb-stats">' + stats.map(function (s) { return '<div class="xb-stat"><span>' + s[0] + "</span><b>" + E(s[1]) + "</b><em>" + E(s[2]) + "</em></div>"; }).join("") + "</div>" +
       '<div class="xb-split"><aside class="xb-tree" aria-label="资产树"><div class="xb-tree-h"><span>资产树</span><button type="button" class="x-act" data-nadd="0">+ 节点</button></div>' + treeHTML + "</aside>" +
-      '<section class="xb-main"><div class="xb-toolbar"><div class="xb-tools"><input class="x-input" data-q placeholder="搜索名称、地址、节点、标签" value="' + E(A.q) + '">' +
+      '<section class="xb-main"><div class="xb-toolbar"><div class="xb-tools"><input class="x-input" data-q placeholder="搜索名称、地址、节点、标签、账号" value="' + E(A.q) + '">' +
       '<select class="x-select" data-env aria-label="按环境筛选">' + envOpts.map(function (o) { return '<option value="' + o.v + '"' + (o.v === A.env ? " selected" : "") + ">" + o.t + "</option>"; }).join("") + "</select></div>" +
       '<span class="x-frac">共 ' + shown.length + " 个</span></div>" +
-      (assets.length ? table(["资产", "平台", "节点", "环境 / 标签", "托管账号", "主机指纹", "最近连接", "操作"], rows, "没有符合条件的资产。")
+      (assets.length ? table(["资产", "状态", "平台", "节点", "环境 / 标签", "托管账号", "主机指纹", "最近连接", "操作"], rows, "没有符合条件的资产。")
         : '<div class="xb-guide"><h3>还没有纳管任何资产</h3><ol><li>在左侧资产树建立节点（如「生产 / 支付」）</li><li>添加资产：选择平台（Linux、MySQL、PostgreSQL），填写地址与端口</li><li>托管账号并授权，即可在「工作台」连接</li></ol><button class="x-btn x-btn--pri" data-new2>+ 添加第一个资产</button></div>') +
       '<p class="x-frac xb-note">SSH 资产通过 Web 终端连接；MySQL / PostgreSQL 资产通过数据库控制台查询。Windows 等远程桌面平台只登记，暂无连接器。</p></section></div>';
     var redraw = function () { drawAssets(el, ctx); };
@@ -293,7 +297,7 @@
     qi.oninput = function () { A.q = qi.value; clearTimeout(qi._t); qi._t = setTimeout(function () { redraw(); var n = el.querySelector("[data-q]"); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); };
     body.querySelector("[data-env]").onchange = function () { A.env = this.value; redraw(); };
     var find = function (id) { return byId(assets, id); };
-    on(body, "data-conn", function (id) { var a = find(id); if (a && ctx.hooks.connect) ctx.hooks.connect(a); else go("myassets"); });
+    on(body, "data-conn", function (id) { var a = find(id); if (a) recentTouch(a.id); if (a && ctx.hooks.connect) ctx.hooks.connect(a); else go("myassets"); });
     on(body, "data-dbc", function (id) { handoff("dbc", { asset_id: +id }); go("dbc"); });
     on(body, "data-test", function (id) { testAsset(find(id), accBy); });
     on(body, "data-edit", function (id) { assetWizard(find(id), ctx); });
@@ -328,6 +332,7 @@
     var line = function (ok, t, d) { return '<li class="' + (ok ? "ok" : ok === false ? "bad" : "") + '"><b>' + (ok ? "✓" : ok === false ? "✕" : "·") + "</b><span>" + E(t) + (d ? "<em>" + E(d) + "</em>" : "") + "</span></li>"; };
     var isDB = a.protocol !== "ssh";
     xs().post("/bastion/assets/" + a.id + "/test", acc && !isDB ? { account_id: acc.id } : {}).then(function (r) {
+      recentResult(a.id, !!r.reachable);
       var it = [line(r.reachable, "网络连通", r.reachable ? "延迟 " + r.latency_ms + " ms" : errText(r.error))];
       if (r.reachable && !isDB) it.push(line(!!r.banner, "SSH 服务", r.banner || "没有读到 SSH 横幅，端口上可能不是 SSH 服务"));
       if (r.reachable && !isDB && acc) it.push(line(r.auth, "账号登录（" + acc.username + "）", r.auth ? "登录成功，未打开 Shell" : r.error));
@@ -586,6 +591,387 @@
     }
   }
 
+  /* ------------------------------------------------------------------ 最近连接 / 连通状态（本机 localStorage） */
+  // 只记录资产 id、时间与结果，不存主机地址、账号或任何凭据
+  var RECENT_KEY = "xs.bastion.recent", RECENT_MAX = 20, STALE_MS = 7 * 864e5;
+  function store() { try { return root.localStorage || null; } catch (e) { return null; } }
+  function recentAll() {
+    var ls = store(), v = null;
+    try { v = ls && JSON.parse(ls.getItem(RECENT_KEY) || "[]"); } catch (e) { v = null; }
+    return Array.isArray(v) ? v.filter(function (x) { return x && x.id != null && x.t; }) : [];
+  }
+  function recentSave(arr) { var ls = store(); try { if (ls) ls.setItem(RECENT_KEY, JSON.stringify(arr.slice(0, RECENT_MAX))); } catch (e) { /* 存储不可用时忽略 */ } }
+  // ok: true 连接成功 / false 连接失败 / undefined 仅记录一次连接动作（保留上次结果）
+  function recentTouch(id, ok) {
+    if (id == null || id === "") return;
+    var arr = recentAll(), old = arr.filter(function (x) { return String(x.id) === String(id); })[0] || {};
+    var now = Date.now(), rec = { id: String(id), c: old.c || now };
+    if (ok === undefined) { rec.c = now; if (old.t) { rec.t = old.t; rec.ok = old.ok; } else rec.t = now; }
+    else { rec.t = now; rec.ok = !!ok; }
+    recentSave([rec].concat(arr.filter(function (x) { return String(x.id) !== String(id); })));
+  }
+  // 只记录连通性结果（例如「测试」按钮），不影响「最近连接」排序
+  function recentResult(id, ok) {
+    if (id == null || id === "") return;
+    var arr = recentAll(), old = arr.filter(function (x) { return String(x.id) === String(id); })[0];
+    var rec = { id: String(id), t: Date.now(), ok: !!ok };
+    if (old && old.c) rec.c = old.c;
+    var rest = arr.filter(function (x) { return String(x.id) !== String(id); });
+    recentSave(old ? arr.map(function (x) { return x === old ? rec : x; }) : rest.concat([rec]));
+  }
+  function recentGet(id) { return recentAll().filter(function (x) { return String(x.id) === String(id); })[0] || null; }
+  // 最近连接排序：最近点过「连接」的排最前，其余保持原顺序
+  function recentSort(arr, idOf) {
+    var rank = {};
+    recentAll().forEach(function (x) { rank[x.id] = Math.max(x.c || 0, x.t || 0); });
+    return arr.map(function (a, i) { return { a: a, i: i, r: rank[String(idOf(a))] || 0 }; })
+      .sort(function (x, y) { return (y.r - x.r) || (x.i - y.i); }).map(function (x) { return x.a; });
+  }
+  function isRecent(id) { var r = recentGet(id); return !!(r && r.c); }
+
+  // 四色状态点：ok 绿 / warn 橙 / bad 红 / unknown 灰
+  var DOT = { ok: "#16a34a", warn: "#d97706", bad: "#dc2626", unknown: "#6b7280" };
+  function dot(level, text) {
+    var c = DOT[level] || DOT.unknown;
+    return '<span class="xb-dot" title="' + E(text) + '" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#4b5563;white-space:nowrap">' +
+      '<i aria-hidden="true" style="width:8px;height:8px;border-radius:50%;background:' + c + ';display:inline-block"></i>' + E(text) + "</span>";
+  }
+  /*
+   * 资产状态（没有独立的探活接口，按已有事实推断，文案如实）：
+   * 有进行中的会话 → 在线；账号验证/连通性测试/本机最近一次连接的结果 → 在线 / 部分失败 / 不可达；超过 7 天的结果标为待确认；都没有 → 未知。
+   */
+  function assetHealth(a, accounts, sessions) {
+    if ((sessions || []).some(function (s) { return String(s.asset_id) === String(a.id) && s.status === "active"; })) return { level: "ok", text: "在线", why: "有进行中的会话" };
+    var ver = (accounts || []).filter(function (x) { return x.verify_status === "ok" || x.verify_status === "failed"; });
+    var okN = ver.filter(function (x) { return x.verify_status === "ok"; }).length;
+    var local = recentGet(a.id);
+    var facts = [];
+    ver.forEach(function (x) { facts.push({ ok: x.verify_status === "ok", t: x.verified_at ? Date.parse(x.verified_at) : 0 }); });
+    if (local && local.ok != null && local.t) facts.push({ ok: !!local.ok, t: local.t });
+    if (!facts.length) return { level: "unknown", text: "未知", why: "还没有验证或连接记录" };
+    var newest = facts.reduce(function (m, f) { return f.t > m.t ? f : m; }, facts[0]);
+    if (ver.length && okN && okN < ver.length) return { level: "warn", text: "部分异常", why: "部分托管账号验证失败" };
+    if (newest.t && Date.now() - newest.t > STALE_MS) return { level: "warn", text: newest.ok ? "待确认" : "可能离线", why: "最近一次结果已超过 7 天" };
+    return newest.ok ? { level: "ok", text: "在线", why: "最近一次验证或连接成功" } : { level: "bad", text: "不可达", why: "最近一次验证或连接失败" };
+  }
+
+  /* ------------------------------------------------------------------ Web 终端：连接管理（断线重连、尺寸同步、工具栏） */
+  /*
+   * 后端约定（server/internal/modules/bastion/ssh.go）：
+   *   上行 {type:"input",data} / {type:"resize",cols,rows}；下行 {type:"session"|"output"|"error"|"closed"|"approval"}。
+   *   授权、登录 ACL、录像存储等拒绝发生在 WebSocket 升级之前（HTTP 403/409），浏览器只看到连接从未打开；
+   *   后端结束会话时先发 {type:"closed"} 再关闭；管理员终止、实例下线、网络中断时不发消息，浏览器收到 1006。
+   * 策略：从未打开 / 收到 closed / 收到不可重试的 error / 正常关闭 1000 / 1008 与 4000–4999（鉴权类）→ 不重连；
+   *   其余意外断开按 1s、2s、4s、8s、16s 最多重连 5 次。重连会建立一个新的会话（重新鉴权、重新录像）。
+   */
+  var WS_PATH = "/bastion/sessions/ssh/ws", MAX_RETRY = 5;
+  var RETRYABLE_ERR = /shut(ting)? down|lease|heartbeat|ended unexpectedly/i;
+  var TERM_ERR_ZH = [
+    [/authentication|handshake|host key/i, "SSH 握手、认证或主机指纹校验失败"],
+    [/network connection failed/i, "无法连接到目标主机的 SSH 端口"],
+    [/recording/i, "会话录像不可用，已拒绝连接"],
+    [/audit could not/i, "会话审计无法写入，已拒绝连接"],
+    [/shut(ting)? down/i, "堡垒机实例正在下线"],
+    [/lease/i, "会话所在实例失去了会话归属"],
+    [/heartbeat/i, "客户端心跳超时"],
+    [/remote command outcome/i, "连接异常中断，远端命令的执行结果无法确认"]
+  ];
+  function termErr(m) {
+    m = String(m || "");
+    for (var i = 0; i < TERM_ERR_ZH.length; i++) if (TERM_ERR_ZH[i][0].test(m)) return TERM_ERR_ZH[i][1];
+    return /[\u4e00-\u9fa5]/.test(m) ? m : errText({ message: m || "会话出错" });
+  }
+  function backoff(n) { return Math.min(16000, 1000 * Math.pow(2, Math.max(0, n - 1))); }
+  // 断开原因判定（纯函数，便于测试）：返回 {retry, state, reason}
+  function classifyClose(code, s) {
+    s = s || {};
+    if (s.manual) return { retry: false, state: "closed", reason: "已手动断开" };
+    if (s.fatal) return { retry: false, state: "failed", reason: s.err || "会话出错" };
+    if (s.ended) return { retry: false, state: "closed", reason: "会话已结束" };
+    if (code === 1000) return { retry: false, state: "closed", reason: "会话已正常关闭" };
+    if (code === 1008 || (code >= 4000 && code < 5000)) return { retry: false, state: "failed", reason: "认证失效或没有连接权限" };
+    if (!s.everOpened) return { retry: false, state: "failed", reason: "连接被拒绝：可能没有生效的资产授权、被登录 ACL 拦截、登录已过期，或录像存储不可用" };
+    return { retry: true, state: "reconnecting", reason: "连接意外中断" };
+  }
+  var TERM_STATE = {
+    connecting: ["warn", "连接中"], open: ["ok", "已连接"], reconnecting: ["warn", "重连中"], closed: ["unknown", "已断开"], failed: ["bad", "已断开"]
+  };
+  function statusInfo(s) {
+    var st = TERM_STATE[s.conn] || ["unknown", "未知"], label = st[1], detail = "";
+    if (s.conn === "reconnecting") { label = "重连中（" + (s.attempt || 1) + "/" + MAX_RETRY + "）"; detail = s.retryAt ? "将建立新的会话" : "正在重新连接…"; }
+    else if (s.conn === "open") detail = s.reconnected ? "已重新连接（新会话，之前的工作目录与环境变量不保留）" : "命令按「命令过滤」实时拦截，会话全程录像";
+    else if (s.conn === "connecting") detail = "正在建立会话…";
+    else detail = s.closeReason || s.err || "";
+    return { level: st[0], label: label, detail: detail, canRetry: s.conn === "closed" || s.conn === "failed" || s.conn === "reconnecting" };
+  }
+  function statusInner(s) {
+    var i = statusInfo(s), c = DOT[i.level];
+    return '<div class="xb-tstat" role="status" aria-live="polite" style="display:flex;align-items:center;gap:8px;min-height:26px;padding:3px 10px;margin:6px 0;border:1px solid #e5e7eb;border-left:3px solid ' + c + ';border-radius:4px;background:#fff;font-size:12px;color:#374151">' +
+      '<i aria-hidden="true" style="width:8px;height:8px;border-radius:50%;background:' + c + ';flex:none"></i><b data-xbtl style="color:' + c + ';font-weight:600">' + E(i.label) + "</b>" +
+      (i.detail ? '<span class="x-frac" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + E(i.detail) + "</span>" : "") +
+      (i.canRetry ? '<button type="button" class="x-btn x-btn--s" data-xbt="reconnect" style="margin-left:auto">' + (s.conn === "reconnecting" ? "立即重连" : "重新连接") + "</button>" : "") + "</div>";
+  }
+  function statusBar(s) { return '<div data-xbts="' + E(s.id) + '">' + statusInner(s) + "</div>"; }
+  // 就地刷新状态栏（不重绘终端，保留输入焦点）
+  function paintStatus(s) {
+    var box = root.document && root.document.querySelector && root.document.querySelector('[data-xbts="' + s.id + '"]');
+    if (!box) return;
+    box.innerHTML = statusInner(s);
+    bindStatus(box, s);
+  }
+
+  var FS_KEY = "xs.bastion.term.fs", FS_MIN = 11, FS_MAX = 22, FS_DEF = 13;
+  function fontSize() { var ls = store(), v = ls ? parseInt(ls.getItem(FS_KEY), 10) : NaN; return v >= FS_MIN && v <= FS_MAX ? v : FS_DEF; }
+  function setFontSize(v) { v = Math.max(FS_MIN, Math.min(FS_MAX, v | 0)); var ls = store(); try { if (ls) ls.setItem(FS_KEY, String(v)); } catch (e) { /* ignore */ } return v; }
+  function toolbar(s) {
+    var fs = fontSize();
+    return '<div class="x-btool xb-ttool" role="toolbar" aria-label="终端工具栏">' +
+      '<span class="x-frac">' + E(s.acct) + "@" + E(s.host) + "</span>" +
+      '<span style="margin-left:auto;display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+      '<button type="button" class="x-btn x-btn--s" data-xbt="copy" title="复制终端中选中的文本">复制选中</button>' +
+      '<span role="group" aria-label="字体大小" style="display:inline-flex;align-items:center;gap:2px"><button type="button" class="x-btn x-btn--s" data-xbt="fs-" aria-label="减小字号"' + (fs <= FS_MIN ? " disabled" : "") + '>A−</button>' +
+      '<span class="x-frac" data-xbfs style="min-width:34px;text-align:center">' + fs + ' px</span><button type="button" class="x-btn x-btn--s" data-xbt="fs+" aria-label="增大字号"' + (fs >= FS_MAX ? " disabled" : "") + ">A+</button></span>" +
+      '<button type="button" class="x-btn x-btn--s" data-xbt="full" aria-pressed="false">全屏</button>' +
+      '<button type="button" class="x-btn x-btn--s" data-lt="clear">清屏</button>' +
+      '<button type="button" class="x-btn x-btn--s x-bdanger" data-xbt="off"' + (s.conn === "closed" || s.conn === "failed" ? ">关闭标签" : ">断开") + "</button></span></div>";
+  }
+
+  // 按输出区实际字符尺寸计算 PTY 行列；行列变化且连接可用时上报 resize
+  function measure(out, fs) {
+    var cw = 0, lh = 0;
+    try {
+      var probe = root.document.createElement("span");
+      probe.textContent = "MMMMMMMMMM";
+      probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;font:inherit";
+      out.appendChild(probe);
+      var r = probe.getBoundingClientRect ? probe.getBoundingClientRect() : null;
+      if (r && r.width) { cw = r.width / 10; lh = r.height; }
+      probe.remove ? probe.remove() : out.removeChild(probe);
+    } catch (e) { /* 无布局环境 */ }
+    return { cw: cw || fs * 0.6, lh: Math.max(lh, fs * 1.4) || fs * 1.5 };
+  }
+  function fitSize(w, h, cw, lh) {
+    return { cols: Math.max(40, Math.min(300, Math.floor((w - 16) / cw))), rows: Math.max(10, Math.min(100, Math.floor((h - 12) / lh))) };
+  }
+  function fit(s, out) {
+    if (!out || !out.clientWidth || !out.clientHeight) return false;
+    var m = measure(out, fontSize()), z = fitSize(out.clientWidth, out.clientHeight, m.cw, m.lh);
+    if (z.cols === s.cols && z.rows === s.rows) return false;
+    s.cols = z.cols; s.rows = z.rows;
+    if (s.ws && s.ws.readyState === 1) { try { s.ws.send(JSON.stringify({ type: "resize", cols: z.cols, rows: z.rows })); } catch (e) { /* 断开中 */ } }
+    return true;
+  }
+
+  function feed(s, cb, text) { if (cb && cb.feed) cb.feed(s, text); if (cb && cb.paint) cb.paint(s); }
+  function changed(s, cb) { paintStatus(s); if (cb && cb.rerender) cb.rerender(s); }
+
+  // 建立 / 维护一个真实 SSH 会话。s 为 index.html 的会话对象（screen/cx/cy 等），g 为授权（asset_id/account_id）。
+  function connect(s, g, cb) {
+    s.grant = g; s.cb = cb || s.cb || {};
+    s.attempt = s.attempt || 0; s.manual = false; s.disposed = false;
+    if (s.cols == null) s.cols = 120;
+    if (s.rows == null) s.rows = 32;
+    recentTouch(g.asset_id);
+    openSocket(s);
+    return s;
+  }
+  function openSocket(s) {
+    var cb = s.cb, g = s.grant, ws;
+    s.fatal = false; s.ended = false;
+    if (s.conn !== "reconnecting") s.conn = "connecting";
+    try { ws = xs().ws(WS_PATH, { asset: g.asset_id, account: g.account_id, cols: s.cols, rows: s.rows }); }
+    catch (x) { s.ws = null; s.err = (x && x.message) || "无法建立终端连接"; onClosed(s, 0); return; }
+    s.ws = ws;
+    ws.onopen = function () {
+      if (s.ws !== ws) return;
+      var was = s.attempt;
+      s.everOpened = true; s.attempt = 0; s.retryAt = 0; s.conn = "open"; s.open = true; s.err = ""; s.closeReason = ""; s.t1 = 0;
+      s.opens = (s.opens || 0) + 1; s.reconnected = s.opens > 1;
+      recentTouch(g.asset_id, true);
+      if (s.reconnected) feed(s, cb, "\r\n[已重新连接：这是一个新的会话，之前的工作目录与环境变量不会保留]\r\n");
+      changed(s, cb);
+    };
+    ws.onmessage = function (ev) {
+      if (s.ws !== ws) return;
+      var m = null;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!m) return;
+      if (m.type === "output" && m.data) feed(s, cb, m.data);
+      else if (m.type === "session") s.sid = m.data;
+      else if (m.type === "error") { if (/network connection failed/i.test(String(m.data || ""))) recentResult(g.asset_id, false); s.err = termErr(m.data); s.fatal = !RETRYABLE_ERR.test(String(m.data || "")); feed(s, cb, "\r\n[错误] " + s.err); }
+      else if (m.type === "closed") { s.ended = true; feed(s, cb, "\r\n[会话结束]"); }
+      else if (m.type === "approval") { s.approval = parseApproval(m.data); paintApproval(s); }
+    };
+    ws.onerror = function () { /* 浏览器随后一定触发 close，统一在 onclose 判定 */ };
+    ws.onclose = function (e) {
+      if (s.ws !== ws) return;
+      s.ws = null;
+      onClosed(s, e && e.code);
+    };
+  }
+  function onClosed(s, code) {
+    var cb = s.cb;
+    s.open = false;
+    if (s.disposed) return;
+    var c = classifyClose(code, s);
+    if (c.retry && s.attempt < MAX_RETRY) { scheduleRetry(s); return; }
+    s.conn = c.retry ? "failed" : c.state;
+    s.closeReason = c.retry ? "已重连 " + MAX_RETRY + " 次仍无法连接，可点「重新连接」再试" : c.reason;
+    if (c.state === "failed" || c.retry) s.err = s.err || s.closeReason;
+    feed(s, cb, "\r\n[连接已断开" + (code ? " code=" + code : "") + "] " + s.closeReason);
+    s.t1 = s.t1 || Date.now();
+    changed(s, cb);
+  }
+  // 管理员终止的会话不发任何消息就断开：重连前（有审计权限时）查一下会话状态，被终止就不再重连
+  function wasKilled(s) {
+    if (s.sid == null || !xs() || !xs().get) return Promise.resolve(false);
+    return Promise.resolve().then(function () { return xs().get("/bastion/sessions/" + encodeURIComponent(s.sid)); })
+      .then(function (r) { var d = r && (r.data || r); return !!(d && (d.status === "killed" || d.kill_requested_at)); }, function () { return false; });
+  }
+  function scheduleRetry(s) {
+    var cb = s.cb;
+    s.attempt++;
+    var wait = backoff(s.attempt);
+    s.conn = "reconnecting"; s.retryAt = Date.now() + wait;
+    if (s.attempt === 1) { feed(s, cb, "\r\n[连接意外中断，正在自动重连…]"); changed(s, cb); } else paintStatus(s);
+    clearTimeout(s.retryTimer);
+    s.retryTimer = setTimeout(function () { retryNow(s, true); }, wait);
+  }
+  function retryNow(s, checkKill) {
+    clearTimeout(s.retryTimer); s.retryTimer = null;
+    if (s.disposed || s.manual) return;
+    var go = function (killed) {
+      if (s.disposed || s.manual) return;
+      if (killed) {
+        s.conn = "closed"; s.closeReason = "会话已被管理员终止，不再自动重连"; s.err = "";
+        feed(s, s.cb, "\r\n[" + s.closeReason + "]"); changed(s, s.cb); return;
+      }
+      s.retryAt = 0; openSocket(s);
+    };
+    if (checkKill && s.attempt === 1) wasKilled(s).then(go); else go(false);
+  }
+  // 手动「重新连接」：重置计数，建立新会话
+  function reconnect(s) {
+    if (!s || !s.grant) return;
+    if (s.ws && s.ws.readyState === 1) return;
+    clearTimeout(s.retryTimer); s.retryTimer = null;
+    s.manual = false; s.disposed = false; s.err = ""; s.closeReason = ""; s.t1 = 0;
+    if (s.conn === "reconnecting") { s.attempt = Math.max(1, s.attempt); retryNow(s, false); paintStatus(s); return; }
+    s.attempt = 0; s.conn = "connecting";
+    feed(s, s.cb, "\r\n[正在重新连接…]");
+    changed(s, s.cb);
+    openSocket(s);
+  }
+  // 主动断开 / 关闭标签：停止重连并正常关闭连接（1000）
+  function dispose(s) {
+    if (!s) return;
+    s.manual = true; s.disposed = true;
+    clearTimeout(s.retryTimer); s.retryTimer = null;
+    var ws = s.ws; s.ws = null;
+    if (ws) { try { ws.close(1000, "user"); } catch (e) { /* ignore */ } }
+    if (s.conn !== "failed") s.conn = "closed";
+    s.open = false;
+  }
+
+  function selectionText() {
+    try { var sel = root.getSelection ? root.getSelection() : root.document.getSelection(); return sel ? String(sel.toString()) : ""; } catch (e) { return ""; }
+  }
+  function copyText(t) {
+    var nav = root.navigator;
+    if (nav && nav.clipboard && nav.clipboard.writeText) return nav.clipboard.writeText(t);
+    return new Promise(function (resolve, reject) {
+      try {
+        var ta = root.document.createElement("textarea");
+        ta.value = t; ta.style.cssText = "position:fixed;left:-9999px"; root.document.body.appendChild(ta); ta.select();
+        var ok = root.document.execCommand && root.document.execCommand("copy"); ta.remove ? ta.remove() : root.document.body.removeChild(ta);
+        ok ? resolve() : reject(new Error("浏览器不允许写入剪贴板"));
+      } catch (e) { reject(e); }
+    });
+  }
+  function bindStatus(box, s) {
+    var b = box && box.querySelector && box.querySelector('[data-xbt="reconnect"]');
+    if (b) b.onclick = function () { reconnect(s); };
+  }
+  var bound = null; // 当前终端页的窗口监听（重绘时先解绑上一次）
+  function unbind() { if (bound) { bound(); bound = null; } }
+  /*
+   * 绑定工具栏、状态栏与尺寸同步。hooks.close(s) 由 index.html 关闭标签，hooks.rerender() 重绘终端页。
+   */
+  function bind(el, s, hooks) {
+    hooks = hooks || {};
+    unbind();
+    var doc = root.document, out = el.querySelector(".x-lterm-out"), wrap = el.querySelector(".x-bwrap") || el;
+    if (out) out.style.fontSize = fontSize() + "px";
+    bindStatus(el.querySelector('[data-xbts="' + s.id + '"]'), s);
+    var btn = function (k) { return el.querySelector('[data-xbt="' + k + '"]'); };
+    var refit = function () { if (out && fit(s, out)) { /* 已上报 */ } };
+    var c = btn("copy");
+    if (c) c.onclick = function () {
+      if (s.actions && s.actions.indexOf("copy") < 0) { toast("当前授权不允许从该资产复制"); return; }
+      var t = selectionText();
+      if (!t) { toast("请先在终端输出中选中要复制的文本"); return; }
+      copyText(t).then(function () { toast("已复制 " + t.length + " 个字符"); }, function () { toast("复制失败：浏览器不允许写入剪贴板"); });
+    };
+    var setFs = function (d) {
+      var v = setFontSize(fontSize() + d);
+      if (out) out.style.fontSize = v + "px";
+      var lab = el.querySelector("[data-xbfs]"); if (lab) lab.textContent = v + " px";
+      var m = btn("fs-"), p = btn("fs+"); if (m) m.disabled = v <= FS_MIN; if (p) p.disabled = v >= FS_MAX;
+      refit();
+    };
+    var fm = btn("fs-"), fp = btn("fs+");
+    if (fm) fm.onclick = function () { setFs(-1); };
+    if (fp) fp.onclick = function () { setFs(1); };
+    var full = btn("full");
+    var isFull = function () { return (doc.fullscreenElement && doc.fullscreenElement === wrap) || (wrap.classList && wrap.classList.contains("xb-tmax")); };
+    var markFull = function () {
+      var on = isFull();
+      if (full) { full.setAttribute("aria-pressed", String(!!on)); full.textContent = on ? "退出全屏" : "全屏"; }
+      setTimeout(refit, 60);
+    };
+    if (full) full.onclick = function () {
+      if (doc.fullscreenElement && doc.exitFullscreen) { doc.exitFullscreen(); return; }
+      if (wrap.classList && wrap.classList.contains("xb-tmax")) { wrap.classList.remove("xb-tmax"); wrap.style.cssText = wrap._xbCss || ""; markFull(); return; }
+      if (wrap.requestFullscreen) {
+        Promise.resolve(wrap.requestFullscreen()).then(function () { wrap.style.background = "#fff"; markFull(); }, function () { maxi(); });
+      } else maxi();
+    };
+    function maxi() {
+      wrap._xbCss = wrap.style.cssText;
+      if (wrap.classList) wrap.classList.add("xb-tmax");
+      wrap.style.cssText += ";position:fixed;inset:0;z-index:1000;background:#fff;padding:12px;overflow:auto";
+      markFull();
+    }
+    var off = btn("off");
+    if (off) off.onclick = function () {
+      var close = function () { dispose(s); if (hooks.close) hooks.close(s); };
+      if (s.conn === "closed" || s.conn === "failed") { close(); return; }
+      confirmBox("断开会话", "确定断开 <b>" + E(s.acct) + "@" + E(s.host) + "</b>？<br>正在执行的命令会被中断；命令记录与会话录像由后端保存。断开后不会自动重连。", "断开", function () { close(); }, {});
+    };
+    // 窗口与输出区尺寸变化时同步 PTY
+    var t = null, onResize = function () { clearTimeout(t); t = setTimeout(refit, 150); };
+    var onFs = function () { if (!doc.fullscreenElement && wrap.style) wrap.style.background = ""; markFull(); };
+    var onKey = function (e) { if (e.key === "Escape" && wrap.classList && wrap.classList.contains("xb-tmax")) { wrap.classList.remove("xb-tmax"); wrap.style.cssText = wrap._xbCss || ""; markFull(); } };
+    var ro = null;
+    if (root.addEventListener) root.addEventListener("resize", onResize);
+    if (doc.addEventListener) { doc.addEventListener("fullscreenchange", onFs); doc.addEventListener("keydown", onKey); }
+    if (out && typeof root.ResizeObserver === "function") { ro = new root.ResizeObserver(onResize); ro.observe(out); }
+    bound = function () {
+      clearTimeout(t);
+      if (root.removeEventListener) root.removeEventListener("resize", onResize);
+      if (doc.removeEventListener) { doc.removeEventListener("fullscreenchange", onFs); doc.removeEventListener("keydown", onKey); }
+      if (ro) ro.disconnect();
+    };
+    if (root.requestAnimationFrame) root.requestAnimationFrame(refit); else setTimeout(refit, 0);
+  }
+
+  var term = {
+    connect: connect, reconnect: reconnect, dispose: dispose, bind: bind, unbind: unbind,
+    toolbar: toolbar, statusBar: statusBar, statusInfo: statusInfo, paintStatus: paintStatus,
+    classifyClose: classifyClose, backoff: backoff, fitSize: fitSize, fit: fit, fontSize: fontSize, termErr: termErr, MAX_RETRY: MAX_RETRY
+  };
+  var recent = { touch: recentTouch, result: recentResult, get: recentGet, all: recentAll, sort: recentSort, isRecent: isRecent };
+
   /* ------------------------------------------------------------------ 路由与分文件加载 */
   var PAGES = { assets: renderAssets, mask: renderMask, lsec: renderLsec };
   // 由本模块实现的页面（含另外两个文件中的页面）
@@ -624,6 +1010,7 @@
   root.XSBastion = {
     has: has, render: render, register: register, util: U,
     renderAssets: renderAssets, renderMask: renderMask, renderLsec: renderLsec,
-    parseApproval: parseApproval, approvalBanner: approvalBanner, paintApproval: paintApproval
+    parseApproval: parseApproval, approvalBanner: approvalBanner, paintApproval: paintApproval,
+    term: term, recent: recent, assetHealth: assetHealth, dot: dot
   };
 })(window);

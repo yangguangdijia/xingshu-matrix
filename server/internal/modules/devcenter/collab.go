@@ -268,7 +268,7 @@ func (m *Module) listItemLinks(k string) gin.HandlerFunc {
 		if !ok {
 			return
 		}
-		rows, err := m.d.DB.Query(c, "SELECT "+linkCols+" FROM devcenter_links l WHERE l.kind=$1 AND l.item_id=$2 ORDER BY l.id", k, id)
+		rows, err := m.d.DB.Query(c, "SELECT "+linkCols+" FROM devcenter_repo_links l WHERE l.kind=$1 AND l.item_id=$2 ORDER BY l.id", k, id)
 		if err != nil {
 			fail(c, err)
 			return
@@ -307,7 +307,7 @@ func (m *Module) addLink(k string) gin.HandlerFunc {
 			return
 		}
 		_, me := who(c)
-		l, err := scanLink(m.d.DB.QueryRow(c, "INSERT INTO devcenter_links AS l(kind,item_id,ref_type,ref_id,ref_name,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING "+linkCols, k, id, in.RefType, in.RefID, in.RefName, me), false)
+		l, err := scanLink(m.d.DB.QueryRow(c, "INSERT INTO devcenter_repo_links AS l(kind,item_id,ref_type,ref_id,ref_name,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING "+linkCols, k, id, in.RefType, in.RefID, in.RefName, me), false)
 		if err != nil {
 			fail(c, err)
 			return
@@ -329,7 +329,7 @@ func (m *Module) listLinks(c *gin.Context) {
 	if !ok {
 		return
 	}
-	q := `SELECT ` + linkCols + `, COALESCE(r.title,b.title,''), COALESCE(r.status,b.status,'') FROM devcenter_links l
+	q := `SELECT ` + linkCols + `, COALESCE(r.title,b.title,''), COALESCE(r.status,b.status,'') FROM devcenter_repo_links l
 		LEFT JOIN devcenter_requirements r ON l.kind='requirements' AND r.id=l.item_id
 		LEFT JOIN devcenter_bugs b ON l.kind='bugs' AND b.id=l.item_id
 		WHERE ($1='' OR l.ref_type=$1) AND ($2::bigint IS NULL OR l.ref_id=$2) ORDER BY l.id DESC LIMIT 1000`
@@ -356,7 +356,7 @@ func (m *Module) delLink(c *gin.Context) {
 	if !ok {
 		return
 	}
-	tag, err := m.d.DB.Exec(c, "DELETE FROM devcenter_links WHERE id=$1", id)
+	tag, err := m.d.DB.Exec(c, "DELETE FROM devcenter_repo_links WHERE id=$1", id)
 	if err != nil {
 		fail(c, err)
 		return

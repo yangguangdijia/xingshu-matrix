@@ -99,12 +99,10 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 		g.GET("/"+k+"/:id/activities", rd, m.listActivities(k))
 		if k == "requirements" || k == "bugs" {
 			g.GET("/"+k+"/:id/links", rd, m.listItemLinks(k))
-			g.POST("/"+k+"/:id/links", mg, m.addLink(k))
 		}
 	}
 	g.DELETE("/comments/:id", mg, m.delComment)
 	g.GET("/links", rd, m.listLinks)
-	g.DELETE("/links/:id", mg, m.delLink)
 	g.GET("/stats", rd, m.stats)
 	g.GET("/iterations/:id/burndown", rd, m.burndown)
 	g.GET("/ai/status", rd, m.aiStatus)
@@ -112,6 +110,10 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.GET("/ai-tasks/:id", rd, m.getAITask)
 	g.POST("/requirements/:id/ai-tasks", mg, rbac.RequirePerm("ai:chat"), m.createAITask)
 	g.POST("/ai-tasks/:id/apply", mg, m.applyAITask)
+	m.registerDora(g, rd, mg)
+	m.registerTrace(g, rd, mg)
+	m.registerMyWork(g, rd, mg)
+	m.registerAlertBug(g, rd, mg)
 }
 
 func table(k string) string { return "devcenter_" + k }
@@ -544,7 +546,7 @@ func (m *Module) del(k string) gin.HandlerFunc {
 			fail(c, err)
 			return
 		}
-		for _, q := range []string{"DELETE FROM devcenter_comments WHERE kind=$1 AND item_id=$2", "DELETE FROM devcenter_activities WHERE kind=$1 AND item_id=$2", "DELETE FROM devcenter_links WHERE kind=$1 AND item_id=$2"} {
+		for _, q := range []string{"DELETE FROM devcenter_comments WHERE kind=$1 AND item_id=$2", "DELETE FROM devcenter_activities WHERE kind=$1 AND item_id=$2", "DELETE FROM devcenter_repo_links WHERE kind=$1 AND item_id=$2", "DELETE FROM devcenter_links WHERE item_type=(CASE $1::text WHEN 'requirements' THEN 'requirement' WHEN 'bugs' THEN 'bug' ELSE $1::text END) AND item_id=$2"} {
 			if _, err := tx.Exec(c, q, k, id); err != nil {
 				fail(c, err)
 				return

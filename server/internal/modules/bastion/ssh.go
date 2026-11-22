@@ -302,6 +302,11 @@ func (m *Module) sshWS(c *gin.Context) {
 	cancelTransport = transportCancel
 	go func(conn net.Conn) {
 		<-transportCtx.Done()
+		if m.sessionReason(ref.ID) == "killed" {
+			// Tell the browser explicitly so it does not auto-reconnect.
+			_ = send(wsMsg{Type: "error", Data: "session killed by administrator"})
+			_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(4001, "killed"), time.Now().Add(time.Second))
+		}
 		_ = conn.Close()
 		_ = ws.Close()
 	}(raw)

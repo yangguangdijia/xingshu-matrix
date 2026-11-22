@@ -41,9 +41,46 @@
     var raw = String(value || "unknown");
     var kind = /^(succeeded|approved)$/.test(raw) ? "ok" :
       /^(failed|rejected)$/.test(raw) ? "bad" :
-      /^(queued|pending|running|cancelling|awaiting_approval)$/.test(raw) ? "busy" : "neutral";
+      /^(queued|running|cancelling|awaiting_approval)$/.test(raw) ? "busy" : "neutral";
     return '<span class="x-cicd-state x-cicd-state--' + kind + '">' + escapeHTML(LABEL[raw] || raw) + "</span>";
   }
+  /* 运行中的耗时：带 data-tick-start，由详情页每秒刷新一次文本。 */
+  function elapsed(start, end) {
+    if (!start) return "—";
+    var text = escapeHTML(duration(start, end));
+    return end ? text : '<span data-tick-start="' + escapeHTML(start) + '">' + text + "</span>";
+  }
+  var ERR_LINE = /\b(error|errors? occurred|fail|failed|failure|fatal|panic|exception|denied|unauthorized|forbidden|timed out|timeout|exit (status|code) [1-9]\d*)\b|错误|失败|异常|超时|拒绝/i;
+  function isErrorLine(text, extra) {
+    text = String(text || "");
+    if (extra && extra.length >= 6 && text.indexOf(extra) >= 0) return true;
+    return ERR_LINE.test(text);
+  }
+  function stageIdx(s, i) { return s.idx == null ? i : s.idx; }
+  /* 运行中（或等待审批/取消中）的阶段与第一个失败阶段，用于日志自动选择。 */
+  function focusStage(run) {
+    var stages = run && Array.isArray(run.stages) ? run.stages : [], running = null, failed = null;
+    stages.forEach(function (s, i) {
+      if (running == null && /^(running|awaiting_approval|cancelling)$/.test(s.status)) running = String(stageIdx(s, i));
+      if (failed == null && s.status === "failed") failed = String(stageIdx(s, i));
+    });
+    return { running: running, failed: failed };
+  }
+  var RUN_FILTERS = [["", "全部状态"], ["active", "进行中"], ["succeeded", "成功"], ["failed", "失败"], ["cancelled", "已取消"]];
+  function filterRuns(runs, filter, failedFirst) {
+    var list = (runs || []).filter(function (r) {
+      if (!filter) return true;
+      if (filter === "active") return !!ACTIVE[r.status];
+      if (filter === "cancelled") return r.status === "cancelled" || r.status === "cancelling";
+      return r.status === filter;
+    });
+    if (!failedFirst) return list;
+    return list.map(function (r, i) { return { r: r, i: i }; }).sort(function (a, b) {
+      return ((a.r.status === "failed" ? 0 : 1) - (b.r.status === "failed" ? 0 : 1)) || a.i - b.i;
+    }).map(function (x) { return x.r; });
+  }
+  /* 轮询间隔：成功回到 3 秒；失败指数退避，最多 30 秒。 */
+  function nextDelay(prev, failed) { return failed ? Math.min(Math.max(prev || 3000, 3000) * 2, 30000) : 3000; }
   function route(hash) {
     var match = /^#\/cicd\/pipeline(?:\/([^/?#]+))?(?:\?.*)?$/.exec(String(hash || ""));
     if (!match) return null;
@@ -81,16 +118,17 @@
           "</dl></details>";
       }).join("") + "</div>" : '<p class="x-cicd-empty">尚未配置阶段。</p>') + "</section>";
   }
-  function runSummary(run) {
+  function runSummary(run, live) {
     var act = ACTIVE[run.status] ? '<button class="x-btn" type="button" data-action="cancel-run" data-id="' + escapeHTML(run.id) + '">取消运行</button>' :
       '<button class="x-btn" type="button" data-action="rerun" data-id="' + escapeHTML(run.id) + '">重新运行</button>';
-    return '<section class="x-cicd-section" aria-label="运行摘要"><div class="x-cicd-section-head"><h2>运行 #' + escapeHTML(run.id) + " " + status(run.status) + '</h2><span class="x-cicd-actions">' + act + '</span></div><dl class="x-cicd-grid x-cicd-grid--summary">' +
+    var liveTag = live && live.text ? '<span class="x-cicd-live' + (live.bad ? " x-cicd-live--bad" : "") + '" role="status" data-live-state>' + escapeHTML(live.text) + "</span>" : "";
+    return '<section class="x-cicd-section" aria-label="运行摘要"><div class="x-cicd-section-head"><h2>运行 #' + escapeHTML(run.id) + " " + status(run.status) + '</h2><span class="x-cicd-actions">' + liveTag + act + '</span></div><dl class="x-cicd-grid x-cicd-grid--summary">' +
       record("运行 ID", '<span class="x-cicd-mono">#' + escapeHTML(run.id) + "</span>") + record("状态", status(run.status)) +
       record("触发方式", triggerText(run.trigger)) + record("触发人", val(run.triggered_by || run.triggered_by_id)) +
       record("分支", val(run.branch), "x-cicd-break") + record("完整 Commit", val(run.commit), "x-cicd-mono x-cicd-break") +
       record("镜像标签", val(run.image_tag), "x-cicd-mono x-cicd-break") + record("创建时间", date(run.created_at)) +
       record("开始时间", date(run.started_at)) + record("结束时间", date(run.finished_at)) +
-      record("运行耗时", run.started_at ? escapeHTML(duration(run.started_at, run.finished_at)) : "—") +
+      record("运行耗时", run.started_at ? (ACTIVE[run.status] ? elapsed(run.started_at, run.finished_at) : escapeHTML(duration(run.started_at, run.finished_at))) : "—") +
       (window.XSCICDCache ? window.XSCICDCache.runFactHTML(run) : "") +
       (run.error ? record("运行错误", val(run.error), "x-cicd-error x-cicd-break") : "") +
       "</dl></section>";
@@ -98,13 +136,13 @@
   function runStages(run, current) {
     var stages = Array.isArray(run.stages) ? run.stages : [];
     return '<section class="x-cicd-section" aria-label="执行阶段"><h2>执行阶段</h2>' + stageGraph(run, current) +
-      (stages.length ? '<details class="x-cicd-stage-more"><summary>阶段明细（Job、审批单、起止时间）</summary><div class="x-cicd-stages">' + stages.map(function (s, i) {
+      (stages.length ? '<details class="x-cicd-stage-more" data-stage-more><summary>阶段明细（Job、审批单、起止时间）</summary><div class="x-cicd-stages">' + stages.map(function (s, i) {
         return '<article class="x-cicd-stage"><header><span class="x-cicd-mono">' + (Number.isInteger(+s.idx) ? +s.idx + 1 : i + 1) +
           "</span><strong>" + escapeHTML(stageName(s, i)) + "</strong>" + status(s.status) + '</header><dl class="x-cicd-grid">' +
           record("类型", val(s.type)) + record("Job", val(s.job_name), "x-cicd-break") +
           record("审批单", s.approval_id ? "#" + escapeHTML(s.approval_id) : "—") +
           record("开始", date(s.started_at)) + record("结束", date(s.finished_at)) +
-          record("耗时", s.started_at ? escapeHTML(duration(s.started_at, s.finished_at)) : "—") +
+          record("耗时", s.started_at ? (s.finished_at ? escapeHTML(duration(s.started_at, s.finished_at)) : elapsed(s.started_at, null)) : "—") +
           (s.error ? record("错误", val(s.error), "x-cicd-error x-cicd-break") : "") +
           "</dl></article>";
       }).join("") + "</div></details>" : "") + "</section>";
@@ -123,7 +161,7 @@
   }
   function kindOf(raw) {
     return /^(succeeded|approved)$/.test(raw) ? "ok" : /^(failed|rejected)$/.test(raw) ? "bad" :
-      /^(queued|pending|running|cancelling|awaiting_approval)$/.test(raw) ? "busy" : "neutral";
+      /^(queued|running|cancelling|awaiting_approval)$/.test(raw) ? "busy" : "neutral";
   }
   function triggerText(t) {
     t = String(t || "");
@@ -149,13 +187,14 @@
   function stageGraph(run, current) {
     var stages = Array.isArray(run.stages) ? run.stages : [];
     if (!stages.length) return '<p class="x-cicd-empty">该运行暂无阶段执行记录。</p>';
-    return '<ol class="x-cicd-graph">' + stages.map(function (s, i) {
-      var idx = s.idx == null ? i : s.idx, k = kindOf(String(s.status || ""));
-      return '<li class="x-cicd-node x-cicd-node--' + k + (String(idx) === String(current) ? " is-active" : "") + (s.status === "running" ? " is-running" : "") +
-        '"><button type="button" data-action="stage-log" data-id="' + escapeHTML(idx) + '" title="查看该阶段日志">' +
-        '<span class="x-cicd-node-type">' + escapeHTML(TYPE_LABEL[s.type] || s.type || "") + '</span>' +
+    return '<ol class="x-cicd-graph" aria-label="阶段执行图">' + stages.map(function (s, i) {
+      var idx = stageIdx(s, i), k = kindOf(String(s.status || "")), on = String(idx) === String(current);
+      var time = s.started_at ? (s.finished_at ? escapeHTML(duration(s.started_at, s.finished_at)) : elapsed(s.started_at, null)) : (ACTIVE[s.status] ? "未开始" : "—");
+      return '<li class="x-cicd-node x-cicd-node--' + k + (on ? " is-active" : "") + (s.status === "running" ? " is-running" : "") +
+        '" data-stage-node="' + escapeHTML(idx) + '"><button type="button" data-action="stage-log" data-id="' + escapeHTML(idx) + '" title="查看该阶段日志"' + (on ? ' aria-pressed="true"' : ' aria-pressed="false"') + '>' +
+        '<span class="x-cicd-node-type">' + (s.status === "running" ? '<i class="x-cicd-pulse" aria-hidden="true"></i>' : "") + escapeHTML(TYPE_LABEL[s.type] || s.type || "") + '</span>' +
         '<strong>' + escapeHTML(stageName(s, i)) + "</strong>" +
-        '<span class="x-cicd-node-meta">' + status(s.status) + '<em>' + (s.started_at ? escapeHTML(duration(s.started_at, s.finished_at)) : "—") + "</em></span>" +
+        '<span class="x-cicd-node-meta">' + status(s.status) + '<em>' + time + "</em></span>" +
         (s.error ? '<span class="x-cicd-node-err" title="' + escapeHTML(s.error) + '">' + escapeHTML(s.error) + "</span>" : "") +
         "</button></li>";
     }).join("") + "</ol>";
@@ -165,8 +204,132 @@
     return "[" + (line.ts ? date(line.ts) : "—") + "] [" + label + "] " + String(line.line || "").replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "");
   }
 
+  /* ------------------------------------------------------------ 演示模式数据（XS.mode === "demo"） */
+  /* 运行状态按「开始时间 + 各阶段时长」随时间推算，演示中的运行会真实推进、产生日志并最终结束。 */
+  var DEMO_LOGS = {
+    test: ["$ go mod download", "go: downloading github.com/gin-gonic/gin v1.10.0", "$ go test ./...", "ok  \tshop/internal/cart\t0.412s", "ok  \tshop/internal/order\t0.957s", "PASS"],
+    testFail: ["$ go mod download", "$ go test ./...", "ok  \tshop/internal/cart\t0.412s", "--- FAIL: TestCheckout (0.02s)", "    checkout_test.go:42: expected status 200, got 500", "FAIL\tshop/internal/checkout\t0.311s", "Error: exit status 1"],
+    build: ["读取构建上下文（Dockerfile）", "[1/4] FROM golang:1.23 AS build", "[2/4] RUN go build -o /app ./cmd/server", "[3/4] FROM alpine:3.20", "[4/4] COPY --from=build /app /app", "推送镜像 ccr.xingshu.dev/demo/{app}:{tag}", "推送完成"],
+    buildFail: ["读取构建上下文（Dockerfile）", "[1/4] FROM golang:1.23 AS build", "[2/4] RUN go build -o /app ./cmd/server", "[4/4] COPY --from=build /app /app", "推送镜像 ccr.xingshu.dev/demo/{app}:{tag}", "error: failed to push: unauthorized: authentication required"],
+    script: ["扫描镜像 ccr.xingshu.dev/demo/{app}:{tag}", "已更新漏洞库", "发现 0 个严重、2 个中危漏洞", "扫描通过（阈值：严重 0）"],
+    deploy: ["更新 Deployment {app}（环境 test）", "等待滚动更新：1/3 就绪", "等待滚动更新：2/3 就绪", "等待滚动更新：3/3 就绪", "部署完成"]
+  };
+  function demoAPI(base) {
+    var t0 = Date.now(), MIN = 60000, HOUR = 3600000;
+    var apps = [
+      { id: 1, name: "shop-web", repo_url: "https://git.example.com/shop/shop-web.git", branch: "main", envs: [{ name: "test" }, { name: "prod" }] },
+      { id: 2, name: "order-api", repo_url: "https://git.example.com/shop/order-api.git", branch: "main", envs: [{ name: "test" }] }
+    ];
+    var targets = [{ id: 1, name: "cicd-runner-sh", namespace: "matrix-cicd", env: "test", created_at: new Date(t0 - 30 * 24 * HOUR).toISOString() }];
+    var STAGES = [{ name: "unit-test", type: "test", image: "golang:1.23", commands: ["go test ./..."] }, { name: "image", type: "build" },
+      { name: "scan", type: "script", image: "aquasec/trivy:0.56", commands: ["trivy image $IMAGE"] }, { name: "deploy-test", type: "deploy", deploy_env: "test" }];
+    var pipelines = [
+      { id: 1, app_id: 1, runner_target_id: 1, name: "shop-web-ci", on_push: true, stages: STAGES, updated_at: new Date(t0 - 2 * 24 * HOUR).toISOString() },
+      { id: 2, app_id: 2, runner_target_id: 1, name: "order-api-ci", on_push: false, stages: STAGES.slice(0, 2).concat([{ name: "deploy-test", type: "deploy", deploy_env: "test" }]), updated_at: new Date(t0 - 5 * 24 * HOUR).toISOString() }
+    ];
+    var seq = 200, defs = [
+      { id: 128, pipeline_id: 1, start: t0 - 50000, durs: [30, 60, 25, 20], branch: "main", trigger: "webhook:push", by: "zhangwei" },
+      { id: 127, pipeline_id: 1, start: t0 - HOUR, durs: [42, 0, 0, 0], fail: 0, branch: "feature/checkout", trigger: "webhook:push", by: "lina" },
+      { id: 126, pipeline_id: 1, start: t0 - 3 * HOUR, durs: [38, 95, 31, 44], branch: "main", trigger: "manual", by: "zhangwei" },
+      { id: 125, pipeline_id: 1, start: t0 - 5 * HOUR, durs: [36, 120, 0, 0], cancelAt: t0 - 5 * HOUR + 80000, branch: "main", trigger: "manual", by: "wangfang" },
+      { id: 124, pipeline_id: 1, start: t0 - 26 * HOUR, durs: [35, 88, 29, 40], branch: "main", trigger: "retry:123", by: "lina" },
+      { id: 57, pipeline_id: 2, start: t0 - 2 * HOUR, durs: [51, 102, 37], branch: "main", trigger: "manual", by: "liuyang" },
+      { id: 56, pipeline_id: 2, start: t0 - 7 * HOUR, durs: [49, 66, 0], fail: 1, branch: "main", trigger: "manual", by: "liuyang" }
+    ];
+    function iso(ms) { return new Date(ms).toISOString(); }
+    function pipelineOf(id) { return pipelines.filter(function (p) { return String(p.id) === String(id); })[0]; }
+    function compute(def, withStages) {
+      var now = Date.now(), pl = pipelineOf(def.pipeline_id), stages = [], at = def.start, ended = false, status = "running", finished = null;
+      pl.stages.forEach(function (cfg, i) {
+        var st = { idx: i, name: cfg.name, type: cfg.type, status: "pending", job_name: "", approval_id: null, error: "", started_at: null, finished_at: null };
+        if (!ended) {
+          var end = at + (def.durs[i] || 0) * 1000;
+          if (def.cancelAt && def.cancelAt < end && def.cancelAt <= now) {
+            st.status = "cancelled"; if (def.cancelAt >= at) { st.started_at = iso(at); st.finished_at = iso(def.cancelAt); }
+            ended = true; status = "cancelled"; finished = def.cancelAt;
+          } else if (now < at) { st.status = "pending"; ended = true; if (i === 0) status = "queued"; }
+          else if (now < end) { st.status = "running"; st.started_at = iso(at); st.job_name = "run-" + def.id + "-" + cfg.name; ended = true; }
+          else {
+            st.started_at = iso(at); st.finished_at = iso(end); st.job_name = "run-" + def.id + "-" + cfg.name;
+            if (def.fail === i) {
+              st.status = "failed"; ended = true; status = "failed"; finished = end;
+              st.error = cfg.type === "test" ? "单元测试失败：TestCheckout（exit status 1）" : "镜像推送失败：镜像仓库认证失败（unauthorized）";
+            } else st.status = "succeeded";
+            at = end;
+          }
+        } else if (status === "failed" || status === "cancelled") st.status = "skipped";
+        stages.push(st);
+      });
+      if (!ended) { status = "succeeded"; finished = at; }
+      var app = apps.filter(function (a) { return a.id === pl.app_id; })[0] || {};
+      var run = { id: def.id, pipeline_id: def.pipeline_id, app_id: pl.app_id, status: status, trigger: def.trigger, triggered_by: def.by, triggered_by_id: 0,
+        branch: def.branch, commit: ("9f2c41e7a" + def.id + "0000000000000000000000000000000").slice(0, 40), image_tag: def.branch.replace(/[^a-z0-9]+/gi, "-") + "-" + def.id,
+        error: status === "failed" ? "阶段失败" : "", created_at: iso(def.start - 2000), started_at: iso(def.start), finished_at: finished ? iso(finished) : null, cache: null, appName: app.name };
+      if (withStages) run.stages = stages;
+      run._stages = stages;
+      return run;
+    }
+    function logs(def, after) {
+      var run = compute(def, true), now = Date.now(), out = [];
+      run._stages.forEach(function (st, i) {
+        if (!st.started_at) return;
+        var key = st.status === "failed" ? st.type + "Fail" : st.type, lines = DEMO_LOGS[key] || DEMO_LOGS[st.type] || [];
+        var a = new Date(st.started_at).getTime(), b = st.finished_at ? new Date(st.finished_at).getTime() : a + (def.durs[i] || 1) * 1000;
+        lines.forEach(function (text, j) {
+          var ts = a + (b - a) * (j + 1) / (lines.length + 1);
+          if (st.status === "cancelled" && j > 2) return;
+          if (ts > now) return;
+          var id = def.id * 10000 + i * 100 + j + 1;
+          if (id > after) out.push({ id: id, stage: i, line: text.replace("{app}", run.appName || "app").replace("{tag}", run.image_tag), ts: iso(ts) });
+        });
+      });
+      return out;
+    }
+    function clean(run) { delete run._stages; delete run.appName; return run; }
+    function stats(pl) {
+      var runs = defs.filter(function (d) { return d.pipeline_id === pl.id; }).map(function (d) { return compute(d, false); });
+      var fin = runs.filter(function (r) { return !ACTIVE[r.status]; }), ok = fin.filter(function (r) { return r.status === "succeeded"; });
+      var durs = ok.map(function (r) { return (new Date(r.finished_at) - new Date(r.started_at)) / 1000; });
+      return { last_run: runs[0] ? clean(runs[0]) : null, recent: runs.map(function (r) { return r.status; }), finished: fin.length, succeeded: ok.length,
+        success_rate: fin.length ? ok.length / fin.length : null, avg_duration_sec: durs.length ? durs.reduce(function (s, v) { return s + v; }, 0) / durs.length : null };
+    }
+    function defOf(id) { return defs.filter(function (d) { return String(d.id) === String(id); })[0]; }
+    function ok(v) { return Promise.resolve(JSON.parse(JSON.stringify(v))); }
+    function no() { return Promise.reject(new Error("演示模式下不支持该操作，接入平台后可用")); }
+    function newRun(pid, branch, trigger) {
+      var pl = pipelineOf(pid); if (!pl) return null;
+      var d = { id: ++seq, pipeline_id: pl.id, start: Date.now() + 1500, durs: pl.stages.map(function (s) { return s.type === "build" ? 40 : 20; }), branch: branch || "main", trigger: trigger, by: "演示用户" };
+      defs.unshift(d); return d;
+    }
+    return {
+      mode: "demo", isCancelled: base && base.isCancelled ? base.isCancelled : function () { return false; }, toast: base && base.toast,
+      get: function (path, query) {
+        var m;
+        query = query || {};
+        if (path === "/cicd/pipelines") return ok(pipelines.map(function (p) { return Object.assign({}, p, { stats: stats(p) }); }));
+        if ((m = /^\/cicd\/applications\/(\d+)$/.exec(path))) return ok(apps.filter(function (a) { return String(a.id) === m[1]; })[0] || {});
+        if (path === "/cicd/applications") return ok(apps);
+        if (path === "/cicd/targets") return ok(targets);
+        if (/^\/cicd\/(credentials|jenkins|argocd)$/.test(path)) return ok([]);
+        if (path === "/cicd/runs") return ok({ items: defs.filter(function (d) { return !query.pipeline_id || String(d.pipeline_id) === String(query.pipeline_id); }).map(function (d) { return clean(compute(d, false)); }) });
+        if ((m = /^\/cicd\/runs\/(\d+)$/.exec(path)) && defOf(m[1])) return ok(clean(compute(defOf(m[1]), true)));
+        if ((m = /^\/cicd\/runs\/(\d+)\/logs$/.exec(path)) && defOf(m[1])) return ok(logs(defOf(m[1]), Number(query.after) || 0));
+        return Promise.reject(new Error("演示数据中没有该内容"));
+      },
+      post: function (path, body) {
+        var m, d;
+        if ((m = /^\/cicd\/pipelines\/(\d+)\/run$/.exec(path)) && (d = newRun(m[1], body && body.branch, "manual"))) return ok({ id: d.id, status: "queued" });
+        if ((m = /^\/cicd\/runs\/(\d+)\/retry$/.exec(path)) && defOf(m[1])) { d = newRun(defOf(m[1]).pipeline_id, defOf(m[1]).branch, "retry:" + m[1]); return ok({ id: d.id, status: "queued" }); }
+        if ((m = /^\/cicd\/runs\/(\d+)\/cancel$/.exec(path)) && (d = defOf(m[1]))) { d.cancelAt = Date.now(); return ok({ id: d.id, status: "cancelled" }); }
+        return no();
+      },
+      put: no, del: no
+    };
+  }
+
   function createView(el) {
-    var xs = window.XS;
+    var xs = window.XS, demo = !!(xs && xs.mode === "demo");
+    if (demo) xs = demoAPI(xs);
     if (!xs || typeof xs.get !== "function") {
       el.innerHTML = '<section class="x-cicd-page"><p class="x-cicd-alert" role="alert">平台 API 不可用，请重新连接后刷新。</p></section>';
       return null;
@@ -174,18 +337,20 @@
     var state = {
       el: el, xs: xs, alive: true, seq: 0, runSeq: 0, logSeq: 0, controller: new AbortController(),
       pipelines: [], apps: [], targets: [], jenkins: [], argos: [], creds: [], selected: null, runs: [], run: null, runError: "", relatedErrors: {},
-      log: { rows: [], after: 0, more: false, busy: false, error: "", stage: "", search: "", follow: true },
-      timer: null, modal: null, targetId: ""
+      log: { rows: [], after: 0, more: false, busy: false, error: "", stage: "", search: "", follow: true, pinned: false, jumped: false },
+      timer: null, modal: null, targetId: "", demo: demo,
+      runFilter: { status: "", failedFirst: false },
+      poll: { timer: null, delay: 3000, n: 0, error: "", paused: false }, ticker: null
     };
     function active(token) { return state.alive && state.el.isConnected !== false && (token == null || token === state.seq); }
     function get(path, query, signal) { return xs.get(path, query, { signal: signal || state.controller.signal }); }
     function requestError(err) { return !xs.isCancelled || !xs.isCancelled(err); }
-    function disposeLog() { state.logSeq++; if (state.timer) clearTimeout(state.timer); state.timer = null; }
+    function disposeLog() { state.logSeq++; if (state.timer) clearTimeout(state.timer); state.timer = null; stopPoll(); stopTicker(); }
     function reset() {
       disposeLog(); state.seq++; state.runSeq++;
       state.controller.abort(); state.controller = new AbortController();
       state.run = null; state.runError = ""; state.runs = [];
-      state.log = { rows: [], after: 0, more: false, busy: false, error: "", stage: "", search: "", follow: true };
+      state.log = { rows: [], after: 0, more: false, busy: false, error: "", stage: "", search: "", follow: true, pinned: false, jumped: false };
     }
     function header(title, subtitle) {
       return '<header class="x-cicd-head"><div><h1>' + escapeHTML(title) + '</h1><p>' + subtitle +
@@ -272,39 +437,97 @@
         window.XSLiveOpsCICD.bindArgoConnections(argoHost, state.argos, load);
       }
     }
+    function historyRows() {
+      var list = filterRuns(state.runs, state.runFilter.status, state.runFilter.failedFirst);
+      if (!state.runs.length) return '<p class="x-cicd-empty">还没有运行记录。运行流水线后可查看阶段和日志。</p>';
+      if (!list.length) return window.XSEmpty && typeof window.XSEmpty.html === "function"
+        ? window.XSEmpty.html({ kind: "search", size: "s", title: "没有符合筛选条件的运行", attrs: { "data-run-empty": "1" } })
+        : '<p class="x-cicd-empty" data-run-empty="1">没有符合筛选条件的运行。</p>';
+      return '<div class="x-cicd-hhead" aria-hidden="true"><span>运行</span><span>状态</span><span>耗时</span></div><ol>' + list.map(function (r) {
+        var at = r.started_at || r.created_at;
+        return '<li><button type="button" data-action="select-run" data-id="' + escapeHTML(r.id) + '"' +
+          (state.run && String(state.run.id) === String(r.id) ? ' aria-current="true"' : "") +
+          '><span class="x-cicd-hrow"><strong>#' + escapeHTML(r.id) + '</strong><span class="x-cicd-hmid">' + status(r.status) + '</span><span class="x-cicd-hdur">' +
+          (r.started_at ? (ACTIVE[r.status] && !r.finished_at ? elapsed(r.started_at, null) : escapeHTML(duration(r.started_at, r.finished_at))) : "—") +
+          '</span></span><span class="x-cicd-hsub"><span class="x-cicd-hwhen" title="' + date(at) + '">' + escapeHTML(ago(at)) + '</span> · ' + val(r.branch) + ' · ' + triggerText(r.trigger) + '</span></button></li>';
+      }).join("") + '</ol>';
+    }
     function history() {
-      return '<aside class="x-cicd-history"><div class="x-cicd-section-head"><h2>运行历史</h2><span>' + state.runs.length + ' 条已加载</span></div>' +
-        (state.runs.length ? '<ol>' + state.runs.map(function (r) {
-          return '<li><button type="button" data-action="select-run" data-id="' + escapeHTML(r.id) + '"' +
-            (state.run && String(state.run.id) === String(r.id) ? ' aria-current="true"' : "") +
-            '><span class="x-cicd-history-top"><strong>#' + escapeHTML(r.id) + '</strong>' + status(r.status) +
-            '</span><span>' + date(r.started_at || r.created_at) + '</span><span>' + val(r.branch) +
-            ' · ' + (r.started_at ? escapeHTML(duration(r.started_at, r.finished_at)) : "—") + ' · ' + triggerText(r.trigger) + '</span></button></li>';
-        }).join("") + '</ol>' : '<p class="x-cicd-empty">还没有运行记录。运行流水线后可查看阶段和日志。</p>') +
+      var shown = filterRuns(state.runs, state.runFilter.status, false).length;
+      return '<aside class="x-cicd-history"><div class="x-cicd-section-head"><h2>运行历史</h2><span data-run-count>' +
+        (state.runFilter.status ? shown + " / " : "") + state.runs.length + ' 条</span></div>' +
+        (state.runs.length ? '<div class="x-cicd-hfilter"><select class="x-select" data-run-filter aria-label="按状态筛选">' + RUN_FILTERS.map(function (f) {
+          return '<option value="' + f[0] + '"' + (state.runFilter.status === f[0] ? " selected" : "") + '>' + f[1] + "</option>";
+        }).join("") + '</select><label class="x-cicd-check"><input type="checkbox" data-run-failed-first' + (state.runFilter.failedFirst ? " checked" : "") + ' /> 失败优先</label></div>' : "") +
+        '<div data-run-history>' + historyRows() + '</div>' +
         '<p class="x-cicd-muted">仅显示最近 50 次运行。</p></aside>';
     }
-    function logPanel() {
-      var lines = state.log.rows.filter(function (line) {
+    function failedInfo() {
+      var run = state.run, f = focusStage(run).failed;
+      if (!run || run.status !== "failed") return null;
+      var stage = f == null ? null : (run.stages || []).filter(function (x, i) { return String(stageIdx(x, i)) === f; })[0];
+      return { idx: f, stage: stage, error: stage && stage.error || run.error || "" };
+    }
+    function logLines() {
+      return state.log.rows.filter(function (line) {
         return (!state.log.stage || String(line.stage) === state.log.stage) &&
           (!state.log.search || formatLog(line, []).toLowerCase().includes(state.log.search.toLowerCase()));
       });
-      var names = (state.run && state.run.stages || []).map(function (s) { return s.name; });
+    }
+    function logBodyHTML() {
+      var lines = logLines(), names = (state.run && state.run.stages || []).map(function (s) { return s.name; });
+      var fi = failedInfo(), extra = fi && fi.error ? String(fi.error) : "";
+      if (!lines.length) return state.log.busy ? "正在读取日志…" : "当前筛选没有日志";
+      return lines.map(function (line) {
+        var text = formatLog(line, names), bad = isErrorLine(line.line, extra) && (!fi || fi.idx == null || String(line.stage) === fi.idx);
+        return bad ? '<span class="x-cicd-log-line--err" data-log-err>' + escapeHTML(text) + "</span>" : escapeHTML(text);
+      }).join("\n");
+    }
+    function failBanner() {
+      var fi = failedInfo();
+      if (!fi) return "";
+      var names = fi.stage ? "阶段「" + escapeHTML(fi.stage.name || "阶段 " + (+fi.idx + 1)) + "」失败" : "运行失败";
+      return '<p class="x-cicd-log-fail" role="alert"><strong>' + names + "</strong>" + (fi.error ? "：" + escapeHTML(fi.error) : "") +
+        (fi.idx != null && state.log.stage !== fi.idx ? ' <button class="x-btn x-btn--sm" type="button" data-action="stage-log" data-id="' + escapeHTML(fi.idx) + '">查看该阶段日志</button>' : "") + "</p>";
+    }
+    function logCount() { return state.log.rows.length + " 条已加载" + (state.log.more ? "，还有后续日志" : ""); }
+    function logPanel() {
       return '<section class="x-cicd-section x-cicd-log"><div class="x-cicd-section-head"><h2>运行日志</h2><span data-log-count>' +
-        state.log.rows.length + ' 条已加载' + (state.log.more ? "，还有后续日志" : "") + '</span></div>' +
+        logCount() + '</span></div>' +
         '<div class="x-cicd-log-tools"><label>阶段<select class="x-select" data-log-stage><option value="">全部阶段</option>' +
         (state.run.stages || []).map(function (s, index) {
-          var idx = s.idx == null ? index : s.idx;
+          var idx = stageIdx(s, index);
           return '<option value="' + idx + '"' + (String(idx) === state.log.stage ? " selected" : "") + '>' + escapeHTML(s.name || "阶段 " + (index + 1)) + '</option>';
         }).join("") + '</select></label><label>搜索<input class="x-input" type="search" data-log-search value="' + escapeHTML(state.log.search) + '" placeholder="搜索已加载日志" /></label>' +
-        '<label class="x-cicd-follow"><input type="checkbox" data-log-follow' + (state.log.follow ? " checked" : "") + ' /> 自动跟随</label>' +
+        '<label class="x-cicd-follow" title="开启后日志自动切到正在运行的阶段并滚动到最新一行"><input type="checkbox" data-log-follow' + (state.log.follow ? " checked" : "") + ' /> 跟随</label>' +
         '<button class="x-btn" type="button" data-action="download-log">下载完整日志</button></div>' +
-        (state.log.error ? '<p class="x-cicd-alert" role="alert">日志加载失败：' + escapeHTML(state.log.error) +
+        '<div data-log-fail>' + failBanner() + '</div>' +
+        (state.log.error ? '<p class="x-cicd-alert" role="alert" data-log-alert>日志加载失败：' + escapeHTML(state.log.error) +
           ' <button class="x-btn" type="button" data-action="retry-log">重试</button></p>' : "") +
-        '<pre class="x-cicd-log-body" tabindex="0" aria-label="运行日志" data-log-body>' +
-        (lines.length ? lines.map(function (line) { return escapeHTML(formatLog(line, names)); }).join("\n") :
-          state.log.busy ? "正在读取日志…" : "当前筛选没有日志") + '</pre>' +
+        '<pre class="x-cicd-log-body" tabindex="0" aria-label="运行日志" data-log-body>' + logBodyHTML() + '</pre>' +
         (state.log.more ? '<button class="x-btn" type="button" data-action="more-log"' + (state.log.busy ? " disabled" : "") + '>加载后续日志</button>' : "") +
         '</section>';
+    }
+    function liveInfo() {
+      if (!state.run || !ACTIVE[state.run.status]) return null;
+      if (state.poll.paused) return { text: "页面不可见，已暂停刷新" };
+      if (state.poll.error) return { text: "刷新失败，" + Math.round(state.poll.delay / 1000) + " 秒后重试", bad: true };
+      return { text: "自动刷新中" };
+    }
+    function runLiveHTML() { return runSummary(state.run, liveInfo()) + runStages(state.run, state.log.stage); }
+    function scrollLog() {
+      var box = el.querySelector && el.querySelector("[data-log-body]");
+      if (!box) return;
+      if (!state.log.jumped && failedInfo() && box.querySelectorAll) {
+        var errs = box.querySelectorAll("[data-log-err]");
+        if (errs.length) {
+          state.log.jumped = true;
+          var last = errs[errs.length - 1];
+          box.scrollTop = Math.max(0, (last.offsetTop || 0) - box.offsetTop - (box.clientHeight || 0) / 2);
+          return;
+        }
+      }
+      if (state.log.follow) { state.log.autoScroll = true; box.scrollTop = box.scrollHeight; }
     }
     function paintDetail() {
       var pl = state.selected, app = itemById(state.apps, pl.app_id), target = itemById(state.targets, pl.runner_target_id);
@@ -315,19 +538,111 @@
         record("默认分支", val(app && app.branch)) + record("执行集群", target ? val(target.name) : "#" + escapeHTML(pl.runner_target_id)) +
         record("命名空间", val(target && target.namespace)) + record("触发方式", pl.on_push ? "代码推送" : "手动") +
         record("更新时间", date(pl.updated_at)) + '</dl></section>';
-      var runContent = state.run ? runSummary(state.run) + runStages(state.run, state.log.stage) + logPanel() :
+      var runContent = state.run ? '<div data-run-live>' + runLiveHTML() + '</div>' + logPanel() :
         state.runError ? '<p class="x-cicd-alert" role="alert">运行详情加载失败：' + escapeHTML(state.runError) +
           ' <button class="x-btn" type="button" data-action="retry-run">重试</button></p>' :
           state.runs.length ? '<p class="x-cicd-empty">正在加载运行详情…</p>' : '<p class="x-cicd-empty">暂无运行记录。</p>';
       el.innerHTML = '<main class="x-cicd-page">' + header(pl.name || "流水线 #" + pl.id, subtitle) +
         (state.relatedErrors.apps ? '<p class="x-cicd-alert" role="status">应用信息暂不可用：' + escapeHTML(state.relatedErrors.apps) + '</p>' : "") +
         (state.relatedErrors.targets ? '<p class="x-cicd-alert" role="status">执行集群信息暂不可用：' + escapeHTML(state.relatedErrors.targets) + '</p>' : "") +
+        (state.demo ? '<p class="x-cicd-note" role="status">演示模式：以下为演示数据，运行状态会模拟推进。</p>' : "") +
         info + '<div class="x-cicd-detail-grid">' + history() + '<div class="x-cicd-detail-main">' + runContent +
-        (window.XSCICDCache ? window.XSCICDCache.sectionHTML(pl) : "") + currentConfig(pl) + '</div></div>' + modalHTML() + '</main>';
-      if (state.log.follow) { var box = el.querySelector("[data-log-body]"); if (box) box.scrollTop = box.scrollHeight; }
-      if (window.XSCICDCache) window.XSCICDCache.bind(el, pl, function () { if (active() && state.selected && String(state.selected.id) === String(pl.id)) paint(); });
+        (window.XSCICDCache && !state.demo ? window.XSCICDCache.sectionHTML(pl) : "") + currentConfig(pl) + '</div></div>' + modalHTML() + '</main>';
+      scrollLog(); syncTicker();
+      if (window.XSCICDCache && !state.demo) window.XSCICDCache.bind(el, pl, function () { if (active() && state.selected && String(state.selected.id) === String(pl.id)) paint(); });
     }
     function paint() { if (!active()) return; state.selected ? paintDetail() : paintList(); }
+    /* 局部刷新运行区、日志正文与运行历史，保留搜索框焦点、展开状态和日志滚动位置；结构变化时整页重绘。 */
+    function paintLive() {
+      if (!active()) return;
+      if (!state.selected || !state.run || state.modal || !el.querySelector) { paint(); return; }
+      var live = el.querySelector("[data-run-live]"), body = el.querySelector("[data-log-body]"), hist = el.querySelector("[data-run-history]");
+      var sel = el.querySelector("[data-log-stage]");
+      if (!live || !body || !hist || !sel || (!!state.log.error) !== !!el.querySelector("[data-log-alert]") ||
+        (!!state.log.more) !== !!el.querySelector('[data-action="more-log"]')) { paint(); return; }
+      var more = live.querySelector("[data-stage-more]"), open = !!(more && more.open), top = body.scrollTop;
+      live.innerHTML = runLiveHTML();
+      if (open) { var d = live.querySelector("[data-stage-more]"); if (d) d.open = true; }
+      body.innerHTML = logBodyHTML(); body.scrollTop = top;
+      if (sel.value !== state.log.stage) sel.value = state.log.stage;
+      var fail = el.querySelector("[data-log-fail]"); if (fail) fail.innerHTML = failBanner();
+      var cnt = el.querySelector("[data-log-count]"); if (cnt) cnt.textContent = logCount();
+      hist.innerHTML = historyRows();
+      var rc = el.querySelector("[data-run-count]");
+      if (rc) rc.textContent = (state.runFilter.status ? filterRuns(state.runs, state.runFilter.status, false).length + " / " : "") + state.runs.length + " 条";
+      scrollLog(); syncTicker();
+    }
+    function stopTicker() { if (state.ticker) clearTimeout(state.ticker); state.ticker = null; }
+    /* 每秒更新运行中阶段/运行的耗时文本；页面上没有计时元素时停止。 */
+    function syncTicker() {
+      if (state.ticker || !active() || !el.querySelector || !el.querySelector("[data-tick-start]")) return;
+      state.ticker = setTimeout(function step() {
+        state.ticker = null;
+        if (!active() || !el.querySelectorAll) return;
+        var nodes = el.querySelectorAll("[data-tick-start]");
+        if (!nodes.length) return;
+        var now = Date.now();
+        Array.prototype.forEach.call(nodes, function (n) { n.textContent = duration(n.getAttribute("data-tick-start"), null, now); });
+        state.ticker = setTimeout(step, 1000);
+      }, 1000);
+    }
+    function hidden() { return typeof document !== "undefined" && document && document.hidden === true; }
+    function stopPoll() { if (state.poll.timer) clearTimeout(state.poll.timer); state.poll.timer = null; }
+    function needPoll() {
+      return !!state.selected && ((state.run && ACTIVE[state.run.status]) || state.runs.some(function (r) { return ACTIVE[r.status]; }));
+    }
+    function schedulePoll(delay) {
+      stopPoll();
+      if (!active() || !needPoll()) return;
+      state.poll.timer = setTimeout(pollOnce, delay == null ? state.poll.delay : delay);
+    }
+    function mergeRun(fresh) {
+      if (!fresh || !state.run || String(fresh.id) !== String(state.run.id)) return false;
+      var was = !!ACTIVE[state.run.status];
+      state.run = fresh;
+      state.runs = state.runs.map(function (r) {
+        return String(r.id) === String(fresh.id) ? Object.assign({}, r, { status: fresh.status, started_at: fresh.started_at, finished_at: fresh.finished_at, error: fresh.error }) : r;
+      });
+      autoStage();
+      return was && !ACTIVE[fresh.status];
+    }
+    function pollOnce() {
+      state.poll.timer = null;
+      if (!active() || !needPoll()) return;
+      if (hidden()) { state.poll.paused = true; paintLive(); return; }
+      state.poll.paused = false; state.poll.n++;
+      var runSeq = state.runSeq, seq = state.seq, runActive = !!(state.run && ACTIVE[state.run.status]), ended = false;
+      var jobs = [];
+      if (runActive) jobs.push(get("/cicd/runs/" + encodeURIComponent(state.run.id)).then(function (fresh) {
+        if (active() && runSeq === state.runSeq) ended = mergeRun(fresh);
+      }));
+      if (!runActive || state.poll.n % 3 === 0) jobs.push(get("/cicd/runs", { pipeline_id: state.selected.id, page: 1, page_size: 50 }).then(function (data) {
+        if (!active(seq)) return;
+        state.runs = array(data, ["items", "runs"]).map(function (r) {
+          return state.run && String(r.id) === String(state.run.id) ? Object.assign({}, r, { status: state.run.status, finished_at: state.run.finished_at }) : r;
+        });
+      }));
+      Promise.all(jobs).then(function () {
+        if (!active(seq) || runSeq !== state.runSeq) return;
+        state.poll.error = ""; state.poll.delay = nextDelay(state.poll.delay, false);
+        if (runActive || ended) loadLogs(); else paintLive();
+        schedulePoll(state.run && ACTIVE[state.run.status] ? state.poll.delay : 10000);
+      }, function (err) {
+        if (!active(seq) || runSeq !== state.runSeq || !requestError(err)) return;
+        state.poll.error = message(err); state.poll.delay = nextDelay(state.poll.delay, true);
+        paintLive(); schedulePoll(state.poll.delay);
+      });
+    }
+    function autoStage() {
+      if (!state.run || state.log.pinned) return;
+      var f = focusStage(state.run);
+      if (state.run.status === "failed" && f.failed != null) state.log.stage = f.failed;
+      else if (state.log.follow && f.running != null) state.log.stage = f.running;
+    }
+    function visibility() {
+      if (!active()) return;
+      if (!hidden() && state.poll.paused) { state.poll.paused = false; schedulePoll(0); }
+    }
     function fail(text, retry) {
       if (!active()) return;
       el.innerHTML = '<main class="x-cicd-page">' + header("流水线", "") + '<p class="x-cicd-alert" role="alert">' + escapeHTML(text) +
@@ -393,11 +708,11 @@
       disposeLog(); state.runSeq++;
       var token = state.runSeq;
       state.run = null; state.runError = "";
-      state.log = { rows: [], after: 0, more: false, busy: false, error: "", stage: "", search: "", follow: true };
+      state.log = { rows: [], after: 0, more: false, busy: false, error: "", stage: "", search: "", follow: true, pinned: false, jumped: false };
       paint();
       get("/cicd/runs/" + encodeURIComponent(id)).then(function (run) {
         if (!active() || token !== state.runSeq) return;
-        state.run = run; paint(); loadLogs();
+        state.run = run; state.poll.delay = 3000; state.poll.error = ""; autoStage(); paint(); loadLogs(); schedulePoll(3000);
       }).catch(function (err) { if (active() && token === state.runSeq && requestError(err)) { state.runError = message(err); paint(); } });
     }
     function appendLogs(data) {
@@ -409,21 +724,14 @@
       });
       state.log.more = rows.length === 5000;
     }
-    function scheduleLogs(token) {
-      if (state.timer) clearTimeout(state.timer);
-      if (state.log.more || !state.run || !ACTIVE[state.run.status] || !active()) return;
-      state.timer = setTimeout(function () {
-        if (token === state.logSeq) loadLogs();
-      }, 2000);
-    }
     function loadLogs() {
       if (!state.run || state.log.busy) return;
       if (state.timer) clearTimeout(state.timer);
       var runID = state.run.id, token = state.logSeq;
-      state.log.busy = true; state.log.error = ""; paint();
+      state.log.busy = true; state.log.error = "";
       get("/cicd/runs/" + encodeURIComponent(runID) + "/logs", { after: state.log.after }).then(function (data) {
         if (!active() || token !== state.logSeq || !state.run || String(state.run.id) !== String(runID)) return;
-        appendLogs(data); state.log.busy = false; paint(); scheduleLogs(token);
+        appendLogs(data); state.log.busy = false; paintLive();
       }).catch(function (err) {
         if (!active() || token !== state.logSeq || !requestError(err)) return;
         state.log.busy = false; state.log.error = message(err); paint();
@@ -759,7 +1067,7 @@
       if (action === "retry-run" && state.runs.length) selectRun(state.runs[0].id);
       if (action === "more-log" || action === "retry-log") loadLogs();
       if (action === "download-log") downloadLogs();
-      if (action === "stage-log") { state.log.stage = state.log.stage === id ? "" : id; paint(); }
+      if (action === "stage-log") { state.log.stage = state.log.stage === id ? "" : id; state.log.pinned = true; state.log.jumped = false; paint(); }
       if (action === "cancel-run" || action === "rerun") {
         if (action === "cancel-run" && typeof root.confirm === "function" && !root.confirm("确定取消运行 #" + id + "？")) return;
         button.disabled = true;
@@ -793,8 +1101,14 @@
     }
     function change(event) {
       var node = event.target;
-      if (node.matches("[data-log-stage]")) { state.log.stage = node.value; paint(); }
-      if (node.matches("[data-log-follow]")) { state.log.follow = node.checked; paint(); }
+      if (node.matches("[data-log-stage]")) { state.log.stage = node.value; state.log.pinned = true; state.log.jumped = false; paint(); }
+      if (node.matches("[data-log-follow]")) {
+        state.log.follow = node.checked;
+        if (node.checked) { state.log.pinned = false; state.log.jumped = true; autoStage(); }
+        paint();
+      }
+      if (node.matches("[data-run-filter]")) { state.runFilter.status = node.value; paint(); }
+      if (node.matches("[data-run-failed-first]")) { state.runFilter.failedFirst = node.checked; paint(); }
       if (node.matches("[data-editor-stage] [name=type]")) {
         var stage = node.closest("[data-editor-stage]");
         var tools = stage && stage.querySelector("[data-jenkins-tools]");
@@ -819,16 +1133,30 @@
       if (!state.alive) return;
       if (route(location.hash)) load(); else dispose();
     }
+    /* 用户向上翻看日志时自动关闭「跟随」，回到底部不自动开启。 */
+    function scroll(event) {
+      var box = event.target;
+      if (!box || !box.matches || !box.matches("[data-log-body]")) return;
+      if (state.log.autoScroll) { state.log.autoScroll = false; return; }
+      if (state.log.follow && box.scrollHeight - box.scrollTop - box.clientHeight > 40) {
+        state.log.follow = false;
+        var cb = el.querySelector("[data-log-follow]"); if (cb) cb.checked = false;
+      }
+    }
     function dispose() {
       state.alive = false; reset();
+      el.removeEventListener("scroll", scroll, true);
+      if (typeof document !== "undefined" && document && typeof document.removeEventListener === "function") document.removeEventListener("visibilitychange", visibility);
       el.removeEventListener("click", click); el.removeEventListener("change", change);
       el.removeEventListener("input", input); el.removeEventListener("submit", formSubmit);
       window.removeEventListener("hashchange", hashChange); instances.delete(el);
     }
     el.addEventListener("click", click); el.addEventListener("change", change);
     el.addEventListener("input", input); el.addEventListener("submit", formSubmit);
+    el.addEventListener("scroll", scroll, true);
+    if (typeof document !== "undefined" && document && typeof document.addEventListener === "function") document.addEventListener("visibilitychange", visibility);
     window.addEventListener("hashchange", hashChange);
-    state.dispose = dispose; state.load = load; state.selectRun = selectRun; state.loadLogs = loadLogs;
+    state.dispose = dispose; state.load = load; state.selectRun = selectRun; state.loadLogs = loadLogs; state.pollOnce = pollOnce;
     load();
     return state;
   }
@@ -841,6 +1169,7 @@
       return view && view.dispose;
     },
     _internals: { route: route, array: array, duration: duration, formatLog: formatLog,
-      runSummary: runSummary, runStages: runStages, currentConfig: currentConfig, escapeHTML: escapeHTML }
+      runSummary: runSummary, runStages: runStages, currentConfig: currentConfig, escapeHTML: escapeHTML,
+      stageGraph: stageGraph, filterRuns: filterRuns, focusStage: focusStage, isErrorLine: isErrorLine, nextDelay: nextDelay, demoAPI: demoAPI }
   };
 })();

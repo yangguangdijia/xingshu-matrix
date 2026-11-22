@@ -209,6 +209,26 @@
 
 `Canary` 字段：`id, app_id, env, target_id, release_id, image, stable_image（启动时读取的主版本镜像）, namespace, deployment, container, service, ingress, canary_deployment, canary_service, canary_ingress, plan{steps,replicas,auto_promote}, status, current_step（从 0 计，未开始为 -1）, weight（当前金丝雀流量百分比）, step_started_at, next_at（progressing 时为自动进入下一阶段的时间）, attempts, message, approval_id, pending_action（start|advance|promote，等待审批中的动作）, reason, created_by, created_at, updated_at, finished_at`。
 
+### GET /cicd/canaries/:id/compare — `cicd:read`（v1.32 p2-canary）
+详情页「主版本 vs 金丝雀」对比数据，实现 `canary_compare.go`，无迁移、无写操作。返回：
+
+| 字段 | 说明 |
+|---|---|
+| `canary_id, status, final, weight, current_step` | 与详情一致；`final` 为已结束状态 |
+| `total_steps, done_steps` | 步骤总数与已完成步数（`succeeded` 时全部完成） |
+| `steps[]` | `{index, weight, pause_sec, manual, state, entered_at?}`，`state` 取 `done / current / pending / stopped`（已结束但未完成的那一步为 `stopped`）；`entered_at` 取自「步骤」事件 |
+| `start, end` | 生命周期（unix 秒）：发起时间 → 结束时间（未结束为当前时间） |
+| `weight_series` | `[[unix秒, 金丝雀权重%]]` 阶梯点，由「步骤」事件还原：进入第 n 步取事件里的 `weight`，全量为 100，回滚完成为 0；最多 64 点 |
+| `stable / canary` | `{workload, service, ingress, image, weight}`；全量后 `canary.weight=100`、`stable.weight=0` |
+| `metrics_target` | 执行目标关联了已注册集群且两侧工作负载已知时返回 `{cluster_id, namespace, workload_kind:"deployments", stable_workload, canary_workload, stable_ingress, canary_ingress}`；否则省略并给出 `note` |
+
+监控数据不在本接口查询：Prometheus 数据源的按集群解析（`selectSource / resolveSourceScope`）是 observability 模块未导出的逻辑，且需要调用者身份做集群 / 命名空间授权，`app.Deps` 也没有对应能力，cicd 无法在服务端安全复用。前端用当前用户身份调用 observability 已有接口：
+- 流量（需 `datasource:read` + `metrics:read`，仅独立数据源）：`GET /observability/datasources/resolve?type=prometheus&cluster_id=` 后 `GET /observability/prometheus/:id/query_range`，查询 ingress-nginx 指标 `nginx_ingress_controller_requests`（总量 / `status=~"5.."`）与 `nginx_ingress_controller_request_duration_seconds_bucket`（P95），按 `namespace` + `ingress`（主路由 / 金丝雀路由）区分两侧；窗口为金丝雀生命周期（最长 24 小时），步长 ≥15 秒约 60 点。中央数据源的范围校验不接受 `sum by (le)`，因此跳过。
+- 资源（需 `workload:read`，独立 / 中央数据源均可）：`GET /observability/metrics/sparklines?kind=workload&workload_kind=deployments&namespace=&names=<主>,<金丝雀>`，近 30 分钟 CPU / 内存，截到金丝雀开始之后。
+- 两者都没有数据时只显示权重与步骤，附一行说明。前端两侧监控最多每 60 秒刷新一次（详情仍 5 秒轮询），已结束的金丝雀只取一次。
+
+错误：404（金丝雀不存在）；执行目标读取失败不报错，只省略 `metrics_target`。未验证：真实集群上 ingress-nginx 指标标签（`ingress` 为金丝雀 Ingress 名）与采集情况；中央数据源下的流量指标。
+
 ### POST /cicd/canaries/:id/{advance|promote|pause|resume|rollback} — `cicd:deploy`
 请求体可选 `{"reason":"…"}`（≤2000 字符）。
 
