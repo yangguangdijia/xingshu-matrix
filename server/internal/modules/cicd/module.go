@@ -152,6 +152,7 @@ func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	g.POST("/applications/:id/deploy", deploy, m.deployHTTP)
 	g.POST("/applications/:id/rollback", deploy, m.rollbackHTTP)
 	m.registerCanary(g, read, deploy)
+	g.GET("/canaries/:id/compare", read, m.canaryCompare) // 金丝雀详情：主版本 vs 金丝雀对比（canary_compare.go）
 
 	g.GET("/pipelines", read, m.listPipelines)
 	g.POST("/pipelines", manage, m.createPipeline)
