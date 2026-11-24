@@ -8,6 +8,7 @@ package modules
 
 import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/app"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/aiops"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/automation"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/bastion"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/modules/cicd"
@@ -38,5 +39,8 @@ func All() []app.Module {
 
 		// ---- middleware ----------------------------------------------------
 		middleware.New(), // internal/middleware: Kafka / RabbitMQ / RocketMQ admin, DB/Redis instances
+
+		// ---- AI operations (reads observability / cicd / bastion tables) ----
+		aiops.New(), // internal/modules/aiops: AI investigation cases, reviewed plans, execution, runbooks
 	}
 }

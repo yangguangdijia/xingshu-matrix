@@ -149,6 +149,8 @@ func (m *Module) RegisterComponentRoutes(g *gin.RouterGroup) {
 	read := rbac.RequireAnyPerm(PermWorkloadRead, PermConfigRead)
 	g.GET("/:id/components", read, m.listComponentStatus)
 	g.GET("/:id/components/catalog", read, m.listComponentCatalog)
+	g.GET("/:id/components/overview", read, m.handleComponentOverview)
+	g.POST("/:id/components/plan", read, m.handleComponentPlan)
 	g.POST("/:id/components/:component/preflight", rbac.RequirePerm(componentWritePermission), m.preflightComponent)
 	g.POST("/:id/components/:component/install", rbac.RequirePerm(componentWritePermission), m.installComponent)
 	g.GET("/:id/components/operations/:operation", read, m.getComponentOperation)

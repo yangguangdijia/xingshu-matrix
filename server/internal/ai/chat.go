@@ -88,7 +88,7 @@ func (s *Service) Chat(ctx context.Context, p *rbac.Principal, req ChatRequest, 
 	if sys != "" {
 		msgs = append(msgs, TextMessage("system", sys))
 	}
-	msgs = append(msgs, req.Messages...)
+	msgs = append(msgs, RedactMessages(req.Messages)...)
 
 	toolsOn, names, err := req.toolSelection()
 	if err != nil {
@@ -162,7 +162,7 @@ func (s *Service) Chat(ctx context.Context, p *rbac.Principal, req ChatRequest, 
 				})
 				continue
 			default:
-				_ = em.Event("tool_call", map[string]any{"tool_call_id": tc.ID, "tool": tool.Name, "arguments": normaliseArgs(tc.Function.Arguments)})
+				_ = em.Event("tool_call", map[string]any{"tool_call_id": tc.ID, "tool": tool.Name, "arguments": normaliseArgs(RedactSecrets(tc.Function.Arguments))})
 				out = s.runTool(ctx, p, tool, tc.ID, normaliseArgs(tc.Function.Arguments))
 				_ = em.Event("tool_result", map[string]any{"tool_call_id": tc.ID, "tool": tool.Name, "content": out.Content})
 			}
@@ -283,6 +283,7 @@ func toolMessage(callID string, v any) Message {
 	if err != nil {
 		b, _ = json.Marshal(map[string]any{"error": "unserialisable tool result"})
 	}
+	b = []byte(RedactSecrets(string(b)))
 	if len(b) > maxToolResultBytes {
 		b = append(b[:maxToolResultBytes:maxToolResultBytes], []byte("...(truncated)")...)
 	}

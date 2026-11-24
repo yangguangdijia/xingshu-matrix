@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/ldapauth"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/recovery"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/sso"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/ai"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/app"
@@ -20,6 +22,7 @@ import (
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/backup"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/httpx"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/jobs"
+	"github.com/yangguangdijia/xingshu-matrix/server/internal/mcp"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/metrics"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/platform"
 	"github.com/yangguangdijia/xingshu-matrix/server/internal/rbac"
@@ -108,6 +111,43 @@ func New(d *app.Deps, c Core, mods []app.Module) *gin.Engine {
 	c.AuditDB.RegisterRoutes(authed)
 	c.Approval.RegisterRoutes(authed)
 	c.AI.RegisterRoutes(authed)
+
+	// MCP（Streamable HTTP）：挂在 engine 上、不经 auth.Middleware，自行只接受 API Token。
+	// 用 Any 让 GET 等方法由 mcp.Server 返回 405（gin 默认未注册方法会 404）。
+	mcpSrv := mcp.NewWithOptions(c.AI.Tools, func(ctx context.Context, tok, ip string) (*rbac.Principal, error) {
+		if !auth.IsAPIToken(tok) {
+			return nil, httpx.Unauthorized("MCP 仅接受 API Token")
+		}
+		p, err := c.Auth.AuthenticateAPIToken(ctx, tok, ip)
+		if err != nil {
+			return nil, err
+		}
+		if p.MustChangePassword {
+			return nil, httpx.Unauthorized("需要先修改密码")
+		}
+		return p, nil
+	}, mcp.Options{
+		Version: version.Version,
+		Pending: func(ctx context.Context, p *rbac.Principal, tool string, args json.RawMessage) (string, error) {
+			pc := &ai.PendingCall{ID: uuid.NewString(), UserID: p.UserID, Tool: tool, ToolCallID: "mcp-" + uuid.NewString(), Arguments: args}
+			if err := c.AI.Store.InsertPendingCall(ctx, pc); err != nil {
+				return "", err
+			}
+			return "/api/v1/ai/tool-calls/" + pc.ID + "/confirm", nil
+		},
+		Audit: func(ctx context.Context, r mcp.AuditRecord) {
+			uid := r.UserID
+			res := audit.ResultSuccess
+			if r.Outcome != "ok" && r.Outcome != "pending_confirmation" {
+				res = audit.ResultFailure
+			}
+			detail, _ := json.Marshal(map[string]any{"tool": r.Tool, "args": r.Args, "token_id": r.TokenID, "outcome": r.Outcome, "error": r.Error})
+			c.Audit.Record(ctx, audit.Entry{UserID: &uid, Username: r.Username, IP: r.IP, Method: http.MethodPost, Path: "/mcp",
+				Resource: "mcp_tool", ResourceID: r.Tool, Action: "mcp.tools.call", StatusCode: http.StatusOK, Result: res,
+				DurationMs: int(r.Duration.Milliseconds()), UserAgent: r.UserAgent, Detail: detail, CreatedAt: time.Now()})
+		},
+	})
+	e.Any("/mcp", gin.WrapH(mcpSrv))
 	if c.Backup != nil {
 		backup.RegisterRoutes(authed, backup.APIDeps{Runner: c.Backup, Audit: c.Audit})
 	}

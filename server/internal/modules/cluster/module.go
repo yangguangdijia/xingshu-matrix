@@ -91,6 +91,9 @@ func (m *Module) Permissions() []rbac.Permission {
 func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	m.d = d
 	m.log = d.Logger
+	if d.Components == nil {
+		d.Components = m
+	}
 	if m.log == nil {
 		m.log = slog.Default()
 	}

@@ -59,6 +59,12 @@ type Deps struct {
 	HostDiagnostics HostDiagnosticProvider
 	// HostDiagnosticInspector runs the agent's fixed, bounded, read-only host inspection.
 	HostDiagnosticInspector HostDiagnosticInspectionProvider
+	// RemoteExec runs bounded, non-interactive commands on bastion-managed assets
+	// (set by the bastion module during Register; read lazily). nil when absent.
+	RemoteExec RemoteExecProvider
+	// Components installs reviewed catalog components into clusters (set by the
+	// cluster module during Register; read lazily). nil when absent.
+	Components ComponentInstaller
 	// Logger is a structured logger scoped with module=<Name()>.
 	Logger *slog.Logger
 
@@ -117,6 +123,85 @@ type ClusterAccess interface {
 
 // ClusterRenameHook updates a module's stored references to a renamed cluster.
 type ClusterRenameHook func(ctx context.Context, tx pgx.Tx, id int64, oldName, newName string) error
+
+// RemoteExecRequest is one non-interactive command on a bastion asset. The
+// bastion applies its command filter (deny / approval rules), records the
+// session and audits it exactly like an interactive session.
+type RemoteExecRequest struct {
+	AssetID   int64
+	AccountID int64 // 0 = the asset's default privileged account the caller may use
+	Command   string
+	Timeout   time.Duration // capped by the provider (max 30m)
+	Reason    string        // shown in the session record, e.g. "aiops case #12 step 3"
+}
+
+// RemoteExecResult is the bounded outcome of RemoteExec.
+type RemoteExecResult struct {
+	ExitCode  int
+	Output    string // combined stdout/stderr, truncated to 256 KiB, secrets masked
+	Truncated bool
+	SessionID string // bastion session (recording) id
+	Blocked   string // non-empty when the command filter denied it (reason)
+	Duration  time.Duration
+}
+
+// AssetOnboardRequest registers a host given by address and credential (for
+// example typed into the AI assistant). The password/key is encrypted at rest
+// and never returned.
+type AssetOnboardRequest struct {
+	Name       string
+	Address    string
+	Port       int
+	Env        string
+	Username   string
+	Password   string
+	PrivateKey string
+	Node       string // asset tree node path, optional
+}
+
+// AssetRef identifies a bastion asset + account usable by RemoteExec.
+type AssetRef struct {
+	AssetID   int64
+	AccountID int64
+	Name      string
+	Address   string
+	Env       string
+	Reachable bool
+	OS        string // filled by a read-only probe when reachable
+}
+
+// RemoteExecProvider is implemented by the bastion module.
+type RemoteExecProvider interface {
+	RemoteExec(ctx context.Context, p *rbac.Principal, req RemoteExecRequest) (RemoteExecResult, error)
+	OnboardAsset(ctx context.Context, p *rbac.Principal, req AssetOnboardRequest) (AssetRef, error)
+	ResolveAsset(ctx context.Context, p *rbac.Principal, assetID int64) (AssetRef, error)
+}
+
+// ComponentInstallRequest installs or upgrades one catalog component.
+type ComponentInstallRequest struct {
+	ClusterID int64
+	Key       string            // catalog key
+	Version   string            // empty = recommended
+	Values    map[string]string // reviewed ConfigurationFields only
+}
+
+// ComponentStatus is a component's state in a cluster.
+type ComponentStatus struct {
+	Key                 string
+	Tier                string // required | recommended | optional
+	Installed           bool
+	Healthy             bool
+	Version             string
+	Message             string
+	MissingDependencies []string
+}
+
+// ComponentInstaller is implemented by the cluster module. Install returns a
+// job/operation id; callers poll Status.
+type ComponentInstaller interface {
+	InstallComponent(ctx context.Context, p *rbac.Principal, req ComponentInstallRequest) (string, error)
+	ComponentStatus(ctx context.Context, clusterID int64, key string) (ComponentStatus, error)
+}
 
 // HostDiagnosticProvider maps Kubernetes node addresses to enrolled agents and
 // returns their latest bounded telemetry. Implementations must not run commands.

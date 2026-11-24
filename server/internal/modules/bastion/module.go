@@ -89,6 +89,9 @@ func (m *Module) Permissions() []rbac.Permission {
 
 func (m *Module) Register(r *gin.RouterGroup, d *app.Deps) {
 	m.d = d
+	if d.RemoteExec == nil {
+		d.RemoteExec = m
+	}
 	g := r.Group("/bastion")
 
 	g.GET("/assets", rbac.RequirePerm(PermRead), m.listAssets)

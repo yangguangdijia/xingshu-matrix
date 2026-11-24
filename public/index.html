@@ -1758,6 +1758,7 @@
     <link rel="stylesheet" href="xs-structured-forms.css" />
     <link rel="stylesheet" href="xs-formkit.css" />
     <link rel="stylesheet" href="xs-bastion.css" />
+    <link rel="stylesheet" href="xs-aiops-ui.css" />
     <link rel="stylesheet" href="xs-network-config-forms.css" />
     <link rel="stylesheet" href="xs-certificates.css" />
     <link rel="stylesheet" href="xs-helm-apps.css" />
@@ -1883,6 +1884,7 @@
     <script src="xs-provision.js"></script>
     <script src="xs-cluster-agent.js"></script>
     <script src="xs-aiops.js"></script>
+    <script src="xs-aiops-ui.js"></script>
     <script src="xs-network-config.js"></script>
     <script src="xs-certificates.js"></script>
     <script>
@@ -1985,6 +1987,10 @@
         oncall: { label: "值班故障", icon: "bell", render: renderOncall },
         audit: { label: "运维审计", icon: "shield", render: renderSec },
         bastion: { label: "堡垒机运维", icon: "shield", render: renderSec },
+        aiops: { label: "AI 运维", icon: "spark", render: (el) => {
+          const k = location.hash.slice(2).split("/").slice(1).join("/") || "cases";
+          if (window.XSAiopsUI) window.XSAiopsUI.render(window.XSAiopsUI.has(k) ? k : "cases", el);
+        } },
         workbench: { label: "工作台", icon: "home", render: renderWorkbench },
         requirements: { label: "需求管理", icon: "list", render: renderReqs },
         coding: { label: "Coding", icon: "code", render: (el) => renderDevCenter(el, "coding") },
@@ -1996,7 +2002,7 @@
         iam: { label: "用户与权限", icon: "users", render: (el) => renderIam(el) },
         settings: { label: "系统设置", icon: "gear", render: renderSettings },
       };
-      const REAL_DATA_ROUTES = new Set(["sre", "ops", "observe", "logs", "ai", "automation", "coding", "project", "bugs", "traffic", "trace", "netpol", "bastion", "workbench", "requirements", "testing"]);
+      const REAL_DATA_ROUTES = new Set(["sre", "ops", "observe", "logs", "ai", "automation", "coding", "project", "bugs", "traffic", "trace", "netpol", "bastion", "aiops", "workbench", "requirements", "testing"]);
       // 研发中心实时模式由 xs-devcenter.js 渲染（含 AI 开发 #/coding/ai 与 #/requirements/ai、统计报表 #/project/stats）
       ["workbench", "requirements", "coding", "project", "bugs", "testing"].forEach((k) => {
         const orig = routes[k].render;
@@ -12666,6 +12672,7 @@
           $("modal").classList.add("x-alert-detail");
           const modal = $("modal");
           if (window.XSAIOps) window.XSAIOps.mount(modal, a);
+          if (window.XSAiopsUI) window.XSAiopsUI.mountAlertButton(modal, a);
           if (window.XSAlert2Bug) window.XSAlert2Bug.mount(modal, a);
         } catch (e) { toast("告警详情读取失败：" + e.message); }
       }
