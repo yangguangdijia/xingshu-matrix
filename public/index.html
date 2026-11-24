@@ -16358,7 +16358,7 @@ spec:
           ] },
           // 堡垒机: its 6 groups, then 审计 (#/audit)
           { t: "堡垒机", i: "term", kids: basL() },
-          { t: "值班故障", i: "bell", kids: OC_PAGES.map((p) => ({ t: p.t, i: p.i, h: ocHash(p), s: p.sub, ...(p.k === "inc" ? { n: ocOpen } : {}) })) },
+          { t: "值班故障", i: "bell", kids: [{ t: "AI 运维", i: "spark", h: "#/aiops", s: "告警与运维请求由 AI 排查，给出方案，审核后执行" }, ...OC_PAGES.map((p) => ({ t: p.t, i: p.i, h: ocHash(p), s: p.sub, ...(p.k === "inc" ? { n: ocOpen } : {}) }))] },
           { t: "设置", i: "gear", foot: true, kids: [
             ...IAM_PAGES.map((p) => ({ t: p.t, i: p.i, h: iamHash(p), free: true })),
             { t: "系统设置", i: "gear", h: "#/settings", free: true, any: true },
