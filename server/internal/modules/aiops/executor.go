@@ -444,6 +444,15 @@ func (e *execEngine) execute(ctx context.Context) {
 		}
 	}
 
+	// A read-only plan without verify steps only gathered information: the
+	// case goes back to "concluded" so the operator can review further plans,
+	// instead of being marked resolved while the fault is still there.
+	if e.plan.Risk == RiskRead && len(execOrder(e.plan.Steps, true)) == 0 {
+		e.setStatus(bg, CaseConcluded, "")
+		e.tl(bg, "execute_finish", map[string]any{"status": CaseConcluded, "note": "只读诊断已完成，未做任何变更"})
+		return
+	}
+
 	e.setStatus(bg, CaseVerifying, "")
 	e.tl(bg, "verify_start", map[string]any{"plan_id": e.plan.ID})
 	allOK := true

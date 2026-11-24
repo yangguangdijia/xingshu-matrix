@@ -206,6 +206,8 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxp
 		PrincipalCacheTTL: 15 * time.Second,
 	}, log.With("component", "auth"))
 	rbacSvc.OnChange = authSvc.InvalidateAll
+	// API 访问令牌、服务账号令牌与 MFA（v1.29 身份能力，MCP 依赖 API 令牌）。
+	authSvc.EnableIdentity(&auth.PgIdentityStore{DB: pool}, cipher)
 	if created, err := authSvc.EnsureAdmin(ctx, cfg.Auth.InitialAdminPassword); err != nil {
 		return fmt.Errorf("ensure admin: %w", err)
 	} else if created {

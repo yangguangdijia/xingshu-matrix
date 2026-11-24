@@ -98,6 +98,7 @@ func New(d *app.Deps, c Core, mods []app.Module) *gin.Engine {
 	// Authenticated routes.
 	authed := api.Group("")
 	authed.Use(c.Auth.Middleware(), auth.PasswordChangeGate())
+	c.Auth.RegisterIdentityRoutes(public, authed, c.Limiter)
 	c.Auth.RegisterRoutes(authed)
 	c.RBAC.RegisterRoutes(authed)
 	c.Users.RegisterRoutes(authed)
